@@ -1,0 +1,1 @@
+//! Technitium stats endpoint placeholder.

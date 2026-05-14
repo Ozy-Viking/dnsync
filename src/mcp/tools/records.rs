@@ -1,0 +1,1 @@
+//! Record MCP tools placeholder.

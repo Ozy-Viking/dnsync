@@ -7,11 +7,11 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::client::TechnitiumClient;
-use crate::dns;
-use crate::error::Error;
-use crate::policy::Policy;
-use crate::types::RecordData;
+use crate::control_plane::policy::Policy;
+use crate::core::dns::records::RecordData;
+use crate::core::error::Error;
+use crate::vendors::technitium::client::TechnitiumClient;
+use crate::vendors::technitium::service as dns;
 
 // ─── Server state ─────────────────────────────────────────────────────────────
 

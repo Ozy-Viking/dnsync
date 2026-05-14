@@ -1,7 +1,7 @@
-use reqwest::{multipart, Client, Response};
+use reqwest::{Client, Response, multipart};
 use serde_json::Value;
 
-use crate::error::{Error, Result};
+use crate::core::error::{Error, Result};
 
 #[derive(Clone)]
 pub struct TechnitiumClient {
@@ -16,7 +16,11 @@ impl TechnitiumClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(Error::Network)?;
-        Ok(Self { http, base_url, token })
+        Ok(Self {
+            http,
+            base_url,
+            token,
+        })
     }
 
     /// GET with query params.

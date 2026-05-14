@@ -3,10 +3,10 @@
 
 use serde_json::Value;
 
-use crate::client::TechnitiumClient;
-use crate::error::Result;
-use crate::response::ListRecordsResponse;
-use crate::types::RecordData;
+use crate::core::dns::records::RecordData;
+use crate::core::dns::responses::ListRecordsResponse;
+use crate::core::error::Result;
+use crate::vendors::technitium::client::TechnitiumClient;
 
 // ─── Zones ───────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,1 @@
+//! Cache MCP tools placeholder.

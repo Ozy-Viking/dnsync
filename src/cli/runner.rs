@@ -2,9 +2,9 @@ use serde_json::Value;
 
 use crate::{
     cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd},
-    client::TechnitiumClient,
-    dns,
-    error::{Error, Result},
+    core::error::{Error, Result},
+    vendors::technitium::client::TechnitiumClient,
+    vendors::technitium::service as dns,
 };
 
 pub async fn run(client: &TechnitiumClient, command: Command) -> Result<()> {

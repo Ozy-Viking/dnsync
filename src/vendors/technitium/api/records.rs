@@ -1,0 +1,1 @@
+//! Technitium record endpoints placeholder.

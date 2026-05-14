@@ -1,3 +1,4 @@
+#[cfg(feature = "technitium")]
 pub mod runner;
 
 use clap::{Parser, Subcommand};
@@ -267,8 +268,8 @@ pub enum CliRecordType {
     /// DNSSEC delegation signer  e.g. `ds 12345 RSASHA256 SHA256 abcdef...`
     Ds {
         key_tag: u16,
-        algorithm: crate::types::DsAlgorithm,
-        digest_type: crate::types::DigestType,
+        algorithm: crate::core::dns::records::DsAlgorithm,
+        digest_type: crate::core::dns::records::DigestType,
         digest: String,
     },
 
@@ -276,7 +277,7 @@ pub enum CliRecordType {
     Fwd {
         forwarder: String,
         #[arg(long, default_value = "Udp")]
-        protocol: crate::types::FwdProtocol,
+        protocol: crate::core::dns::records::FwdProtocol,
         #[arg(long, default_value_t = 10)]
         priority: u16,
         #[arg(long, default_value_t = false)]
@@ -330,8 +331,8 @@ pub enum CliRecordType {
 
     /// SSH fingerprint  e.g. `sshfp RSA SHA256 abcdef...`
     Sshfp {
-        algorithm: crate::types::SshfpAlgorithm,
-        fingerprint_type: crate::types::SshfpFingerprintType,
+        algorithm: crate::core::dns::records::SshfpAlgorithm,
+        fingerprint_type: crate::core::dns::records::SshfpFingerprintType,
         fingerprint: String,
     },
 
@@ -361,9 +362,9 @@ pub enum CliRecordType {
 
     /// DANE TLS authentication  e.g. `tlsa DANE-EE SPKI SHA2-256 abcdef...`
     Tlsa {
-        cert_usage: crate::types::TlsaCertUsage,
-        selector: crate::types::TlsaSelector,
-        matching_type: crate::types::TlsaMatchingType,
+        cert_usage: crate::core::dns::records::TlsaCertUsage,
+        selector: crate::core::dns::records::TlsaSelector,
+        matching_type: crate::core::dns::records::TlsaMatchingType,
         cert_association_data: String,
     },
 

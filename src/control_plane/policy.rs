@@ -12,7 +12,7 @@
 //!   that zone (or its parent) is in the allow-list. Zone-agnostic tools (stats,
 //!   settings, cache browse) are always permitted.
 
-use crate::error::{Error, Result};
+use crate::core::error::{Error, Result};
 
 /// Governs what the MCP server is permitted to do.
 #[derive(Debug, Clone, Default)]
@@ -30,9 +30,8 @@ impl Policy {
     pub fn new(readonly: bool, allowed_zones: Option<Vec<String>>) -> Self {
         Self {
             readonly,
-            allowed_zones: allowed_zones.map(|zones| {
-                zones.into_iter().map(|z| z.to_lowercase()).collect()
-            }),
+            allowed_zones: allowed_zones
+                .map(|zones| zones.into_iter().map(|z| z.to_lowercase()).collect()),
         }
     }
 
@@ -60,9 +59,9 @@ impl Policy {
 
         // Allow exact match or suffix match (e.g. allow-list "example.com"
         // also permits "sub.example.com").
-        let permitted = allowed.iter().any(|a| {
-            zone_lower == *a || zone_lower.ends_with(&format!(".{a}"))
-        });
+        let permitted = allowed
+            .iter()
+            .any(|a| zone_lower == *a || zone_lower.ends_with(&format!(".{a}")));
 
         if permitted {
             Ok(())
@@ -118,7 +117,10 @@ mod tests {
 
     #[fixture]
     fn zone_restricted() -> Policy {
-        Policy::new(false, Some(vec!["example.com".into(), "internal.lan".into()]))
+        Policy::new(
+            false,
+            Some(vec!["example.com".into(), "internal.lan".into()]),
+        )
     }
 
     #[fixture]

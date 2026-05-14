@@ -4,11 +4,11 @@
 //! `ReadOnlyRecordData` here covers records that are server-managed and
 //! only ever appear in list_records responses — never in add/delete calls.
 
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
-use crate::types::{DsAlgorithm, RecordData};
+use crate::core::dns::records::{DsAlgorithm, RecordData};
+use crate::core::error::{Error, Result};
 
 // ─── Read-only DNSSEC record data ─────────────────────────────────────────────
 
@@ -156,7 +156,9 @@ impl ListRecordsResponse {
         let raw_records = response
             .get("records")
             .and_then(|r| r.as_array())
-            .ok_or_else(|| Error::parse("list_records response missing 'response.records' array"))?;
+            .ok_or_else(|| {
+                Error::parse("list_records response missing 'response.records' array")
+            })?;
 
         let records = raw_records
             .iter()
@@ -175,7 +177,10 @@ fn parse_record_data(record_type: &str, rdata: &serde_json::Value) -> Option<Any
     // Reconstruct the tagged value that serde expects for RecordData / ReadOnlyRecordData
     let mut tagged = rdata.clone();
     if let Some(obj) = tagged.as_object_mut() {
-        obj.insert("type".into(), serde_json::Value::String(record_type.to_uppercase()));
+        obj.insert(
+            "type".into(),
+            serde_json::Value::String(record_type.to_uppercase()),
+        );
     }
 
     // Try writable first, then read-only
@@ -257,7 +262,10 @@ mod tests {
         })
     }
 
-    fn wrap_response(zone: serde_json::Value, records: Vec<serde_json::Value>) -> serde_json::Value {
+    fn wrap_response(
+        zone: serde_json::Value,
+        records: Vec<serde_json::Value>,
+    ) -> serde_json::Value {
         json!({ "status": "ok", "response": { "zone": zone, "records": records } })
     }
 
@@ -299,7 +307,10 @@ mod tests {
     }
 
     #[rstest]
-    fn rrsig_parsed_as_read_only(zone_json: serde_json::Value, rrsig_record_json: serde_json::Value) {
+    fn rrsig_parsed_as_read_only(
+        zone_json: serde_json::Value,
+        rrsig_record_json: serde_json::Value,
+    ) {
         let resp = wrap_response(zone_json, vec![rrsig_record_json]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
 
@@ -314,7 +325,10 @@ mod tests {
     }
 
     #[rstest]
-    fn dnskey_parsed_as_read_only(zone_json: serde_json::Value, dnskey_record_json: serde_json::Value) {
+    fn dnskey_parsed_as_read_only(
+        zone_json: serde_json::Value,
+        dnskey_record_json: serde_json::Value,
+    ) {
         let resp = wrap_response(zone_json, vec![dnskey_record_json]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
 
@@ -339,7 +353,10 @@ mod tests {
         });
         let resp = wrap_response(zone_json, vec![record]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
-        assert!(result.records[0].parsed.is_none(), "unknown type should produce None");
+        assert!(
+            result.records[0].parsed.is_none(),
+            "unknown type should produce None"
+        );
     }
 
     #[rstest]
@@ -353,8 +370,14 @@ mod tests {
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
 
         assert_eq!(result.records.len(), 3);
-        assert!(matches!(result.records[0].parsed, Some(AnyRecordData::Writable(_))));
-        assert!(matches!(result.records[1].parsed, Some(AnyRecordData::ReadOnly(_))));
+        assert!(matches!(
+            result.records[0].parsed,
+            Some(AnyRecordData::Writable(_))
+        ));
+        assert!(matches!(
+            result.records[1].parsed,
+            Some(AnyRecordData::ReadOnly(_))
+        ));
         assert!(result.records[2].parsed.is_none());
     }
 
@@ -364,21 +387,27 @@ mod tests {
     fn missing_response_key_returns_parse_error() {
         let bad = json!({ "status": "ok" });
         let err = ListRecordsResponse::from_value(&bad).unwrap_err();
-        assert!(matches!(err, crate::error::Error::Parse { ref context } if context.contains("'response'")));
+        assert!(
+            matches!(err, crate::core::error::Error::Parse { ref context } if context.contains("'response'"))
+        );
     }
 
     #[rstest]
     fn missing_zone_key_returns_parse_error() {
         let bad = json!({ "status": "ok", "response": { "records": [] } });
         let err = ListRecordsResponse::from_value(&bad).unwrap_err();
-        assert!(matches!(err, crate::error::Error::Parse { ref context } if context.contains("zone")));
+        assert!(
+            matches!(err, crate::core::error::Error::Parse { ref context } if context.contains("zone"))
+        );
     }
 
     #[rstest]
     fn missing_records_key_returns_parse_error(zone_json: serde_json::Value) {
         let bad = json!({ "status": "ok", "response": { "zone": zone_json } });
         let err = ListRecordsResponse::from_value(&bad).unwrap_err();
-        assert!(matches!(err, crate::error::Error::Parse { ref context } if context.contains("records")));
+        assert!(
+            matches!(err, crate::core::error::Error::Parse { ref context } if context.contains("records"))
+        );
     }
 
     #[rstest]
@@ -390,7 +419,10 @@ mod tests {
     }
 
     #[rstest]
-    fn skips_malformed_records_rather_than_failing(zone_json: serde_json::Value, a_record_json: serde_json::Value) {
+    fn skips_malformed_records_rather_than_failing(
+        zone_json: serde_json::Value,
+        a_record_json: serde_json::Value,
+    ) {
         let bad_record = json!({ "name": "bad", "ttl": 300, "rData": {} });
         let resp = wrap_response(zone_json, vec![bad_record, a_record_json]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse overall response");

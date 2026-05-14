@@ -6,18 +6,17 @@ use thiserror::Error;
 pub enum Error {
     /// An operation was blocked by the active server policy (read-only or zone restriction).
     #[error("policy violation: {reason}")]
-    #[diagnostic(
-        code(dns::policy),
-        help("{hint}")
-    )]
+    #[diagnostic(code(dns::policy), help("{hint}"))]
     PolicyViolation { reason: String, hint: String },
 
     /// The Technitium API returned `{"status":"error","errorMessage":"..."}`.
     #[error("API error: {message}")]
     #[diagnostic(
         code(dns::api),
-        help("Check the Technitium server logs for more details.\n\
-              Common causes: invalid zone name, record conflict, insufficient permissions.")
+        help(
+            "Check the Technitium server logs for more details.\n\
+              Common causes: invalid zone name, record conflict, insufficient permissions."
+        )
     )]
     Api { message: String },
 
@@ -25,26 +24,34 @@ pub enum Error {
     #[error("HTTP {status}: {body}")]
     #[diagnostic(
         code(dns::http),
-        help("Verify the server is running and TECHNITIUM_BASE_URL is correct.\n\
-              Use RUST_LOG=debug for full request details.")
+        help(
+            "Verify the server is running and TECHNITIUM_BASE_URL is correct.\n\
+              Use RUST_LOG=debug for full request details."
+        )
     )]
     Http { status: u16, body: String },
 
+    #[cfg(feature = "technitium")]
     /// A network-level failure — connection refused, timeout, DNS resolution, etc.
     #[error("network error: {0}")]
     #[diagnostic(
         code(dns::network),
-        help("Check that the Technitium server is reachable at the configured base URL.\n\
-              If using TLS, verify the certificate is trusted.")
+        help(
+            "Check that the Technitium server is reachable at the configured base URL.\n\
+              If using TLS, verify the certificate is trusted."
+        )
     )]
     Network(#[source] reqwest::Error),
 
+    #[cfg(feature = "technitium")]
     /// The HTTP response body could not be decoded as JSON.
     #[error("invalid JSON response from server")]
     #[diagnostic(
         code(dns::invalid_json),
-        help("The server returned a response that isn't valid JSON.\n\
-              Verify TECHNITIUM_BASE_URL points to the DNS API, not a proxy or redirect.")
+        help(
+            "The server returned a response that isn't valid JSON.\n\
+              Verify TECHNITIUM_BASE_URL points to the DNS API, not a proxy or redirect."
+        )
     )]
     InvalidJson(#[source] reqwest::Error),
 
@@ -52,11 +59,14 @@ pub enum Error {
     #[error("parse error: {context}")]
     #[diagnostic(
         code(dns::parse),
-        help("The API response had an unexpected structure. This may indicate a \
-              version mismatch between this client and the Technitium server.")
+        help(
+            "The API response had an unexpected structure. This may indicate a \
+              version mismatch between this client and the Technitium server."
+        )
     )]
     Parse { context: String },
 
+    #[cfg(feature = "technitium")]
     /// A MIME type string was rejected by reqwest (should never happen in practice).
     #[error("invalid MIME type")]
     #[diagnostic(code(dns::mime))]
@@ -64,10 +74,7 @@ pub enum Error {
 
     /// An I/O error — typically reading a zone file from disk.
     #[error("{context}")]
-    #[diagnostic(
-        code(dns::io),
-        help("Check that the file exists and is readable.")
-    )]
+    #[diagnostic(code(dns::io), help("Check that the file exists and is readable."))]
     Io {
         context: String,
         #[source]
@@ -78,10 +85,13 @@ pub enum Error {
 impl Error {
     /// True for transient failures the user might retry (network, timeout).
     pub fn is_transient(&self) -> bool {
-        match self {
-            Self::Network(e) => e.is_timeout() || e.is_connect(),
-            _ => false,
+        #[cfg(feature = "technitium")]
+        {
+            if let Self::Network(e) = self {
+                return e.is_timeout() || e.is_connect();
+            }
         }
+        false
     }
 
     /// True when the server explicitly rejected the request.
@@ -93,30 +103,41 @@ impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::PolicyViolation { .. } => 6,
-            Self::Api { .. }     => 2,
-            Self::Http { .. }    => 3,
-            Self::Network(_)     => 4,
-            Self::Io { .. }      => 5,
-            _                    => 1,
+            Self::Api { .. } => 2,
+            Self::Http { .. } => 3,
+            #[cfg(feature = "technitium")]
+            Self::Network(_) => 4,
+            Self::Io { .. } => 5,
+            _ => 1,
         }
     }
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
     pub fn policy_violation(reason: impl Into<String>, hint: impl Into<String>) -> Self {
-        Self::PolicyViolation { reason: reason.into(), hint: hint.into() }
+        Self::PolicyViolation {
+            reason: reason.into(),
+            hint: hint.into(),
+        }
     }
 
     pub fn api(message: impl Into<String>) -> Self {
-        Self::Api { message: message.into() }
+        Self::Api {
+            message: message.into(),
+        }
     }
 
     pub fn parse(context: impl Into<String>) -> Self {
-        Self::Parse { context: context.into() }
+        Self::Parse {
+            context: context.into(),
+        }
     }
 
     pub fn io(context: impl Into<String>, source: std::io::Error) -> Self {
-        Self::Io { context: context.into(), source }
+        Self::Io {
+            context: context.into(),
+            source,
+        }
     }
 }
 
@@ -152,7 +173,10 @@ mod tests {
 
     #[rstest]
     fn http_error_display_includes_status() {
-        let e = Error::Http { status: 403, body: r#"{"detail":"forbidden"}"#.into() };
+        let e = Error::Http {
+            status: 403,
+            body: r#"{"detail":"forbidden"}"#.into(),
+        };
         assert!(e.to_string().contains("403"));
     }
 
@@ -239,6 +263,8 @@ mod tests {
 
     #[rstest]
     fn io_constructor_sets_context(io_error: Error) {
-        assert!(matches!(io_error, Error::Io { ref context, .. } if context.contains("example.zone")));
+        assert!(
+            matches!(io_error, Error::Io { ref context, .. } if context.contains("example.zone"))
+        );
     }
 }

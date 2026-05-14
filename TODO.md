@@ -2,12 +2,23 @@
 
 Track the planned move from a Technitium-focused MCP server to a general DNS control plane with vendor-specific adapters.
 
+
+## Docs First
+
+- [x] Create `docs/architecture.md` to define module boundaries.
+- [x] Create `docs/vendor-mapping.md` to document Technitium mapping.
+- [x] Create `docs/adr/0001-general-dns-control-plane.md` to record the architecture decision.
+- [x] Use the docs as the source of truth for implementation phases.
+- [x] Add initial `technitium` vendor feature flag.
+- [x] Rename the importable library crate to `dnslib` while keeping the binary as `dns`.
+- [x] Create the initial `core/`, `control_plane/`, `mcp/`, and `vendors/technitium/` module tree.
+
 ## Architecture
 
-- [ ] Finalize the planned directory tree before code changes.
-- [ ] Move centralized error handling into a shared core/control-plane error module.
-- [ ] Move MCP-specific code into its own `mcp/` module.
-- [ ] Define the shared DNS core types used inside the binary.
+- [x] Finalize the planned directory tree before code changes.
+- [x] Move centralized error handling into a shared core/control-plane error module.
+- [x] Move MCP-specific code into its own `mcp/` module.
+- [x] Define the shared DNS core types used inside the binary.
 - [ ] Define a vendor-neutral DNS operations interface.
 
 ## Control Plane
@@ -19,15 +30,15 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 
 ## Vendor Areas
 
-- [ ] Create `vendors/technitium/` for the existing Technitium implementation.
-- [ ] Move Technitium HTTP client/auth handling into the Technitium vendor area.
-- [ ] Move Technitium endpoint paths and request encoding into the Technitium vendor area.
+- [x] Create `vendors/technitium/` for the existing Technitium implementation.
+- [x] Move Technitium HTTP client/auth handling into the Technitium vendor area.
+- [x] Move Technitium endpoint paths and request encoding into the Technitium vendor area.
 - [ ] Move Technitium response normalization/parsing into the Technitium vendor area.
 - [ ] Keep shared record/zone types outside the vendor area unless a type is truly vendor-specific.
 
 ## Validation
 
-- [ ] Preserve current CLI behavior after restructuring.
-- [ ] Preserve current MCP tool behavior after restructuring.
+- [x] Preserve current CLI behavior after restructuring.
+- [x] Preserve current MCP tool behavior after restructuring.
 - [ ] Update tests to match the new module boundaries.
-- [ ] Run formatting, tests, and build after each implementation phase.
+- [x] Run formatting, tests, and build after each implementation phase.

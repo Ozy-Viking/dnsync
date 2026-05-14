@@ -1,9 +1,9 @@
 //! Integration tests for TechnitiumClient using a mock HTTP server.
 
+use dnslib::client::TechnitiumClient;
+use dnslib::error::Error;
 use mockito::ServerGuard;
 use rstest::{fixture, rstest};
-use technitium_dns_mcp::client::TechnitiumClient;
-use technitium_dns_mcp::error::Error;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

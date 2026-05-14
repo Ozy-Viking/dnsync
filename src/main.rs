@@ -1,18 +1,38 @@
-use technitium_dns_mcp::{cli, client, error, policy, server};
+#[cfg(not(feature = "technitium"))]
+compile_error!(
+    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`."
+);
 
+#[cfg(not(feature = "technitium"))]
+fn main() {}
+
+#[cfg(feature = "technitium")]
+use dnslib::{cli, control_plane::policy, core::error, mcp::server, vendors::technitium::client};
+
+#[cfg(feature = "technitium")]
 use std::process;
 
+#[cfg(feature = "technitium")]
 use clap::Parser;
+#[cfg(feature = "technitium")]
 use miette::Report;
+#[cfg(feature = "technitium")]
 use rmcp::ServiceExt;
+#[cfg(feature = "technitium")]
 use tracing_subscriber::{EnvFilter, fmt};
 
+#[cfg(feature = "technitium")]
 use cli::{Cli, Command};
+#[cfg(feature = "technitium")]
 use client::TechnitiumClient;
+#[cfg(feature = "technitium")]
 use error::Error;
+#[cfg(feature = "technitium")]
 use policy::Policy;
+#[cfg(feature = "technitium")]
 use server::DnsServer;
 
+#[cfg(feature = "technitium")]
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -27,6 +47,7 @@ async fn main() {
     process::exit(run(cli).await);
 }
 
+#[cfg(feature = "technitium")]
 async fn run(cli: Cli) -> i32 {
     let http_client = match TechnitiumClient::new(cli.base_url.clone(), cli.token.clone()) {
         Ok(c) => c,
@@ -75,6 +96,7 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
+#[cfg(feature = "technitium")]
 fn render_error(e: Error) -> i32 {
     let code = e.exit_code();
     eprintln!("{:?}", Report::from(e));
