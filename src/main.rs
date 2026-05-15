@@ -80,6 +80,7 @@ async fn run(cli: Cli) -> i32 {
             ConfigCmd::Add {
                 id,
                 vendor,
+                location,
                 base_url,
                 token_env,
                 token,
@@ -90,6 +91,7 @@ async fn run(cli: Cli) -> i32 {
                 let server = config::DnsServerConfig {
                     id,
                     vendor,
+                    location,
                     base_url,
                     token,
                     token_env,

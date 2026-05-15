@@ -20,6 +20,17 @@ pub enum VendorKind {
     Pangolin,
 }
 
+/// Whether the DNS server is on a local network or an external/cloud service.
+///
+/// When omitted from config, the value is inferred from the base URL:
+/// `localhost` and private-range IPs → `local`; everything else → `external`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerLocation {
+    Local,
+    External,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -34,6 +45,11 @@ pub struct DnsServerConfig {
 
     #[serde(default)]
     pub vendor: VendorKind,
+
+    /// Whether this server is on a local network or an external/cloud service.
+    /// Inferred from the base URL when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<ServerLocation>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
@@ -64,6 +80,7 @@ impl AppConfig {
             servers: vec![DnsServerConfig {
                 id: "default".to_string(),
                 vendor: VendorKind::Technitium,
+                location: None,
                 base_url: Some(TECHNITIUM_DEFAULT_BASE_URL.to_string()),
                 token: None,
                 token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
@@ -231,6 +248,12 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         VendorKind::Technitium => "technitium",
         VendorKind::Pangolin => "pangolin",
     });
+    if let Some(loc) = server.location {
+        tbl["location"] = value(match loc {
+            ServerLocation::Local => "local",
+            ServerLocation::External => "external",
+        });
+    }
     if let Some(ref v) = server.base_url {
         tbl["base_url"] = value(v.as_str());
     }
@@ -376,6 +399,25 @@ fn check_config_permissions(_path: &Path) -> Result<()> {
 }
 
 impl DnsServerConfig {
+    /// Returns whether this server is local or external.
+    ///
+    /// Uses the explicit `location` config field when set; otherwise infers from
+    /// the effective base URL (`localhost` / private IPs → local).
+    pub fn resolved_location(&self) -> ServerLocation {
+        if let Some(loc) = self.location {
+            return loc;
+        }
+        let url = self.base_url.as_deref().unwrap_or(match self.vendor {
+            VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
+            VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
+        });
+        if url_is_local(url) {
+            ServerLocation::Local
+        } else {
+            ServerLocation::External
+        }
+    }
+
     pub fn resolved_base_url(&self, override_url: Option<&str>) -> String {
         override_url
             .map(ToOwned::to_owned)
@@ -410,6 +452,40 @@ impl DnsServerConfig {
                 ))
             })
     }
+}
+
+/// Returns true when the URL's host is localhost or a private/loopback IP range.
+fn url_is_local(url: &str) -> bool {
+    // Strip scheme prefix, then take the authority portion (everything before the first '/').
+    let without_scheme = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let authority = without_scheme.split('/').next().unwrap_or(without_scheme);
+
+    // Strip port from non-IPv6 hosts.
+    let host = if authority.starts_with('[') {
+        // IPv6 literal — strip surrounding brackets and port.
+        authority
+            .trim_start_matches('[')
+            .split(']')
+            .next()
+            .unwrap_or(authority)
+    } else {
+        authority.rsplit(':').nth(1).unwrap_or(authority)
+    };
+
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        return true;
+    }
+
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
+            std::net::IpAddr::V6(v6) => v6.is_loopback(),
+        };
+    }
+
+    false
 }
 
 pub fn default_config_path() -> Option<PathBuf> {
@@ -651,6 +727,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "home".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: None,
             token: None,
             token_env: None,
@@ -666,6 +743,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "cloud".to_string(),
             vendor: VendorKind::Pangolin,
+            location: None,
             base_url: None,
             token: None,
             token_env: None,
@@ -838,6 +916,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "myserver".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: Some("http://192.168.1.10:5380".to_string()),
             token: None,
             token_env: Some("MY_API_TOKEN".to_string()),
@@ -864,6 +943,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "lab".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: Some("http://192.168.1.20:5380".to_string()),
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
@@ -902,6 +982,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "lab".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: None,
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
@@ -935,6 +1016,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "default".to_string(), // already exists
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: None,
             token: None,
             token_env: None,
@@ -965,5 +1047,118 @@ mod tests {
         );
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // ── resolved_location ─────────────────────────────────────────────────────
+
+    fn server_with_url(url: &str) -> DnsServerConfig {
+        DnsServerConfig {
+            id: "test".to_string(),
+            vendor: VendorKind::Technitium,
+            location: None,
+            base_url: Some(url.to_string()),
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        }
+    }
+
+    #[test]
+    fn localhost_url_is_local() {
+        assert_eq!(
+            server_with_url("http://localhost:5380").resolved_location(),
+            ServerLocation::Local
+        );
+    }
+
+    #[test]
+    fn loopback_ip_is_local() {
+        assert_eq!(
+            server_with_url("http://127.0.0.1:5380").resolved_location(),
+            ServerLocation::Local
+        );
+    }
+
+    #[test]
+    fn private_ip_is_local() {
+        assert_eq!(
+            server_with_url("http://192.168.1.10:5380").resolved_location(),
+            ServerLocation::Local
+        );
+        assert_eq!(
+            server_with_url("http://10.0.0.1:8080").resolved_location(),
+            ServerLocation::Local
+        );
+    }
+
+    #[test]
+    fn public_ip_is_external() {
+        assert_eq!(
+            server_with_url("https://1.2.3.4:5380").resolved_location(),
+            ServerLocation::External
+        );
+    }
+
+    #[test]
+    fn cloud_domain_is_external() {
+        assert_eq!(
+            server_with_url("https://api.pangolin.net/v1").resolved_location(),
+            ServerLocation::External
+        );
+    }
+
+    #[test]
+    fn technitium_default_url_is_local() {
+        let server = DnsServerConfig {
+            id: "test".to_string(),
+            vendor: VendorKind::Technitium,
+            location: None,
+            base_url: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+        assert_eq!(server.resolved_location(), ServerLocation::Local);
+    }
+
+    #[test]
+    fn pangolin_default_url_is_external() {
+        let server = DnsServerConfig {
+            id: "test".to_string(),
+            vendor: VendorKind::Pangolin,
+            location: None,
+            base_url: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+        assert_eq!(server.resolved_location(), ServerLocation::External);
+    }
+
+    #[test]
+    fn explicit_location_overrides_auto_detection() {
+        let mut server = server_with_url("https://api.pangolin.net");
+        server.location = Some(ServerLocation::Local);
+        assert_eq!(server.resolved_location(), ServerLocation::Local);
+
+        server.location = Some(ServerLocation::External);
+        assert_eq!(server.resolved_location(), ServerLocation::External);
+    }
+
+    #[test]
+    fn location_field_round_trips_in_toml() {
+        let toml = r#"
+            [[servers]]
+            id = "home"
+            vendor = "technitium"
+            location = "external"
+            token = "tok"
+        "#;
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let server = config.selected_server(None).unwrap();
+        assert_eq!(server.location, Some(ServerLocation::External));
     }
 }

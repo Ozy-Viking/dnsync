@@ -120,6 +120,11 @@ pub enum ConfigCmd {
         #[arg(long)]
         org_id: Option<String>,
 
+        /// Whether the server is on a local network or an external/cloud service
+        /// (auto-detected from base_url when omitted)
+        #[arg(long)]
+        location: Option<crate::control_plane::config::ServerLocation>,
+
         /// Restrict MCP tools to read-only operations for this server
         #[arg(long)]
         readonly: bool,
