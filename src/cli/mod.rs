@@ -83,12 +83,14 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum ConfigCmd {
-    /// Write the default config file and exit
+    /// Write the starter config file and exit
     Init {
         /// Overwrite an existing config file
         #[arg(long)]
         force: bool,
     },
+    /// Print the starter config to stdout without writing any files
+    Print,
 }
 
 // ─── Zone subcommands ────────────────────────────────────────────────────────

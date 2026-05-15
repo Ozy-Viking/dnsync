@@ -52,13 +52,22 @@ async fn main() {
 
 #[cfg(any(feature = "technitium", feature = "pangolin"))]
 async fn run(cli: Cli) -> i32 {
-    if let Command::Config(ConfigCmd::Init { force }) = cli.command {
-        return match config::init_config(cli.config, force) {
-            Ok(path) => {
-                println!("Wrote config file: {}", path.display());
-                0
-            }
-            Err(e) => render_error(e),
+    if let Command::Config(config_cmd) = cli.command {
+        return match config_cmd {
+            ConfigCmd::Init { force } => match config::init_config(cli.config, force) {
+                Ok(path) => {
+                    println!("Wrote config file: {}", path.display());
+                    0
+                }
+                Err(e) => render_error(e),
+            },
+            ConfigCmd::Print => match config::AppConfig::render_starter_toml() {
+                Ok(toml) => {
+                    print!("{toml}");
+                    0
+                }
+                Err(e) => render_error(e),
+            },
         };
     }
 
@@ -348,13 +357,6 @@ mod tests {
             readonly: false,
             allow_zone: Vec::new(),
             command: Command::Config(ConfigCmd::Init { force }),
-        }
-    }
-
-    fn permissions() -> config::McpPermissions {
-        config::McpPermissions {
-            readonly: false,
-            allowed_zones: vec!["example.com".to_string()],
         }
     }
 

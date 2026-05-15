@@ -24,30 +24,22 @@ Use `--config /path/to/config.toml` or `DNSYNC_CONFIG=/path/to/config.toml` to
 load a custom config file. When a config contains multiple DNS servers, select
 one with `--server <id>` or `DNSYNC_SERVER=<id>`.
 
-The generated first-run config looks like this:
-
-```toml
-[[servers]]
-id = "default"
-vendor = "technitium"
-base_url = "http://localhost:5380"
-token_env = "DNSYNC_TECHNITIUM_API_TOKEN"
-
-[servers.mcp]
-readonly = false
-allowed_zones = []
-```
-
 Set `DNSYNC_TECHNITIUM_API_TOKEN` in the environment, pass `--token`, or edit
 the config to use a different `token_env`.
 
+To preview the starter config without writing any files:
+
+```bash
+dns config print
+```
+
 To create the config file without starting the DNS client or requiring an API
-token, run:
+token:
 
 ```bash
 dns config init
 dns --config ./dnsync.toml config init
-dns config init --force
+dns config init --force   # overwrite an existing file
 ```
 
 ```toml
@@ -101,7 +93,7 @@ Get a token from the Technitium web console: **Settings → Users → your user 
 dns [OPTIONS] <COMMAND>
 
 Commands:
-  config    Write a starter config file
+  config    Manage the config file (init, print)
   mcp       Start as MCP stdio server
   zone      Manage DNS zones
   record    Manage DNS records

@@ -3,23 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::core::error::{Error, Result};
 
-const DEFAULT_CONFIG: &str = r#"[[servers]]
-id = "default"
-vendor = "technitium"
-base_url = "http://localhost:5380"
-token = "DNSYNC_TECHNITIUM_API_TOKEN"
-
-[servers.mcp]
-readonly = false
-allowed_zones = []
-"#;
-
 /// Supported DNS vendor backends.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VendorKind {
     #[default]
@@ -27,14 +16,14 @@ pub enum VendorKind {
     Pangolin,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     #[serde(default)]
     pub servers: Vec<DnsServerConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DnsServerConfig {
     pub id: String,
@@ -42,16 +31,20 @@ pub struct DnsServerConfig {
     #[serde(default)]
     pub vendor: VendorKind,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
 
     #[serde(default)]
     pub mcp: McpPermissions,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpPermissions {
     #[serde(default)]
@@ -62,6 +55,25 @@ pub struct McpPermissions {
 }
 
 impl AppConfig {
+    pub fn starter() -> Self {
+        AppConfig {
+            servers: vec![DnsServerConfig {
+                id: "default".to_string(),
+                vendor: VendorKind::Technitium,
+                base_url: Some("http://localhost:5380".to_string()),
+                token: None,
+                token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
+                org_id: None,
+                mcp: McpPermissions::default(),
+            }],
+        }
+    }
+
+    pub fn render_starter_toml() -> Result<String> {
+        toml::to_string_pretty(&Self::starter())
+            .map_err(|e| Error::parse(format!("failed to serialize starter config: {e}")))
+    }
+
     pub fn load(path: Option<PathBuf>) -> Result<Option<Self>> {
         let Some(path) = path.or_else(default_config_path) else {
             return Ok(None);
@@ -153,7 +165,8 @@ fn write_default_config(path: &Path, force: bool) -> Result<()> {
         })?;
     }
 
-    std::fs::write(path, DEFAULT_CONFIG)
+    let contents = AppConfig::render_starter_toml()?;
+    std::fs::write(path, contents)
         .map_err(|e| Error::io(format!("creating config file '{}'", path.display()), e))
 }
 
@@ -327,9 +340,16 @@ mod tests {
             server.token_env.as_deref(),
             Some("DNSYNC_TECHNITIUM_API_TOKEN")
         );
+        assert!(server.token.is_none());
         assert!(!server.mcp.readonly);
         assert!(server.mcp.allowed_zones.is_empty());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+
+        // Verify the written file round-trips and uses token_env, not token
+        let written = std::fs::read_to_string(&path).unwrap();
+        let reparsed: AppConfig = toml::from_str(&written).expect("written config should be valid TOML");
+        let reparsed_server = reparsed.selected_server(None).unwrap();
+        assert_eq!(reparsed_server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert!(reparsed_server.token.is_none());
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
@@ -385,10 +405,13 @@ mod tests {
         let written_path = init_config(Some(path.clone()), true).unwrap();
 
         assert_eq!(written_path, path);
-        assert_eq!(
-            std::fs::read_to_string(&written_path).unwrap(),
-            DEFAULT_CONFIG
-        );
+
+        let written = std::fs::read_to_string(&written_path).unwrap();
+        let config: AppConfig = toml::from_str(&written).expect("written config should be valid TOML");
+        let server = config.selected_server(None).unwrap();
+        assert_eq!(server.id, "default");
+        assert_eq!(server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert!(server.token.is_none());
 
         std::fs::remove_dir_all(written_path.parent().unwrap()).unwrap();
     }
@@ -424,5 +447,44 @@ mod tests {
                 .join("dnsync")
                 .join("config.toml")
         );
+    }
+
+    #[test]
+    fn starter_config_contains_token_env() {
+        let toml = AppConfig::render_starter_toml().unwrap();
+        assert!(
+            toml.contains(r#"token_env = "DNSYNC_TECHNITIUM_API_TOKEN""#),
+            "starter TOML should contain token_env assignment"
+        );
+    }
+
+    #[test]
+    fn starter_config_does_not_contain_literal_token() {
+        let toml = AppConfig::render_starter_toml().unwrap();
+        assert!(
+            !toml.lines().any(|l| l.trim_start().starts_with("token =")),
+            "starter TOML must not contain a bare `token = ...` key"
+        );
+    }
+
+    #[test]
+    fn starter_config_round_trips() {
+        let toml = AppConfig::render_starter_toml().unwrap();
+        let reparsed: AppConfig = toml::from_str(&toml).expect("starter TOML should parse back");
+        let server = reparsed.selected_server(None).unwrap();
+        assert_eq!(server.id, "default");
+        assert_eq!(server.vendor, VendorKind::Technitium);
+        assert_eq!(server.base_url.as_deref(), Some("http://localhost:5380"));
+        assert_eq!(server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert!(server.token.is_none());
+        assert!(!server.mcp.readonly);
+        assert!(server.mcp.allowed_zones.is_empty());
+    }
+
+    #[test]
+    fn starter_config_validates() {
+        AppConfig::starter()
+            .validate()
+            .expect("starter config should pass validation");
     }
 }
