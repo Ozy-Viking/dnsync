@@ -1,6 +1,8 @@
 #[cfg(any(feature = "technitium", feature = "pangolin"))]
 pub mod runner;
 
+pub mod records;
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -188,6 +190,9 @@ pub enum RecordCmd {
         /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
         #[arg(long)]
         use_local_ip: bool,
+        /// Output raw JSON instead of a table
+        #[arg(long)]
+        json: bool,
     },
     /// Add a record — type is a subcommand with typed fields
     Add {
