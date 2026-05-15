@@ -61,13 +61,40 @@ async fn run(cli: Cli) -> i32 {
                 }
                 Err(e) => render_error(e),
             },
-            ConfigCmd::Print => match config::AppConfig::render_starter_toml() {
-                Ok(toml) => {
-                    print!("{toml}");
-                    0
+
+            ConfigCmd::Print => {
+                let toml = match config::AppConfig::load_if_exists(cli.config.clone()) {
+                    Ok(Some(cfg)) => cfg.redact().render_toml(),
+                    Ok(None) => config::AppConfig::render_starter_toml(),
+                    Err(e) => return render_error(e),
+                };
+                match toml {
+                    Ok(s) => { print!("{s}"); 0 }
+                    Err(e) => render_error(e),
                 }
-                Err(e) => render_error(e),
-            },
+            }
+
+            ConfigCmd::Add { id, vendor, base_url, token_env, token, org_id, readonly, allow_zone } => {
+                let server = config::DnsServerConfig {
+                    id,
+                    vendor,
+                    base_url,
+                    token,
+                    token_env,
+                    org_id,
+                    mcp: config::McpPermissions {
+                        readonly,
+                        allowed_zones: allow_zone,
+                    },
+                };
+                match config::add_server(cli.config, server) {
+                    Ok(path) => {
+                        println!("Updated config file: {}", path.display());
+                        0
+                    }
+                    Err(e) => render_error(e),
+                }
+            }
         };
     }
 
