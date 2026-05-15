@@ -83,6 +83,8 @@ impl AppConfig {
             write_default_config(&path, false)?;
         }
 
+        check_config_permissions(&path)?;
+
         let contents = std::fs::read_to_string(&path)
             .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?;
 
@@ -163,11 +165,79 @@ fn write_default_config(path: &Path, force: bool) -> Result<()> {
                 e,
             )
         })?;
+        restrict_dir_permissions(parent)?;
     }
 
     let contents = AppConfig::render_starter_toml()?;
+    write_private_file(path, &contents)
+}
+
+/// Write `contents` to `path` with owner-only permissions (0o600 on Unix).
+/// Uses `OpenOptions::mode` so the file is never created world-readable,
+/// then explicitly sets permissions to handle the overwrite (force) case.
+#[cfg(unix)]
+fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| Error::io(format!("creating config file '{}'", path.display()), e))?;
+
+    file.write_all(contents.as_bytes())
+        .map_err(|e| Error::io(format!("writing config file '{}'", path.display()), e))?;
+
+    // mode() only applies when the file is newly created; set explicitly for overwrites.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| Error::io(format!("setting permissions on '{}'", path.display()), e))
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, contents: &str) -> Result<()> {
     std::fs::write(path, contents)
         .map_err(|e| Error::io(format!("creating config file '{}'", path.display()), e))
+}
+
+/// Restrict the config directory to owner-only access (0o700 on Unix).
+#[cfg(unix)]
+fn restrict_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| Error::io(format!("setting permissions on '{}'", path.display()), e))
+}
+
+#[cfg(not(unix))]
+fn restrict_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+/// Error if the config file is readable by anyone other than the owner.
+#[cfg(unix)]
+fn check_config_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path)
+        .map_err(|e| Error::io(format!("reading metadata for '{}'", path.display()), e))?;
+    let mode = meta.mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(Error::parse(format!(
+            "config file '{}' has permissions {:04o} — group or world can read it.\n\
+             API tokens must be owner-readable only. Fix with:\n\
+             \n    chmod 600 {}",
+            path.display(),
+            mode,
+            path.display(),
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_config_permissions(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 impl DnsServerConfig {
@@ -362,6 +432,12 @@ mod tests {
             "#,
         )
         .unwrap();
+        // match the permissions the production code sets so the load check passes
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
 
         let config = AppConfig::load(Some(path.clone()))
             .expect("existing config should load")
@@ -481,5 +557,50 @@ mod tests {
         AppConfig::starter()
             .validate()
             .expect("starter config should pass validation");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn written_config_file_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_config_path("perms-file");
+
+        init_config(Some(path.clone()), false).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "config file should be owner read/write only (0600)");
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn written_config_dir_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_config_path("perms-dir");
+
+        init_config(Some(path.clone()), false).unwrap();
+
+        let dir = path.parent().unwrap();
+        let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "config directory should be owner-only (0700)");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_errors_if_config_is_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_config_path("world-readable");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, AppConfig::render_starter_toml().unwrap()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let err = AppConfig::load(Some(path.clone())).unwrap_err();
+
+        assert!(err.to_string().contains("chmod 600"), "error should include remediation command");
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }
