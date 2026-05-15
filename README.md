@@ -4,15 +4,6 @@ A Rust CLI + MCP server for [Technitium DNS Server](https://technitium.com/dns/)
 
 Use it interactively from the terminal, or run it as an MCP server so Claude can manage your DNS.
 
-## Requirements
-
-| Requirement | Notes |
-|---|---|
-| **Rust 1.85+** | Edition 2024. Install via [rustup](https://rustup.rs). |
-| **Technitium DNS Server** | Any recent version with the REST API enabled (self-hosted). |
-| **API token** | Create one in the Technitium web console: **Settings → Users → your user → API Tokens → Create Token** |
-| **Linux / macOS** | Recommended. Config file permissions are enforced (0600 file, 0700 directory). Windows builds but permission hardening is not applied. |
-
 ## Build
 
 ```bash
@@ -28,6 +19,11 @@ falling back to `~/.config/dnsync/config.toml` on Linux. Debug builds use
 `./.config/dnsync/config.toml` under the repository root so development changes
 do not affect your real user config. If the selected config file does not
 exist, `dnsync` creates it with safe defaults and no embedded secrets.
+
+The config file must be readable only by its owner (`chmod 600`); the
+containing directory must be owner-only as well (`chmod 700`). `dnsync`
+sets these permissions automatically when it creates the file, and
+refuses to start if it finds a config that is group- or world-readable.
 
 Use `--config /path/to/config.toml` or `DNSYNC_CONFIG=/path/to/config.toml` to
 load a custom config file. When a config contains multiple DNS servers, select
