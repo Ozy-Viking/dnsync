@@ -173,8 +173,9 @@ pub fn init_config(path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Append a new server entry to the config file. Creates the file (with an
-/// empty server list plus the new entry) if it does not exist yet.
+/// Append a new server entry to the config file. Creates the file if it does
+/// not exist yet. Existing file content — including comments and formatting —
+/// is preserved; only the new `[[servers]]` block is appended.
 pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<PathBuf> {
     let Some(path) = path.or_else(default_config_path) else {
         return Err(Error::parse(
@@ -182,18 +183,82 @@ pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<Path
         ));
     };
 
+    // Validate via the serde types: check for duplicate IDs etc.
     let mut config = if path.exists() {
         load_from_path(&path)?
     } else {
         AppConfig::default()
     };
-
-    config.servers.push(server);
+    config.servers.push(server.clone());
     config.validate()?;
 
+    // Read the raw file so toml_edit can preserve comments and formatting.
+    let raw = if path.exists() {
+        std::fs::read_to_string(&path)
+            .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?
+    } else {
+        String::new()
+    };
+
+    let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e| {
+        Error::parse(format!("could not parse config file '{}': {e}", path.display()))
+    })?;
+
+    append_server_entry(&mut doc, &server);
+
     ensure_config_dir(&path)?;
-    write_private_file(&path, &config.render_toml()?)?;
+    write_private_file(&path, &doc.to_string())?;
     Ok(path)
+}
+
+/// Append a `[[servers]]` entry to a toml_edit document without touching
+/// any existing content.
+fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfig) {
+    use toml_edit::{Array, ArrayOfTables, Item, Table, value};
+
+    let mut tbl = Table::new();
+    // Blank line before each [[servers]] header for readability.
+    tbl.decor_mut().set_prefix("\n");
+
+    tbl["id"] = value(server.id.as_str());
+    tbl["vendor"] = value(match server.vendor {
+        VendorKind::Technitium => "technitium",
+        VendorKind::Pangolin => "pangolin",
+    });
+    if let Some(ref v) = server.base_url {
+        tbl["base_url"] = value(v.as_str());
+    }
+    if let Some(ref v) = server.token_env {
+        tbl["token_env"] = value(v.as_str());
+    }
+    if let Some(ref v) = server.token {
+        tbl["token"] = value(v.as_str());
+    }
+    if let Some(ref v) = server.org_id {
+        tbl["org_id"] = value(v.as_str());
+    }
+
+    let mut mcp = Table::new();
+    mcp["readonly"] = value(server.mcp.readonly);
+    let mut zones = Array::new();
+    for zone in &server.mcp.allowed_zones {
+        zones.push(zone.as_str());
+    }
+    mcp["allowed_zones"] = value(zones);
+    tbl["mcp"] = Item::Table(mcp);
+
+    match doc.entry("servers") {
+        toml_edit::Entry::Occupied(mut e) => {
+            if let Some(aot) = e.get_mut().as_array_of_tables_mut() {
+                aot.push(tbl);
+            }
+        }
+        toml_edit::Entry::Vacant(e) => {
+            let mut aot = ArrayOfTables::new();
+            aot.push(tbl);
+            e.insert(Item::ArrayOfTables(aot));
+        }
+    }
 }
 
 fn write_default_config(path: &Path, force: bool) -> Result<()> {
@@ -755,6 +820,43 @@ mod tests {
         assert_eq!(config.servers.len(), 2);
         assert!(config.selected_server(Some("default")).is_ok());
         assert!(config.selected_server(Some("lab")).is_ok());
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn add_server_preserves_comments_in_existing_config() {
+        let path = temp_config_path("add-server-comments");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = concat!(
+            "# My DNS servers\n",
+            "[[servers]]\n",
+            "id = \"home\"\n",
+            "# Home server uses its own env var\n",
+            "token_env = \"HOME_TOKEN\"\n",
+        );
+        std::fs::write(&path, original).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let server = DnsServerConfig {
+            id: "lab".to_string(),
+            vendor: VendorKind::Technitium,
+            base_url: None,
+            token: None,
+            token_env: Some("LAB_TOKEN".to_string()),
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+        add_server(Some(path.clone()), server).unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("# My DNS servers"), "top-level comment should be preserved");
+        assert!(written.contains("# Home server uses its own env var"), "inline comment should be preserved");
+        assert!(written.contains("id = \"lab\""), "new server should be appended");
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
