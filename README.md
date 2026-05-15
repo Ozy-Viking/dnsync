@@ -1,6 +1,6 @@
 # dnsync
 
-A Rust CLI + MCP server for [Technitium DNS Server](https://technitium.com/dns/).
+A Rust CLI + MCP server for syncing DNS servers.
 
 Use it interactively from the terminal, or run it as an MCP server so Claude can manage your DNS.
 
