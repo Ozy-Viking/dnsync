@@ -5,6 +5,9 @@ pub use crate::core::dns::service::{DnsRead, DnsService, DnsVendor, DnsWrite};
 #[cfg(feature = "technitium")]
 pub mod technitium;
 
+#[cfg(feature = "pangolin")]
+pub mod pangolin;
+
 pub struct DnsClient<Vendor> {
     vendor_id: VendorKind,
     vendor_client: Vendor,

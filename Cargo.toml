@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [features]
 default = ["technitium"]
 technitium = ["dep:reqwest"]
+pangolin = ["dep:reqwest"]
 
 [dependencies]
 rmcp = { version = "1.6", features = ["server", "transport-io"] }
@@ -33,6 +34,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 rstest = "0.26"
 mockito = "1"
+http = "1"
 
 [profile.release]
 opt-level = 3

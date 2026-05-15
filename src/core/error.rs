@@ -31,26 +31,26 @@ pub enum Error {
     )]
     Http { status: u16, body: String },
 
-    #[cfg(feature = "technitium")]
+    #[cfg(any(feature = "technitium", feature = "pangolin"))]
     /// A network-level failure — connection refused, timeout, DNS resolution, etc.
     #[error("network error: {0}")]
     #[diagnostic(
         code(dns::network),
         help(
-            "Check that the Technitium server is reachable at the configured base URL.\n\
+            "Check that the server is reachable at the configured base URL.\n\
               If using TLS, verify the certificate is trusted."
         )
     )]
     Network(#[source] reqwest::Error),
 
-    #[cfg(feature = "technitium")]
+    #[cfg(any(feature = "technitium", feature = "pangolin"))]
     /// The HTTP response body could not be decoded as JSON.
     #[error("invalid JSON response from server")]
     #[diagnostic(
         code(dns::invalid_json),
         help(
             "The server returned a response that isn't valid JSON.\n\
-              Verify TECHNITIUM_BASE_URL points to the DNS API, not a proxy or redirect."
+              Verify the base URL points to the API, not a proxy or redirect."
         )
     )]
     InvalidJson(#[source] reqwest::Error),
@@ -66,11 +66,33 @@ pub enum Error {
     )]
     Parse { context: String },
 
-    #[cfg(feature = "technitium")]
+    #[cfg(any(feature = "technitium", feature = "pangolin"))]
     /// A MIME type string was rejected by reqwest (should never happen in practice).
     #[error("invalid MIME type")]
     #[diagnostic(code(dns::mime))]
     Mime(#[source] reqwest::Error),
+
+    /// An operation not supported by this vendor backend.
+    #[error("operation not supported by {vendor}: {feature}")]
+    #[diagnostic(
+        code(dns::unsupported),
+        help("This vendor does not support this operation.")
+    )]
+    Unsupported {
+        vendor: &'static str,
+        feature: &'static str,
+    },
+
+    /// The API token lacks the required permissions (HTTP 403).
+    #[error("forbidden: {message}")]
+    #[diagnostic(
+        code(dns::forbidden),
+        help(
+            "The API key does not have sufficient permissions.\n\
+              Check that the token has the access level required for this operation."
+        )
+    )]
+    Forbidden { message: String },
 
     /// An I/O error — typically reading a zone file from disk.
     #[error("{context}")]
@@ -85,7 +107,7 @@ pub enum Error {
 impl Error {
     /// True for transient failures the user might retry (network, timeout).
     pub fn is_transient(&self) -> bool {
-        #[cfg(feature = "technitium")]
+        #[cfg(any(feature = "technitium", feature = "pangolin"))]
         {
             if let Self::Network(e) = self {
                 return e.is_timeout() || e.is_connect();
@@ -105,9 +127,11 @@ impl Error {
             Self::PolicyViolation { .. } => 6,
             Self::Api { .. } => 2,
             Self::Http { .. } => 3,
-            #[cfg(feature = "technitium")]
+            #[cfg(any(feature = "technitium", feature = "pangolin"))]
             Self::Network(_) => 4,
             Self::Io { .. } => 5,
+            Self::Unsupported { .. } => 7,
+            Self::Forbidden { .. } => 8,
             _ => 1,
         }
     }
@@ -137,6 +161,16 @@ impl Error {
         Self::Io {
             context: context.into(),
             source,
+        }
+    }
+
+    pub fn unsupported(vendor: &'static str, feature: &'static str) -> Self {
+        Self::Unsupported { vendor, feature }
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::Forbidden {
+            message: message.into(),
         }
     }
 }

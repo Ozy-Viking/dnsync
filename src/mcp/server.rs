@@ -9,18 +9,14 @@ use serde::Deserialize;
 
 use crate::control_plane::policy::Policy;
 use crate::core::dns::records::RecordData;
-use crate::core::dns::service::{
-    AccessListRead, AccessListWrite, CacheRead, CacheWrite, RecordWrite, SettingsRead, StatsRead,
-    ZoneImport, ZoneRead, ZoneWrite,
-};
+use crate::core::dns::service::DnsService;
 use crate::core::error::Error;
-use crate::vendors::technitium::client::TechnitiumClient;
 
 // ─── Server state ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct DnsServer {
-    client: TechnitiumClient,
+pub struct DnsServer<C> {
+    client: C,
     policy: Policy,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
@@ -341,8 +337,8 @@ pub struct ImportZoneFileParams {
 // ─── Tools ───────────────────────────────────────────────────────────────────
 
 #[tool_router]
-impl DnsServer {
-    pub fn new(client: TechnitiumClient, policy: Policy) -> Self {
+impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
+    pub fn new(client: C, policy: Policy) -> Self {
         Self {
             client,
             policy,
@@ -643,9 +639,9 @@ impl DnsServer {
 // ─── ServerHandler ────────────────────────────────────────────────────────────
 
 #[tool_handler]
-impl ServerHandler for DnsServer {
+impl<C: DnsService + Clone + Send + Sync + 'static> ServerHandler for DnsServer<C> {
     fn get_info(&self) -> ServerInfo {
-        let base = "MCP server for Technitium DNS. Manages zones, records, cache, stats, \
+        let base = "MCP server for DNS management. Manages zones, records, cache, stats, \
                     and block/allow lists. Confirm before calling any destructive tool.";
 
         let mut info = ServerInfo::default();

@@ -24,6 +24,7 @@ allowed_zones = []
 pub enum VendorKind {
     #[default]
     Technitium,
+    Pangolin,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -44,6 +45,7 @@ pub struct DnsServerConfig {
     pub base_url: Option<String>,
     pub token: Option<String>,
     pub token_env: Option<String>,
+    pub org_id: Option<String>,
 
     #[serde(default)]
     pub mcp: McpPermissions,

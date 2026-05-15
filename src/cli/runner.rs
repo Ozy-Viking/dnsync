@@ -2,15 +2,11 @@ use serde_json::Value;
 
 use crate::{
     cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd},
-    core::dns::service::{
-        AccessListRead, AccessListWrite, CacheRead, CacheWrite, RecordWrite, SettingsRead,
-        StatsRead, ZoneImport, ZoneRead, ZoneWrite,
-    },
+    core::dns::service::DnsService,
     core::error::{Error, Result},
-    vendors::technitium::client::TechnitiumClient,
 };
 
-pub async fn run(client: &TechnitiumClient, command: Command) -> Result<()> {
+pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
     let result = match command {
         Command::Mcp => unreachable!("handled in main"),
         Command::Config(_) => unreachable!("handled in main"),
