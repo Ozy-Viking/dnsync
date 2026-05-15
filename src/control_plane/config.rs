@@ -1,8 +1,10 @@
 use std::{
     env,
+    net::IpAddr,
     path::{Path, PathBuf},
 };
 
+use hickory_resolver::Resolver;
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::{Error, Result};
@@ -401,9 +403,10 @@ fn check_config_permissions(_path: &Path) -> Result<()> {
 impl DnsServerConfig {
     /// Returns whether this server is local or external.
     ///
-    /// Uses the explicit `location` config field when set; otherwise infers from
-    /// the effective base URL (`localhost` / private IPs → local).
-    pub fn resolved_location(&self) -> ServerLocation {
+    /// Uses the explicit `location` config field when set; otherwise resolves
+    /// the effective base URL's hostname via hickory — private/loopback IPs
+    /// and `localhost` are `Local`, everything else is `External`.
+    pub async fn resolved_location(&self) -> ServerLocation {
         if let Some(loc) = self.location {
             return loc;
         }
@@ -411,7 +414,7 @@ impl DnsServerConfig {
             VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
             VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
         });
-        if url_is_local(url) {
+        if url_is_local(url).await {
             ServerLocation::Local
         } else {
             ServerLocation::External
@@ -454,38 +457,71 @@ impl DnsServerConfig {
     }
 }
 
-/// Returns true when the URL's host is localhost or a private/loopback IP range.
-fn url_is_local(url: &str) -> bool {
-    // Strip scheme prefix, then take the authority portion (everything before the first '/').
+/// Extracts the host portion (no port, no brackets around IPv6 literals) from a URL.
+fn url_host(url: &str) -> &str {
     let without_scheme = url
         .trim_start_matches("https://")
         .trim_start_matches("http://");
     let authority = without_scheme.split('/').next().unwrap_or(without_scheme);
 
-    // Strip port from non-IPv6 hosts.
-    let host = if authority.starts_with('[') {
-        // IPv6 literal — strip surrounding brackets and port.
+    if authority.starts_with('[') {
+        // IPv6 literal — strip brackets; ignore the trailing `]:port` part.
         authority
             .trim_start_matches('[')
             .split(']')
             .next()
             .unwrap_or(authority)
     } else {
+        // Strip port if present (e.g. "192.168.1.1:5380" → "192.168.1.1").
         authority.rsplit(':').nth(1).unwrap_or(authority)
-    };
+    }
+}
+
+fn is_local_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
+/// Returns true when the URL resolves to a local/private address.
+///
+/// Literal IPs and `localhost` are checked directly. For any other hostname
+/// hickory resolves it to an IP first — if any resolved address is
+/// private/loopback the URL is considered local.
+async fn url_is_local(url: &str) -> bool {
+    let host = url_host(url);
 
     if host == "localhost" || host == "127.0.0.1" || host == "::1" {
         return true;
     }
 
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return match ip {
-            std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
-            std::net::IpAddr::V6(v6) => v6.is_loopback(),
-        };
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return is_local_ip(ip);
     }
 
-    false
+    // Hostname — resolve via hickory and check the resulting addresses.
+    let resolver = match Resolver::builder_tokio() {
+        Ok(builder) => match builder.build() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(%e, "could not build resolver for location check");
+                return false;
+            }
+        },
+        Err(e) => {
+            tracing::debug!(%e, "could not load resolver config for location check");
+            return false;
+        }
+    };
+
+    match resolver.lookup_ip(host).await {
+        Ok(lookup) => lookup.iter().any(is_local_ip),
+        Err(e) => {
+            tracing::debug!(%e, host, "hostname resolution failed during location check");
+            false
+        }
+    }
 }
 
 pub fn default_config_path() -> Option<PathBuf> {
@@ -1064,52 +1100,52 @@ mod tests {
         }
     }
 
-    #[test]
-    fn localhost_url_is_local() {
+    #[tokio::test]
+    async fn localhost_url_is_local() {
         assert_eq!(
-            server_with_url("http://localhost:5380").resolved_location(),
+            server_with_url("http://localhost:5380").resolved_location().await,
             ServerLocation::Local
         );
     }
 
-    #[test]
-    fn loopback_ip_is_local() {
+    #[tokio::test]
+    async fn loopback_ip_is_local() {
         assert_eq!(
-            server_with_url("http://127.0.0.1:5380").resolved_location(),
+            server_with_url("http://127.0.0.1:5380").resolved_location().await,
             ServerLocation::Local
         );
     }
 
-    #[test]
-    fn private_ip_is_local() {
+    #[tokio::test]
+    async fn private_ip_is_local() {
         assert_eq!(
-            server_with_url("http://192.168.1.10:5380").resolved_location(),
+            server_with_url("http://192.168.1.10:5380").resolved_location().await,
             ServerLocation::Local
         );
         assert_eq!(
-            server_with_url("http://10.0.0.1:8080").resolved_location(),
+            server_with_url("http://10.0.0.1:8080").resolved_location().await,
             ServerLocation::Local
         );
     }
 
-    #[test]
-    fn public_ip_is_external() {
+    #[tokio::test]
+    async fn public_ip_is_external() {
         assert_eq!(
-            server_with_url("https://1.2.3.4:5380").resolved_location(),
+            server_with_url("https://1.2.3.4:5380").resolved_location().await,
             ServerLocation::External
         );
     }
 
-    #[test]
-    fn cloud_domain_is_external() {
+    #[tokio::test]
+    async fn cloud_domain_is_external() {
         assert_eq!(
-            server_with_url("https://api.pangolin.net/v1").resolved_location(),
+            server_with_url("https://api.pangolin.net/v1").resolved_location().await,
             ServerLocation::External
         );
     }
 
-    #[test]
-    fn technitium_default_url_is_local() {
+    #[tokio::test]
+    async fn technitium_default_url_is_local() {
         let server = DnsServerConfig {
             id: "test".to_string(),
             vendor: VendorKind::Technitium,
@@ -1120,11 +1156,11 @@ mod tests {
             org_id: None,
             mcp: McpPermissions::default(),
         };
-        assert_eq!(server.resolved_location(), ServerLocation::Local);
+        assert_eq!(server.resolved_location().await, ServerLocation::Local);
     }
 
-    #[test]
-    fn pangolin_default_url_is_external() {
+    #[tokio::test]
+    async fn pangolin_default_url_is_external() {
         let server = DnsServerConfig {
             id: "test".to_string(),
             vendor: VendorKind::Pangolin,
@@ -1135,18 +1171,39 @@ mod tests {
             org_id: None,
             mcp: McpPermissions::default(),
         };
-        assert_eq!(server.resolved_location(), ServerLocation::External);
+        assert_eq!(server.resolved_location().await, ServerLocation::External);
+    }
+
+    #[tokio::test]
+    async fn explicit_location_overrides_auto_detection() {
+        let mut server = server_with_url("https://api.pangolin.net");
+        server.location = Some(ServerLocation::Local);
+        assert_eq!(server.resolved_location().await, ServerLocation::Local);
+
+        server.location = Some(ServerLocation::External);
+        assert_eq!(server.resolved_location().await, ServerLocation::External);
+    }
+
+    // ── url_host extraction ───────────────────────────────────────────────────
+
+    #[test]
+    fn url_host_strips_scheme_and_port() {
+        assert_eq!(url_host("http://localhost:5380"), "localhost");
+        assert_eq!(url_host("https://192.168.1.1:443"), "192.168.1.1");
+        assert_eq!(url_host("https://api.pangolin.net/v1"), "api.pangolin.net");
     }
 
     #[test]
-    fn explicit_location_overrides_auto_detection() {
-        let mut server = server_with_url("https://api.pangolin.net");
-        server.location = Some(ServerLocation::Local);
-        assert_eq!(server.resolved_location(), ServerLocation::Local);
-
-        server.location = Some(ServerLocation::External);
-        assert_eq!(server.resolved_location(), ServerLocation::External);
+    fn url_host_handles_ipv6_literals() {
+        assert_eq!(url_host("http://[::1]:5380"), "::1");
     }
+
+    #[test]
+    fn url_host_no_port() {
+        assert_eq!(url_host("http://myserver"), "myserver");
+    }
+
+    // ── location field TOML round-trip ────────────────────────────────────────
 
     #[test]
     fn location_field_round_trips_in_toml() {
