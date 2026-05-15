@@ -1,44 +1,41 @@
-#[cfg(not(feature = "technitium"))]
+#[cfg(not(any(feature = "technitium", feature = "pangolin")))]
 compile_error!(
-    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`."
+    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium` or `pangolin`."
 );
 
-#[cfg(not(feature = "technitium"))]
+#[cfg(not(any(feature = "technitium", feature = "pangolin")))]
 fn main() {}
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use dnslib::{
     cli,
     control_plane::{config, policy},
-    core::error,
+    core::{dns::service::DnsService, error},
     mcp::server,
-    vendors::technitium::client,
 };
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use std::process;
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use clap::Parser;
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use miette::Report;
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use rmcp::ServiceExt;
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use tracing_subscriber::{EnvFilter, fmt};
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use cli::{Cli, Command, ConfigCmd};
-#[cfg(feature = "technitium")]
-use client::TechnitiumClient;
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use error::Error;
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use policy::Policy;
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 use server::DnsServer;
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -53,7 +50,7 @@ async fn main() {
     process::exit(run(cli).await);
 }
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 async fn run(cli: Cli) -> i32 {
     if let Command::Config(ConfigCmd::Init { force }) = cli.command {
         return match config::init_config(cli.config, force) {
@@ -65,21 +62,75 @@ async fn run(cli: Cli) -> i32 {
         };
     }
 
-    let config = match config::AppConfig::load(cli.config.clone()) {
+    let app_config = match config::AppConfig::load(cli.config.clone()) {
         Ok(config) => config,
         Err(e) => return render_error(e),
     };
 
-    let (base_url, token, policy) = match resolve_runtime(&cli, config.as_ref()) {
-        Ok(runtime) => runtime,
+    let policy = match cli_policy(&cli, app_config.as_ref()) {
+        Ok(p) => p,
         Err(e) => return render_error(e),
     };
 
-    let http_client = match TechnitiumClient::new(base_url.clone(), token) {
-        Ok(c) => c,
-        Err(e) => return render_error(e),
-    };
+    let server_config = app_config
+        .as_ref()
+        .and_then(|c| c.selected_server(cli.server.as_deref()).ok());
 
+    let vendor = server_config
+        .map(|s| s.vendor)
+        .unwrap_or(config::VendorKind::Technitium);
+
+    match vendor {
+        #[cfg(feature = "technitium")]
+        config::VendorKind::Technitium => {
+            use dnslib::vendors::technitium::client::TechnitiumClient;
+
+            let (base_url, token) =
+                match resolve_technitium_credentials(&cli, app_config.as_ref()) {
+                    Ok(v) => v,
+                    Err(e) => return render_error(e),
+                };
+
+            let client = match TechnitiumClient::new(base_url.clone(), token) {
+                Ok(c) => c,
+                Err(e) => return render_error(e),
+            };
+
+            run_with_client(cli, client, policy).await
+        }
+
+        #[cfg(feature = "pangolin")]
+        config::VendorKind::Pangolin => {
+            use dnslib::vendors::pangolin::client::PangolinClient;
+
+            let (base_url, token, org_id) =
+                match resolve_pangolin_credentials(&cli, app_config.as_ref()) {
+                    Ok(v) => v,
+                    Err(e) => return render_error(e),
+                };
+
+            let client = match PangolinClient::new(base_url.clone(), token, org_id) {
+                Ok(c) => c,
+                Err(e) => return render_error(e),
+            };
+
+            run_with_client(cli, client, policy).await
+        }
+
+        #[allow(unreachable_patterns)]
+        _ => {
+            eprintln!("error: vendor not supported in this build");
+            1
+        }
+    }
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
+async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
+    cli: Cli,
+    client: C,
+    policy: Policy,
+) -> i32 {
     match cli.command {
         Command::Mcp => {
             if policy.readonly {
@@ -88,9 +139,9 @@ async fn run(cli: Cli) -> i32 {
             if let Some(ref zones) = policy.allowed_zones {
                 tracing::info!("MCP server zone restriction: {}", zones.join(", "));
             }
-            tracing::info!("Starting MCP server (stdio) → {}", base_url);
+            tracing::info!("Starting MCP server (stdio)");
 
-            let dns_server = DnsServer::new(http_client, policy);
+            let dns_server = DnsServer::new(client, policy);
             let transport = (tokio::io::stdin(), tokio::io::stdout());
             match dns_server.serve(transport).await {
                 Ok(service) => match service.waiting().await {
@@ -106,14 +157,14 @@ async fn run(cli: Cli) -> i32 {
                 }
             }
         }
-        other => match cli::runner::run(&http_client, other).await {
+        other => match cli::runner::run(&client, other).await {
             Ok(_) => 0,
             Err(e) => render_error(e),
         },
     }
 }
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 fn render_error(e: Error) -> i32 {
     let code = e.exit_code();
     eprintln!("{:?}", Report::from(e));
@@ -121,10 +172,10 @@ fn render_error(e: Error) -> i32 {
 }
 
 #[cfg(feature = "technitium")]
-fn resolve_runtime(
+fn resolve_technitium_credentials(
     cli: &Cli,
     config: Option<&config::AppConfig>,
-) -> Result<(String, String, Policy), Error> {
+) -> Result<(String, String), Error> {
     let Some(config) = config else {
         let base_url = cli
             .base_url
@@ -133,28 +184,98 @@ fn resolve_runtime(
         let token = cli.token.clone().ok_or_else(|| {
             Error::parse("API token is required from --token, TECHNITIUM_API_TOKEN, or config")
         })?;
-        return Ok((base_url, token, cli_policy(cli, None)?));
+        return Ok((base_url, token));
     };
 
     let server = config.selected_server(cli.server.as_deref())?;
-    match server.vendor {
-        config::VendorKind::Technitium => {
-            let base_url = server.resolved_base_url(cli.base_url.as_deref());
-            let token = server.resolved_token(cli.token.as_deref())?;
-            Ok((base_url, token, cli_policy(cli, Some(&server.mcp))?))
-        }
-    }
+    let base_url = server.resolved_base_url(cli.base_url.as_deref());
+    let token = server.resolved_token(cli.token.as_deref())?;
+    Ok((base_url, token))
 }
 
-#[cfg(feature = "technitium")]
-fn cli_policy(cli: &Cli, mcp: Option<&config::McpPermissions>) -> Result<Policy, Error> {
-    let readonly = cli.readonly || mcp.is_some_and(|permissions| permissions.readonly);
-    let allowed_zones = allowed_zones(cli, mcp)?;
+#[cfg(feature = "pangolin")]
+fn resolve_pangolin_credentials(
+    cli: &Cli,
+    config: Option<&config::AppConfig>,
+) -> Result<(String, String, String), Error> {
+    use std::env;
 
+    let (base_url, token, org_id_opt) = if let Some(config) = config {
+        let server = config.selected_server(cli.server.as_deref())?;
+        let base_url = cli
+            .base_url
+            .clone()
+            .or_else(|| env::var("DNSYNC_PANGOLIN_BASE_URL").ok())
+            .or_else(|| server.base_url.clone())
+            .ok_or_else(|| {
+                Error::parse(
+                    "Pangolin base URL is required from --base-url, DNSYNC_PANGOLIN_BASE_URL, or config base_url",
+                )
+            })?;
+
+        let token = cli
+            .token
+            .clone()
+            .or_else(|| env::var("DNSYNC_PANGOLIN_API_TOKEN").ok())
+            .or_else(|| {
+                server.token_env.as_ref().and_then(|k| env::var(k).ok())
+            })
+            .or_else(|| server.token.clone())
+            .ok_or_else(|| {
+                Error::parse(
+                    "Pangolin API token is required from --token, DNSYNC_PANGOLIN_API_TOKEN, token_env, or config token",
+                )
+            })?;
+
+        let org_id = env::var("DNSYNC_PANGOLIN_ORG_ID")
+            .ok()
+            .or_else(|| server.org_id.clone());
+
+        (base_url, token, org_id)
+    } else {
+        let base_url = cli
+            .base_url
+            .clone()
+            .or_else(|| env::var("DNSYNC_PANGOLIN_BASE_URL").ok())
+            .ok_or_else(|| {
+                Error::parse(
+                    "Pangolin base URL is required from --base-url or DNSYNC_PANGOLIN_BASE_URL",
+                )
+            })?;
+        let token = cli
+            .token
+            .clone()
+            .or_else(|| env::var("DNSYNC_PANGOLIN_API_TOKEN").ok())
+            .ok_or_else(|| {
+                Error::parse(
+                    "Pangolin API token is required from --token or DNSYNC_PANGOLIN_API_TOKEN",
+                )
+            })?;
+        let org_id = env::var("DNSYNC_PANGOLIN_ORG_ID").ok();
+        (base_url, token, org_id)
+    };
+
+    let org_id = org_id_opt.ok_or_else(|| {
+        Error::parse(
+            "Pangolin org ID is required from DNSYNC_PANGOLIN_ORG_ID or config org_id",
+        )
+    })?;
+
+    Ok((base_url, token, org_id))
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
+fn cli_policy(cli: &Cli, config: Option<&config::AppConfig>) -> Result<Policy, Error> {
+    let mcp = config
+        .and_then(|c| c.selected_server(cli.server.as_deref()).ok())
+        .map(|s| &s.mcp);
+
+    let readonly = cli.readonly || mcp.is_some_and(|p| p.readonly);
+    let allowed_zones = allowed_zones(cli, mcp)?;
     Ok(Policy::new(readonly, allowed_zones))
 }
 
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 fn allowed_zones(
     cli: &Cli,
     mcp: Option<&config::McpPermissions>,
@@ -186,7 +307,7 @@ fn allowed_zones(
     Ok(Some(cli.allow_zone.clone()))
 }
 
-#[cfg(all(test, feature = "technitium"))]
+#[cfg(all(test, any(feature = "technitium", feature = "pangolin")))]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -241,7 +362,7 @@ mod tests {
     fn cli_allow_zone_can_narrow_configured_zones() {
         let policy = cli_policy(
             &cli(vec!["sub.example.com".to_string()]),
-            Some(&permissions()),
+            None,
         )
         .unwrap();
 
@@ -251,8 +372,22 @@ mod tests {
 
     #[test]
     fn cli_allow_zone_cannot_broaden_configured_zones() {
+        // Build a minimal AppConfig with one server that has allowed_zones
+        let config: config::AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "home"
+                vendor = "technitium"
+                token = "tok"
+
+                [servers.mcp]
+                allowed_zones = ["example.com"]
+            "#,
+        )
+        .unwrap();
+
         let err =
-            cli_policy(&cli(vec!["other.net".to_string()]), Some(&permissions())).unwrap_err();
+            cli_policy(&cli(vec!["other.net".to_string()]), Some(&config)).unwrap_err();
 
         assert!(err.to_string().contains("outside this server's configured"));
     }
