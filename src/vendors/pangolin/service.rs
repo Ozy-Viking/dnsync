@@ -3,12 +3,18 @@
 //! Pangolin is a WireGuard reverse-proxy platform, not a traditional DNS server.
 //! The integration is **read-only**:
 //!   - `list_zones`   → GET /org/{orgId}/domains
-//!   - `list_records` → GET /org/{orgId}/resources  (filtered, then mapped)
+//!   - `list_records` → GET /org/{orgId}/domain/{domainId}/dns-records
 //!   - `get_settings` → GET /orgs  (org discovery)
 //!
 //! All write and non-DNS operations return `Error::Unsupported`.
 
-use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+use hickory_resolver::Resolver;
+use serde::Deserialize;
+#[cfg(test)]
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::control_plane::config::VendorKind;
@@ -16,8 +22,8 @@ use crate::core::dns::capabilities::VendorCapabilities;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
 use crate::core::dns::service::{
-    AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, RecordWrite, SettingsRead,
-    StatsRead, ZoneImport, ZoneRead, ZoneWrite,
+    AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
+    RecordWrite, SettingsRead, StatsRead, ZoneImport, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 use crate::vendors::pangolin::client::PangolinClient;
@@ -35,6 +41,7 @@ struct PangolinDomain {
     failed: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PangolinTarget {
@@ -49,6 +56,7 @@ struct PangolinTarget {
     site_online: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PangolinSite {
@@ -57,6 +65,7 @@ struct PangolinSite {
     online: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PangolinResource {
@@ -74,6 +83,17 @@ struct PangolinResource {
     sites: Vec<PangolinSite>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PangolinDnsRecord {
+    id: u64,
+    domain_id: String,
+    record_type: String,
+    base_domain: String,
+    value: String,
+    verified: bool,
+}
+
 // ─── Parsing helpers ──────────────────────────────────────────────────────────
 
 fn parse_domains(data: &Value) -> Result<Vec<PangolinDomain>> {
@@ -88,6 +108,7 @@ fn parse_domains(data: &Value) -> Result<Vec<PangolinDomain>> {
         .pipe(Ok)
 }
 
+#[cfg(test)]
 fn parse_resources(data: &Value) -> Result<Vec<PangolinResource>> {
     let arr = data
         .get("resources")
@@ -96,6 +117,17 @@ fn parse_resources(data: &Value) -> Result<Vec<PangolinResource>> {
 
     arr.iter()
         .filter_map(|v| serde_json::from_value::<PangolinResource>(v.clone()).ok())
+        .collect::<Vec<_>>()
+        .pipe(Ok)
+}
+
+fn parse_dns_records(data: &Value) -> Result<Vec<PangolinDnsRecord>> {
+    let arr = data
+        .as_array()
+        .ok_or_else(|| Error::parse("Pangolin DNS records response missing data array"))?;
+
+    arr.iter()
+        .filter_map(|v| serde_json::from_value::<PangolinDnsRecord>(v.clone()).ok())
         .collect::<Vec<_>>()
         .pipe(Ok)
 }
@@ -126,6 +158,7 @@ fn extract_subdomain(full_domain: &str, base_domain: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn resource_to_zone_record(resource: &PangolinResource, base_domain: &str) -> ZoneRecord {
     let name = extract_subdomain(&resource.full_domain, base_domain);
     let record_type = if resource.http {
@@ -152,6 +185,116 @@ fn resource_to_zone_record(resource: &PangolinResource, base_domain: &str) -> Zo
         expiry_ttl: 0,
         data,
         parsed: None,
+    }
+}
+
+fn dns_record_to_zone_record(
+    record: &PangolinDnsRecord,
+    zone_name: &str,
+    resolved_ips: &[IpAddr],
+    use_local_ip: bool,
+) -> ZoneRecord {
+    let record_type = record.record_type.to_uppercase();
+    let name = extract_subdomain(&record.base_domain, zone_name);
+    let value = preferred_record_value(&record_type, &record.value, resolved_ips, use_local_ip);
+    let data = dns_record_data(&record_type, &value);
+
+    ZoneRecord {
+        name,
+        record_type,
+        ttl: 0,
+        disabled: !record.verified,
+        comments: format!("Pangolin DNS record {}", record.id),
+        expiry_ttl: 0,
+        data,
+        parsed: None,
+    }
+}
+
+fn preferred_record_value(
+    record_type: &str,
+    value: &str,
+    resolved_ips: &[IpAddr],
+    use_local_ip: bool,
+) -> String {
+    if !use_local_ip {
+        return value.to_string();
+    }
+
+    match record_type {
+        "A" => resolved_ips
+            .iter()
+            .find_map(|ip| match ip {
+                IpAddr::V4(ip) if is_local_ipv4(ip) => Some(ip.to_string()),
+                _ => None,
+            })
+            .unwrap_or_else(|| value.to_string()),
+        "AAAA" => resolved_ips
+            .iter()
+            .find_map(|ip| match ip {
+                IpAddr::V6(ip) if is_local_ipv6(ip) => Some(ip.to_string()),
+                _ => None,
+            })
+            .unwrap_or_else(|| value.to_string()),
+        _ => value.to_string(),
+    }
+}
+
+fn dns_record_data(record_type: &str, value: &str) -> Value {
+    match record_type {
+        "A" | "AAAA" => serde_json::json!({ "ipAddress": value }),
+        "NS" => serde_json::json!({ "nameServer": value, "glue": null }),
+        "CNAME" => serde_json::json!({ "cname": value }),
+        "TXT" => serde_json::json!({ "text": value, "splitText": false }),
+        _ => serde_json::json!({ "value": value }),
+    }
+}
+
+fn is_local_ipv4(ip: &Ipv4Addr) -> bool {
+    ip.is_private()
+}
+
+fn is_local_ipv6(ip: &Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    (segments[0] & 0xfe00) == 0xfc00
+}
+
+async fn resolve_local_candidates(names: &[String]) -> HashMap<String, Vec<IpAddr>> {
+    let resolver = match Resolver::builder_tokio() {
+        Ok(builder) => match builder.build() {
+            Ok(resolver) => resolver,
+            Err(error) => {
+                tracing::debug!(%error, "failed to build DNS resolver for local IP lookup");
+                return HashMap::new();
+            }
+        },
+        Err(error) => {
+            tracing::debug!(%error, "failed to load DNS resolver config for local IP lookup");
+            return HashMap::new();
+        }
+    };
+
+    let mut resolved = HashMap::new();
+    for name in names {
+        match resolver.lookup_ip(name.as_str()).await {
+            Ok(lookup) => {
+                let ips: Vec<IpAddr> = lookup.iter().filter(is_local_ip).collect();
+                if !ips.is_empty() {
+                    resolved.insert(name.clone(), ips);
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, name, "local IP lookup failed");
+            }
+        }
+    }
+    resolved
+}
+
+fn is_local_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => is_local_ipv4(ip),
+        IpAddr::V6(ip) => is_local_ipv6(ip),
     }
 }
 
@@ -187,7 +330,12 @@ impl ZoneRead for PangolinClient {
         .await
     }
 
-    async fn list_records(&self, domain: &str, zone: Option<&str>) -> Result<ListRecordsResponse> {
+    async fn list_records(
+        &self,
+        domain: &str,
+        zone: Option<&str>,
+        options: ListRecordsOptions,
+    ) -> Result<ListRecordsResponse> {
         let zone_name = zone.unwrap_or(domain);
 
         // Step 1 — resolve domainId for the requested zone.
@@ -209,32 +357,53 @@ impl ZoneRead for PangolinClient {
                 ))
             })?;
 
-        // Step 2 — fetch all resources (Pangolin has no server-side domain filter).
-        let resources_data = self
+        let records_data = self
             .get(
-                &format!("/org/{}/resources", self.org_id),
-                &[
-                    ("pageSize", "1000".to_string()),
-                    ("page", "1".to_string()),
-                ],
+                &format!(
+                    "/org/{}/domain/{}/dns-records",
+                    self.org_id, matching.domain_id
+                ),
+                &[],
             )
             .await?;
 
-        let all_resources = parse_resources(&resources_data)?;
+        let dns_records = parse_dns_records(&records_data)?;
+        let lookup_names = if options.use_local_ip {
+            dns_records
+                .iter()
+                .filter(|r| matches!(r.record_type.to_uppercase().as_str(), "A" | "AAAA"))
+                .map(|r| r.base_domain.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let resolved = resolve_local_candidates(&lookup_names).await;
 
-        // Step 3 — filter by domainId; optionally narrow to a specific fullDomain.
+        // Step 3 — filter by domainId; optionally narrow to a specific record name.
         let specific = zone.is_some() && !domain.eq_ignore_ascii_case(zone_name);
-        let records: Vec<ZoneRecord> = all_resources
+        let records: Vec<ZoneRecord> = dns_records
             .iter()
             .filter(|r| r.domain_id == matching.domain_id)
-            .filter(|r| !specific || r.full_domain.eq_ignore_ascii_case(domain))
-            .map(|r| resource_to_zone_record(r, &matching.base_domain))
+            .filter(|r| !specific || r.base_domain.eq_ignore_ascii_case(domain))
+            .map(|r| {
+                dns_record_to_zone_record(
+                    r,
+                    &matching.base_domain,
+                    resolved
+                        .get(&r.base_domain)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    options.use_local_ip,
+                )
+            })
             .collect();
 
         let zone_info = ZoneInfo {
             name: matching.base_domain.clone(),
             zone_type: format!("Pangolin/{}", matching.domain_type),
-            disabled: false,
+            disabled: matching.failed || !matching.verified,
             dnssec_status: None,
         };
 
@@ -268,11 +437,22 @@ impl ZoneWrite for PangolinClient {
 // ─── RecordWrite (unsupported) ────────────────────────────────────────────────
 
 impl RecordWrite for PangolinClient {
-    async fn add_record(&self, _zone: &str, _domain: &str, _ttl: u32, _record: &RecordData) -> Result<Value> {
+    async fn add_record(
+        &self,
+        _zone: &str,
+        _domain: &str,
+        _ttl: u32,
+        _record: &RecordData,
+    ) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "record add"))
     }
 
-    async fn delete_record(&self, _zone: &str, _domain: &str, _type_params: &[(&str, String)]) -> Result<Value> {
+    async fn delete_record(
+        &self,
+        _zone: &str,
+        _domain: &str,
+        _type_params: &[(&str, String)],
+    ) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "record delete"))
     }
 }
@@ -356,7 +536,12 @@ impl SettingsRead for PangolinClient {
     /// Use this to discover the `org_id` value for your dnsync config.
     /// SSH CA key fields are omitted from the output.
     async fn get_settings(&self) -> Result<Value> {
-        let data = self.get("/orgs", &[("limit", "1000".to_string()), ("offset", "0".to_string())]).await?;
+        let data = self
+            .get(
+                "/orgs",
+                &[("limit", "1000".to_string()), ("offset", "0".to_string())],
+            )
+            .await?;
         Ok(redact_org_keys(data))
     }
 }
@@ -422,7 +607,12 @@ mod tests {
 
     // ── resource_to_zone_record ───────────────────────────────────────────────
 
-    fn make_resource(full_domain: &str, http: bool, protocol: &str, enabled: bool) -> PangolinResource {
+    fn make_resource(
+        full_domain: &str,
+        http: bool,
+        protocol: &str,
+        enabled: bool,
+    ) -> PangolinResource {
         PangolinResource {
             resource_id: 1,
             name: "Test".to_string(),
@@ -548,6 +738,130 @@ mod tests {
     fn missing_resources_key_returns_parse_error() {
         let err = parse_resources(&json!({})).unwrap_err();
         assert!(matches!(err, Error::Parse { ref context } if context.contains("resources")));
+    }
+
+    // ── Pangolin DNS records ──────────────────────────────────────────────────
+
+    #[test]
+    fn parses_dns_records_array() {
+        let records = parse_dns_records(&json!([
+            {
+                "id": 18720,
+                "domainId": "y61yv7gv7qmn2js",
+                "recordType": "NS",
+                "baseDomain": "app.hankin.io",
+                "value": "ns1.pangolin-ns.net",
+                "verified": true
+            }
+        ]))
+        .unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, 18720);
+        assert_eq!(records[0].record_type, "NS");
+        assert_eq!(records[0].value, "ns1.pangolin-ns.net");
+    }
+
+    #[test]
+    fn missing_dns_records_array_returns_parse_error() {
+        let err = parse_dns_records(&json!({})).unwrap_err();
+        assert!(matches!(err, Error::Parse { ref context } if context.contains("DNS records")));
+    }
+
+    #[test]
+    fn ns_dns_record_maps_to_normalized_zone_record() {
+        let record = PangolinDnsRecord {
+            id: 18720,
+            domain_id: "y61yv7gv7qmn2js".to_string(),
+            record_type: "NS".to_string(),
+            base_domain: "app.hankin.io".to_string(),
+            value: "ns1.pangolin-ns.net".to_string(),
+            verified: true,
+        };
+
+        let zone_record = dns_record_to_zone_record(&record, "app.hankin.io", &[], false);
+
+        assert_eq!(zone_record.name, "@");
+        assert_eq!(zone_record.record_type, "NS");
+        assert_eq!(zone_record.data["nameServer"], "ns1.pangolin-ns.net");
+        assert_eq!(zone_record.data["glue"], serde_json::Value::Null);
+        assert!(!zone_record.disabled);
+    }
+
+    #[test]
+    fn a_dns_record_maps_to_normalized_zone_record() {
+        let record = PangolinDnsRecord {
+            id: 11,
+            domain_id: "hankin".to_string(),
+            record_type: "A".to_string(),
+            base_domain: "*.hankin.io".to_string(),
+            value: "144.6.233.253".to_string(),
+            verified: true,
+        };
+
+        let zone_record = dns_record_to_zone_record(&record, "hankin.io", &[], false);
+
+        assert_eq!(zone_record.name, "*");
+        assert_eq!(zone_record.record_type, "A");
+        assert_eq!(zone_record.data["ipAddress"], "144.6.233.253");
+    }
+
+    #[test]
+    fn cname_dns_record_maps_to_normalized_zone_record() {
+        let record = PangolinDnsRecord {
+            id: 18724,
+            domain_id: "4u6jvem261kcg4k".to_string(),
+            record_type: "CNAME".to_string(),
+            base_domain: "_acme-challenge.huly.hankin.io".to_string(),
+            value: "_acme-challenge.4u6jvem261kcg4k.cname.pangolin-ns.net".to_string(),
+            verified: true,
+        };
+
+        let zone_record = dns_record_to_zone_record(&record, "huly.hankin.io", &[], false);
+
+        assert_eq!(zone_record.name, "_acme-challenge");
+        assert_eq!(zone_record.record_type, "CNAME");
+        assert_eq!(
+            zone_record.data["cname"],
+            "_acme-challenge.4u6jvem261kcg4k.cname.pangolin-ns.net"
+        );
+    }
+
+    #[test]
+    fn local_ip_flag_prefers_local_ipv4_for_a_records() {
+        let record = PangolinDnsRecord {
+            id: 11,
+            domain_id: "hankin".to_string(),
+            record_type: "A".to_string(),
+            base_domain: "hankin.io".to_string(),
+            value: "144.6.233.253".to_string(),
+            verified: true,
+        };
+        let resolved = vec![
+            "144.6.233.253".parse().unwrap(),
+            "192.168.1.10".parse().unwrap(),
+        ];
+
+        let zone_record = dns_record_to_zone_record(&record, "hankin.io", &resolved, true);
+
+        assert_eq!(zone_record.data["ipAddress"], "192.168.1.10");
+    }
+
+    #[test]
+    fn local_ip_flag_does_not_override_ns_records() {
+        let record = PangolinDnsRecord {
+            id: 18720,
+            domain_id: "y61yv7gv7qmn2js".to_string(),
+            record_type: "NS".to_string(),
+            base_domain: "app.hankin.io".to_string(),
+            value: "ns1.pangolin-ns.net".to_string(),
+            verified: true,
+        };
+        let resolved = vec!["192.168.1.10".parse().unwrap()];
+
+        let zone_record = dns_record_to_zone_record(&record, "app.hankin.io", &resolved, true);
+
+        assert_eq!(zone_record.data["nameServer"], "ns1.pangolin-ns.net");
     }
 
     // ── redact_org_keys ───────────────────────────────────────────────────────

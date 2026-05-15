@@ -88,6 +88,8 @@ Flags and environment variables override config values:
 
 Token resolution per server: `--token` / `TECHNITIUM_API_TOKEN` → `token_env` (env var named in config) → `token` (literal in config).
 
+For `vendor = "pangolin"`, the base URL defaults to `https://api.pangolin.net/v1` when no `--base-url`, `DNSYNC_PANGOLIN_BASE_URL`, or config `base_url` is set.
+
 ---
 
 ## CLI Usage
@@ -123,11 +125,18 @@ dns zone delete example.com
 
 ```bash
 dns record list example.com
+dns record list example.com --use-local-ip
 dns record add --zone example.com --domain www.example.com --type A --value 93.184.216.34
 dns record add --zone example.com --domain example.com --type MX --value mail.example.com
 dns record add --zone example.com --domain example.com --type TXT --value "v=spf1 ~all"
 dns record delete --zone example.com --domain www.example.com --type A --value 93.184.216.34
 ```
+
+For Pangolin servers, `record list` reads Pangolin's real DNS records from
+`/org/{orgId}/domain/{domainId}/dns-records` and normalizes them into the same
+record shape used by other vendors. `--use-local-ip` optionally resolves A/AAAA
+record names with Hickory and prefers a private/local address when one is
+visible; without the flag, provider API values are preserved exactly.
 
 ### Cache
 

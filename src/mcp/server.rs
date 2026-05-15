@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::control_plane::policy::Policy;
 use crate::core::dns::records::RecordData;
-use crate::core::dns::service::DnsService;
+use crate::core::dns::service::{DnsService, ListRecordsOptions};
 use crate::core::error::Error;
 
 // ─── Server state ─────────────────────────────────────────────────────────────
@@ -52,6 +52,9 @@ pub struct ListRecordsParams {
     pub domain: String,
     /// Zone name (if different from domain)
     pub zone: Option<String>,
+    /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
+    #[serde(default, rename = "useLocalIp", alias = "use_local_ip")]
+    pub use_local_ip: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -455,7 +458,13 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
             .check_zone(p.zone.as_deref().unwrap_or(&p.domain))
             .map_err(mcp_err)?;
         self.client
-            .list_records(&p.domain, p.zone.as_deref())
+            .list_records(
+                &p.domain,
+                p.zone.as_deref(),
+                ListRecordsOptions {
+                    use_local_ip: p.use_local_ip.unwrap_or(false),
+                },
+            )
             .await
             .and_then(|r| serde_json::to_value(&r).map_err(|e| Error::parse(e.to_string())))
             .map(json_result)

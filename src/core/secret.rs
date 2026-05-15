@@ -16,7 +16,7 @@ impl ApiToken {
 
     /// Returns the raw token value. Call only at HTTP authentication boundaries.
     pub fn expose_for_auth(&self) -> &str {
-        self.0.expose_secret().as_str()
+        self.0.expose_secret()
     }
 }
 

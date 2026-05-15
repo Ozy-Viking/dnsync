@@ -1,4 +1,4 @@
-#[cfg(feature = "technitium")]
+#[cfg(any(feature = "technitium", feature = "pangolin"))]
 pub mod runner;
 
 use clap::{Parser, Subcommand};
@@ -180,6 +180,9 @@ pub enum RecordCmd {
         domain: String,
         #[arg(long)]
         zone: Option<String>,
+        /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
+        #[arg(long)]
+        use_local_ip: bool,
     },
     /// Add a record — type is a subcommand with typed fields
     Add {

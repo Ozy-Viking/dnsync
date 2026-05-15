@@ -13,6 +13,11 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::error::Result;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListRecordsOptions {
+    pub use_local_ip: bool,
+}
+
 pub trait DnsVendor {
     fn kind(&self) -> VendorKind;
 
@@ -30,6 +35,7 @@ pub trait ZoneRead {
         &'a self,
         domain: &'a str,
         zone: Option<&'a str>,
+        options: ListRecordsOptions,
     ) -> impl Future<Output = Result<ListRecordsResponse>> + Send + 'a;
 }
 

@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::{
     cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd},
-    core::dns::service::DnsService,
+    core::dns::service::{DnsService, ListRecordsOptions},
     core::error::{Error, Result},
 };
 
@@ -44,10 +44,20 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         },
 
         Command::Record(cmd) => match cmd {
-            RecordCmd::List { domain, zone } => {
-                serde_json::to_value(client.list_records(&domain, zone.as_deref()).await?)
-                    .map_err(|e| Error::parse(e.to_string()))?
-            }
+            RecordCmd::List {
+                domain,
+                zone,
+                use_local_ip,
+            } => serde_json::to_value(
+                client
+                    .list_records(
+                        &domain,
+                        zone.as_deref(),
+                        ListRecordsOptions { use_local_ip },
+                    )
+                    .await?,
+            )
+            .map_err(|e| Error::parse(e.to_string()))?,
             RecordCmd::Add {
                 zone,
                 domain,

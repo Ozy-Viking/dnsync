@@ -69,12 +69,24 @@ async fn run(cli: Cli) -> i32 {
                     Err(e) => return render_error(e),
                 };
                 match toml {
-                    Ok(s) => { print!("{s}"); 0 }
+                    Ok(s) => {
+                        print!("{s}");
+                        0
+                    }
                     Err(e) => render_error(e),
                 }
             }
 
-            ConfigCmd::Add { id, vendor, base_url, token_env, token, org_id, readonly, allow_zone } => {
+            ConfigCmd::Add {
+                id,
+                vendor,
+                base_url,
+                token_env,
+                token,
+                org_id,
+                readonly,
+                allow_zone,
+            } => {
                 let server = config::DnsServerConfig {
                     id,
                     vendor,
@@ -121,11 +133,11 @@ async fn run(cli: Cli) -> i32 {
         config::VendorKind::Technitium => {
             use dnslib::vendors::technitium::client::TechnitiumClient;
 
-            let (base_url, token) =
-                match resolve_technitium_credentials(&cli, app_config.as_ref()) {
-                    Ok(v) => v,
-                    Err(e) => return render_error(e),
-                };
+            let (base_url, token) = match resolve_technitium_credentials(&cli, app_config.as_ref())
+            {
+                Ok(v) => v,
+                Err(e) => return render_error(e),
+            };
 
             let client = match TechnitiumClient::new(base_url.clone(), token) {
                 Ok(c) => c,
@@ -216,7 +228,7 @@ fn resolve_technitium_credentials(
         let base_url = cli
             .base_url
             .clone()
-            .unwrap_or_else(|| "http://localhost:5380".to_string());
+            .unwrap_or_else(|| config::TECHNITIUM_DEFAULT_BASE_URL.to_string());
         let token = cli
             .token
             .clone()
@@ -247,11 +259,7 @@ fn resolve_pangolin_credentials(
             .clone()
             .or_else(|| env::var("DNSYNC_PANGOLIN_BASE_URL").ok())
             .or_else(|| server.base_url.clone())
-            .ok_or_else(|| {
-                Error::parse(
-                    "Pangolin base URL is required from --base-url, DNSYNC_PANGOLIN_BASE_URL, or config base_url",
-                )
-            })?;
+            .unwrap_or_else(|| config::PANGOLIN_DEFAULT_BASE_URL.to_string());
 
         let token = cli
             .token
@@ -278,11 +286,7 @@ fn resolve_pangolin_credentials(
             .base_url
             .clone()
             .or_else(|| env::var("DNSYNC_PANGOLIN_BASE_URL").ok())
-            .ok_or_else(|| {
-                Error::parse(
-                    "Pangolin base URL is required from --base-url or DNSYNC_PANGOLIN_BASE_URL",
-                )
-            })?;
+            .unwrap_or_else(|| config::PANGOLIN_DEFAULT_BASE_URL.to_string());
         let token = cli
             .token
             .clone()
@@ -298,9 +302,7 @@ fn resolve_pangolin_credentials(
     };
 
     let org_id = org_id_opt.ok_or_else(|| {
-        Error::parse(
-            "Pangolin org ID is required from DNSYNC_PANGOLIN_ORG_ID or config org_id",
-        )
+        Error::parse("Pangolin org ID is required from DNSYNC_PANGOLIN_ORG_ID or config org_id")
     })?;
 
     Ok((base_url, token, org_id))
@@ -395,11 +397,7 @@ mod tests {
 
     #[test]
     fn cli_allow_zone_can_narrow_configured_zones() {
-        let policy = cli_policy(
-            &cli(vec!["sub.example.com".to_string()]),
-            None,
-        )
-        .unwrap();
+        let policy = cli_policy(&cli(vec!["sub.example.com".to_string()]), None).unwrap();
 
         assert!(policy.check_zone("sub.example.com").is_ok());
         assert!(policy.check_zone("other.example.com").is_err());
@@ -421,8 +419,7 @@ mod tests {
         )
         .unwrap();
 
-        let err =
-            cli_policy(&cli(vec!["other.net".to_string()]), Some(&config)).unwrap_err();
+        let err = cli_policy(&cli(vec!["other.net".to_string()]), Some(&config)).unwrap_err();
 
         assert!(err.to_string().contains("outside this server's configured"));
     }
@@ -435,5 +432,37 @@ mod tests {
         assert_eq!(status, 0);
         assert!(path.exists());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[cfg(feature = "pangolin")]
+    #[test]
+    fn pangolin_credentials_default_base_url_from_config() {
+        let app_config: config::AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cloud"
+                vendor = "pangolin"
+                token = "pangolin-token"
+                org_id = "org_123"
+            "#,
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: None,
+            server: Some("cloud".to_string()),
+            base_url: None,
+            token: None,
+            readonly: false,
+            allow_zone: Vec::new(),
+            command: Command::Mcp,
+        };
+
+        let (base_url, token, org_id) =
+            resolve_pangolin_credentials(&cli, Some(&app_config)).unwrap();
+
+        assert_eq!(base_url, config::PANGOLIN_DEFAULT_BASE_URL);
+        assert_eq!(token.expose_for_auth(), "pangolin-token");
+        assert_eq!(org_id, "org_123");
     }
 }

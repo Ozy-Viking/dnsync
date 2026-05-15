@@ -1,5 +1,7 @@
 //! Integration tests for TechnitiumClient using a mock HTTP server.
 
+#![cfg(feature = "technitium")]
+
 use dnslib::client::TechnitiumClient;
 use dnslib::error::Error;
 use dnslib::secret::ApiToken;

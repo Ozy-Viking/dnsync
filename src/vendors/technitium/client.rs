@@ -17,7 +17,11 @@ impl TechnitiumClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(Error::Network)?;
-        Ok(Self { http, base_url, token })
+        Ok(Self {
+            http,
+            base_url,
+            token,
+        })
     }
 
     /// GET with query params.

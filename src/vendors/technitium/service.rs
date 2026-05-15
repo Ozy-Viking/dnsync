@@ -7,8 +7,8 @@ use crate::core::dns::capabilities::VendorCapabilities;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::dns::service::{
-    AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, RecordWrite, SettingsRead,
-    StatsRead, ZoneImport, ZoneRead, ZoneWrite,
+    AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
+    RecordWrite, SettingsRead, StatsRead, ZoneImport, ZoneRead, ZoneWrite,
 };
 use crate::core::error::Result;
 use crate::vendors::technitium::client::TechnitiumClient;
@@ -42,7 +42,12 @@ impl ZoneRead for TechnitiumClient {
         .await
     }
 
-    async fn list_records(&self, domain: &str, zone: Option<&str>) -> Result<ListRecordsResponse> {
+    async fn list_records(
+        &self,
+        domain: &str,
+        zone: Option<&str>,
+        _options: ListRecordsOptions,
+    ) -> Result<ListRecordsResponse> {
         let mut params = vec![("domain", domain)];
         if let Some(z) = zone {
             params.push(("zone", z));

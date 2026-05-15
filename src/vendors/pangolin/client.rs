@@ -22,7 +22,12 @@ impl PangolinClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(Error::Network)?;
-        Ok(Self { http, base_url, token, org_id })
+        Ok(Self {
+            http,
+            base_url,
+            token,
+            org_id,
+        })
     }
 
     /// GET the given path (relative to base_url) with query parameters.
@@ -54,7 +59,10 @@ async fn parse_response(resp: Response) -> Result<Value> {
         }
     })?;
 
-    let success = body.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+    let success = body
+        .get("success")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
     let api_status = body.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
 
     if success {
@@ -74,9 +82,7 @@ async fn parse_response(resp: Response) -> Result<Value> {
     }
 
     // Other API-level errors (success: false with a message).
-    if body.get("error").and_then(|e| e.as_bool()).unwrap_or(false)
-        || !http_status.is_success()
-    {
+    if body.get("error").and_then(|e| e.as_bool()).unwrap_or(false) || !http_status.is_success() {
         return Err(Error::Api { message });
     }
 
@@ -104,41 +110,52 @@ mod tests {
 
     #[tokio::test]
     async fn success_envelope_returns_data() {
-        let resp = make_resp(200, json!({
-            "data": { "orgs": [] },
-            "success": true,
-            "error": false,
-            "message": "ok",
-            "status": 200
-        }));
+        let resp = make_resp(
+            200,
+            json!({
+                "data": { "orgs": [] },
+                "success": true,
+                "error": false,
+                "message": "ok",
+                "status": 200
+            }),
+        );
         let val = parse_response(resp).await.unwrap();
         assert_eq!(val, json!({ "orgs": [] }));
     }
 
     #[tokio::test]
     async fn forbidden_envelope_returns_forbidden_error() {
-        let resp = make_resp(403, json!({
-            "data": null,
-            "success": false,
-            "error": true,
-            "message": "Key does not have root access",
-            "status": 403,
-            "stack": null
-        }));
+        let resp = make_resp(
+            403,
+            json!({
+                "data": null,
+                "success": false,
+                "error": true,
+                "message": "Key does not have root access",
+                "status": 403,
+                "stack": null
+            }),
+        );
         let err = parse_response(resp).await.unwrap_err();
-        assert!(matches!(err, Error::Forbidden { ref message } if message == "Key does not have root access"));
+        assert!(
+            matches!(err, Error::Forbidden { ref message } if message == "Key does not have root access")
+        );
     }
 
     #[tokio::test]
     async fn api_error_envelope_returns_api_error() {
-        let resp = make_resp(400, json!({
-            "data": null,
-            "success": false,
-            "error": true,
-            "message": "zone not found",
-            "status": 400,
-            "stack": null
-        }));
+        let resp = make_resp(
+            400,
+            json!({
+                "data": null,
+                "success": false,
+                "error": true,
+                "message": "zone not found",
+                "status": 400,
+                "stack": null
+            }),
+        );
         let err = parse_response(resp).await.unwrap_err();
         assert!(matches!(err, Error::Api { ref message } if message == "zone not found"));
     }

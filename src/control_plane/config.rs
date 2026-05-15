@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
 
+pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
+pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
+
 /// Supported DNS vendor backends.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -61,7 +64,7 @@ impl AppConfig {
             servers: vec![DnsServerConfig {
                 id: "default".to_string(),
                 vendor: VendorKind::Technitium,
-                base_url: Some("http://localhost:5380".to_string()),
+                base_url: Some(TECHNITIUM_DEFAULT_BASE_URL.to_string()),
                 token: None,
                 token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
                 org_id: None,
@@ -201,7 +204,10 @@ pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<Path
     };
 
     let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e| {
-        Error::parse(format!("could not parse config file '{}': {e}", path.display()))
+        Error::parse(format!(
+            "could not parse config file '{}': {e}",
+            path.display()
+        ))
     })?;
 
     append_server_entry(&mut doc, &server);
@@ -277,7 +283,10 @@ fn write_default_config(path: &Path, force: bool) -> Result<()> {
 fn ensure_config_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            Error::io(format!("creating config directory '{}'", parent.display()), e)
+            Error::io(
+                format!("creating config directory '{}'", parent.display()),
+                e,
+            )
         })?;
         restrict_dir_permissions(parent)?;
     }
@@ -371,7 +380,10 @@ impl DnsServerConfig {
         override_url
             .map(ToOwned::to_owned)
             .or_else(|| self.base_url.clone())
-            .unwrap_or_else(|| "http://localhost:5380".to_string())
+            .unwrap_or_else(|| match self.vendor {
+                VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
+                VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL.to_string(),
+            })
     }
 
     pub fn resolved_token(&self, override_token: Option<&str>) -> Result<ApiToken> {
@@ -380,14 +392,12 @@ impl DnsServerConfig {
         }
 
         if let Some(ref env_name) = self.token_env {
-            return env::var(env_name)
-                .map(ApiToken::new)
-                .map_err(|_| {
-                    Error::parse(format!(
-                        "DNS server '{}' requires token env var '{env_name}' to be set",
-                        self.id
-                    ))
-                });
+            return env::var(env_name).map(ApiToken::new).map_err(|_| {
+                Error::parse(format!(
+                    "DNS server '{}' requires token env var '{env_name}' to be set",
+                    self.id
+                ))
+            });
         }
 
         self.token
@@ -542,9 +552,13 @@ mod tests {
 
         // Verify the written file round-trips and uses token_env, not token
         let written = std::fs::read_to_string(&path).unwrap();
-        let reparsed: AppConfig = toml::from_str(&written).expect("written config should be valid TOML");
+        let reparsed: AppConfig =
+            toml::from_str(&written).expect("written config should be valid TOML");
         let reparsed_server = reparsed.selected_server(None).unwrap();
-        assert_eq!(reparsed_server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert_eq!(
+            reparsed_server.token_env.as_deref(),
+            Some("DNSYNC_TECHNITIUM_API_TOKEN")
+        );
         assert!(reparsed_server.token.is_none());
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
@@ -609,10 +623,14 @@ mod tests {
         assert_eq!(written_path, path);
 
         let written = std::fs::read_to_string(&written_path).unwrap();
-        let config: AppConfig = toml::from_str(&written).expect("written config should be valid TOML");
+        let config: AppConfig =
+            toml::from_str(&written).expect("written config should be valid TOML");
         let server = config.selected_server(None).unwrap();
         assert_eq!(server.id, "default");
-        assert_eq!(server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert_eq!(
+            server.token_env.as_deref(),
+            Some("DNSYNC_TECHNITIUM_API_TOKEN")
+        );
         assert!(server.token.is_none());
 
         std::fs::remove_dir_all(written_path.parent().unwrap()).unwrap();
@@ -629,11 +647,44 @@ mod tests {
     }
 
     #[test]
+    fn technitium_base_url_defaults_to_localhost() {
+        let server = DnsServerConfig {
+            id: "home".to_string(),
+            vendor: VendorKind::Technitium,
+            base_url: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+
+        assert_eq!(server.resolved_base_url(None), TECHNITIUM_DEFAULT_BASE_URL);
+    }
+
+    #[test]
+    fn pangolin_base_url_defaults_to_cloud_api() {
+        let server = DnsServerConfig {
+            id: "cloud".to_string(),
+            vendor: VendorKind::Pangolin,
+            base_url: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+
+        assert_eq!(server.resolved_base_url(None), PANGOLIN_DEFAULT_BASE_URL);
+    }
+
+    #[test]
     fn cli_token_override_wins_over_config() {
         let server = config().selected_server(Some("home")).unwrap().clone();
 
         assert_eq!(
-            server.resolved_token(Some("override-token")).unwrap().expose_for_auth(),
+            server
+                .resolved_token(Some("override-token"))
+                .unwrap()
+                .expose_for_auth(),
             "override-token"
         );
     }
@@ -677,7 +728,10 @@ mod tests {
         assert_eq!(server.id, "default");
         assert_eq!(server.vendor, VendorKind::Technitium);
         assert_eq!(server.base_url.as_deref(), Some("http://localhost:5380"));
-        assert_eq!(server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert_eq!(
+            server.token_env.as_deref(),
+            Some("DNSYNC_TECHNITIUM_API_TOKEN")
+        );
         assert!(server.token.is_none());
         assert!(!server.mcp.readonly);
         assert!(server.mcp.allowed_zones.is_empty());
@@ -699,7 +753,10 @@ mod tests {
         init_config(Some(path.clone()), false).unwrap();
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "config file should be owner read/write only (0600)");
+        assert_eq!(
+            mode, 0o600,
+            "config file should be owner read/write only (0600)"
+        );
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
@@ -854,9 +911,18 @@ mod tests {
         add_server(Some(path.clone()), server).unwrap();
 
         let written = std::fs::read_to_string(&path).unwrap();
-        assert!(written.contains("# My DNS servers"), "top-level comment should be preserved");
-        assert!(written.contains("# Home server uses its own env var"), "inline comment should be preserved");
-        assert!(written.contains("id = \"lab\""), "new server should be appended");
+        assert!(
+            written.contains("# My DNS servers"),
+            "top-level comment should be preserved"
+        );
+        assert!(
+            written.contains("# Home server uses its own env var"),
+            "inline comment should be preserved"
+        );
+        assert!(
+            written.contains("id = \"lab\""),
+            "new server should be appended"
+        );
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
@@ -893,7 +959,10 @@ mod tests {
 
         let err = AppConfig::load(Some(path.clone())).unwrap_err();
 
-        assert!(err.to_string().contains("chmod 600"), "error should include remediation command");
+        assert!(
+            err.to_string().contains("chmod 600"),
+            "error should include remediation command"
+        );
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
