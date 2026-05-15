@@ -4,6 +4,15 @@ A Rust CLI + MCP server for [Technitium DNS Server](https://technitium.com/dns/)
 
 Use it interactively from the terminal, or run it as an MCP server so Claude can manage your DNS.
 
+## Requirements
+
+| Requirement | Notes |
+|---|---|
+| **Rust 1.85+** | Edition 2024. Install via [rustup](https://rustup.rs). |
+| **Technitium DNS Server** | Any recent version with the REST API enabled (self-hosted). |
+| **API token** | Create one in the Technitium web console: **Settings → Users → your user → API Tokens → Create Token** |
+| **Linux / macOS** | Recommended. Config file permissions are enforced (0600 file, 0700 directory). Windows builds but permission hardening is not applied. |
+
 ## Build
 
 ```bash
@@ -82,8 +91,6 @@ Flags and environment variables override config values:
 | `--allow-zone` | `DNS_ALLOWED_ZONES` | config `allowed_zones` |
 
 Token resolution per server: `--token` / `TECHNITIUM_API_TOKEN` → `token_env` (env var named in config) → `token` (literal in config).
-
-Get a token from the Technitium web console: **Settings → Users → your user → API Tokens → Create Token**
 
 ---
 
