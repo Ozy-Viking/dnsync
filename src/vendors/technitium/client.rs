@@ -2,25 +2,22 @@ use reqwest::{Client, Response, multipart};
 use serde_json::Value;
 
 use crate::core::error::{Error, Result};
+use crate::core::secret::ApiToken;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TechnitiumClient {
     pub http: Client,
     pub base_url: String,
-    pub token: String,
+    token: ApiToken,
 }
 
 impl TechnitiumClient {
-    pub fn new(base_url: String, token: String) -> Result<Self> {
+    pub fn new(base_url: String, token: ApiToken) -> Result<Self> {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(Error::Network)?;
-        Ok(Self {
-            http,
-            base_url,
-            token,
-        })
+        Ok(Self { http, base_url, token })
     }
 
     /// GET with query params.
@@ -29,7 +26,7 @@ impl TechnitiumClient {
         let resp = self
             .http
             .get(&url)
-            .bearer_auth(&self.token)
+            .bearer_auth(self.token.expose_for_auth())
             .query(params)
             .send()
             .await
@@ -43,7 +40,7 @@ impl TechnitiumClient {
         let resp = self
             .http
             .post(&url)
-            .bearer_auth(&self.token)
+            .bearer_auth(self.token.expose_for_auth())
             .form(form)
             .send()
             .await
@@ -72,7 +69,7 @@ impl TechnitiumClient {
         let resp = self
             .http
             .post(&url)
-            .bearer_auth(&self.token)
+            .bearer_auth(self.token.expose_for_auth())
             .query(params)
             .multipart(form)
             .send()

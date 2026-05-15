@@ -2,6 +2,7 @@
 
 use dnslib::client::TechnitiumClient;
 use dnslib::error::Error;
+use dnslib::secret::ApiToken;
 use mockito::ServerGuard;
 use rstest::{fixture, rstest};
 
@@ -18,7 +19,7 @@ fn token() -> String {
 }
 
 fn make_client(server: &ServerGuard, token: &str) -> TechnitiumClient {
-    TechnitiumClient::new(server.url(), token.into()).expect("client should build")
+    TechnitiumClient::new(server.url(), ApiToken::new(token)).expect("client should build")
 }
 
 // ── GET happy path ────────────────────────────────────────────────────────────

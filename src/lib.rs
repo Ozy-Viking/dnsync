@@ -25,6 +25,10 @@ pub mod error {
     pub use crate::core::error::*;
 }
 
+pub mod secret {
+    pub use crate::core::secret::ApiToken;
+}
+
 pub mod policy {
     pub use crate::control_plane::policy::*;
 }

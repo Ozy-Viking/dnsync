@@ -10,7 +10,7 @@ fn main() {}
 use dnslib::{
     cli,
     control_plane::{config, policy},
-    core::{dns::service::DnsService, error},
+    core::{dns::service::DnsService, error, secret::ApiToken},
     mcp::server,
 };
 
@@ -211,15 +211,19 @@ fn render_error(e: Error) -> i32 {
 fn resolve_technitium_credentials(
     cli: &Cli,
     config: Option<&config::AppConfig>,
-) -> Result<(String, String), Error> {
+) -> Result<(String, ApiToken), Error> {
     let Some(config) = config else {
         let base_url = cli
             .base_url
             .clone()
             .unwrap_or_else(|| "http://localhost:5380".to_string());
-        let token = cli.token.clone().ok_or_else(|| {
-            Error::parse("API token is required from --token, TECHNITIUM_API_TOKEN, or config")
-        })?;
+        let token = cli
+            .token
+            .clone()
+            .ok_or_else(|| {
+                Error::parse("API token is required from --token, TECHNITIUM_API_TOKEN, or config")
+            })
+            .map(ApiToken::new)?;
         return Ok((base_url, token));
     };
 
@@ -233,7 +237,7 @@ fn resolve_technitium_credentials(
 fn resolve_pangolin_credentials(
     cli: &Cli,
     config: Option<&config::AppConfig>,
-) -> Result<(String, String, String), Error> {
+) -> Result<(String, ApiToken, String), Error> {
     use std::env;
 
     let (base_url, token, org_id_opt) = if let Some(config) = config {
@@ -261,7 +265,8 @@ fn resolve_pangolin_credentials(
                 Error::parse(
                     "Pangolin API token is required from --token, DNSYNC_PANGOLIN_API_TOKEN, token_env, or config token",
                 )
-            })?;
+            })
+            .map(ApiToken::new)?;
 
         let org_id = env::var("DNSYNC_PANGOLIN_ORG_ID")
             .ok()
@@ -286,7 +291,8 @@ fn resolve_pangolin_credentials(
                 Error::parse(
                     "Pangolin API token is required from --token or DNSYNC_PANGOLIN_API_TOKEN",
                 )
-            })?;
+            })
+            .map(ApiToken::new)?;
         let org_id = env::var("DNSYNC_PANGOLIN_ORG_ID").ok();
         (base_url, token, org_id)
     };

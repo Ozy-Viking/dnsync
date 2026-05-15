@@ -6,6 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::{Error, Result};
+use crate::core::secret::ApiToken;
 
 /// Supported DNS vendor backends.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -308,26 +309,31 @@ impl DnsServerConfig {
             .unwrap_or_else(|| "http://localhost:5380".to_string())
     }
 
-    pub fn resolved_token(&self, override_token: Option<&str>) -> Result<String> {
+    pub fn resolved_token(&self, override_token: Option<&str>) -> Result<ApiToken> {
         if let Some(token) = override_token {
-            return Ok(token.to_string());
+            return Ok(ApiToken::new(token));
         }
 
         if let Some(ref env_name) = self.token_env {
-            return env::var(env_name).map_err(|_| {
-                Error::parse(format!(
-                    "DNS server '{}' requires token env var '{env_name}' to be set",
-                    self.id
-                ))
-            });
+            return env::var(env_name)
+                .map(ApiToken::new)
+                .map_err(|_| {
+                    Error::parse(format!(
+                        "DNS server '{}' requires token env var '{env_name}' to be set",
+                        self.id
+                    ))
+                });
         }
 
-        self.token.clone().ok_or_else(|| {
-            Error::parse(format!(
-                "DNS server '{}' has no token configured; set token or token_env in config, or pass --token",
-                self.id
-            ))
-        })
+        self.token
+            .clone()
+            .map(ApiToken::new)
+            .ok_or_else(|| {
+                Error::parse(format!(
+                    "DNS server '{}' has no token configured; set token or token_env in config, or pass --token",
+                    self.id
+                ))
+            })
     }
 }
 
@@ -562,7 +568,7 @@ mod tests {
         let server = config().selected_server(Some("home")).unwrap().clone();
 
         assert_eq!(
-            server.resolved_token(Some("override-token")).unwrap(),
+            server.resolved_token(Some("override-token")).unwrap().expose_for_auth(),
             "override-token"
         );
     }
