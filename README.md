@@ -76,12 +76,12 @@ Flags and environment variables override config values:
 |---|---|---|
 | `--config` | `DNSYNC_CONFIG` | release: `$XDG_CONFIG_HOME/dnsync/config.toml`; debug: `./.config/dnsync/config.toml` |
 | `--server` | `DNSYNC_SERVER` | only server in config |
-| `--base-url` | `TECHNITIUM_BASE_URL` | `http://localhost:5380` |
-| `--token` | `TECHNITIUM_API_TOKEN` | *(required)* |
+| `--base-url` | `TECHNITIUM_BASE_URL` | config `base_url`, then `http://localhost:5380` |
+| `--token` | `TECHNITIUM_API_TOKEN` | config `token_env` → env lookup, then `token` |
 | `--readonly` | `DNS_READONLY` | config `readonly` |
 | `--allow-zone` | `DNS_ALLOWED_ZONES` | config `allowed_zones` |
-| *(none)* | `DNSYNC_TECHNITIUM_BASE_URL` | config `base_url` |
-| *(none)* | `DNSYNC_TECHNITIUM_API_TOKEN` | config `token` / `token_env` |
+
+Token resolution per server: `--token` / `TECHNITIUM_API_TOKEN` → `token_env` (env var named in config) → `token` (literal in config).
 
 Get a token from the Technitium web console: **Settings → Users → your user → API Tokens → Create Token**
 

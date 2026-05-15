@@ -174,7 +174,6 @@ impl DnsServerConfig {
     pub fn resolved_base_url(&self, override_url: Option<&str>) -> String {
         override_url
             .map(ToOwned::to_owned)
-            .or_else(|| env::var("DNSYNC_TECHNITIUM_BASE_URL").ok())
             .or_else(|| self.base_url.clone())
             .unwrap_or_else(|| "http://localhost:5380".to_string())
     }
@@ -184,22 +183,18 @@ impl DnsServerConfig {
             return Ok(token.to_string());
         }
 
-        if let Ok(token) = env::var("DNSYNC_TECHNITIUM_API_TOKEN") {
-            return Ok(token);
-        }
-
         if let Some(ref env_name) = self.token_env {
             return env::var(env_name).map_err(|_| {
                 Error::parse(format!(
-                    "DNS server '{}' requires token env var '{}'",
-                    self.id, env_name
+                    "DNS server '{}' requires token env var '{env_name}' to be set",
+                    self.id
                 ))
             });
         }
 
         self.token.clone().ok_or_else(|| {
             Error::parse(format!(
-                "DNS server '{}' requires an API token from token, token_env, --token, or env",
+                "DNS server '{}' has no token configured; set token or token_env in config, or pass --token",
                 self.id
             ))
         })
