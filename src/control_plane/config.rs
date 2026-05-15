@@ -3,23 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::core::error::{Error, Result};
-
-const DEFAULT_CONFIG: &str = r#"[[servers]]
-id = "default"
-vendor = "technitium"
-base_url = "http://localhost:5380"
-token = "DNSYNC_TECHNITIUM_API_TOKEN"
-
-[servers.mcp]
-readonly = false
-allowed_zones = []
-"#;
+use crate::core::secret::ApiToken;
 
 /// Supported DNS vendor backends.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum VendorKind {
     #[default]
@@ -27,14 +17,14 @@ pub enum VendorKind {
     Pangolin,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     #[serde(default)]
     pub servers: Vec<DnsServerConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DnsServerConfig {
     pub id: String,
@@ -42,16 +32,20 @@ pub struct DnsServerConfig {
     #[serde(default)]
     pub vendor: VendorKind,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
 
     #[serde(default)]
     pub mcp: McpPermissions,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpPermissions {
     #[serde(default)]
@@ -62,6 +56,60 @@ pub struct McpPermissions {
 }
 
 impl AppConfig {
+    pub fn starter() -> Self {
+        AppConfig {
+            servers: vec![DnsServerConfig {
+                id: "default".to_string(),
+                vendor: VendorKind::Technitium,
+                base_url: Some("http://localhost:5380".to_string()),
+                token: None,
+                token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
+                org_id: None,
+                mcp: McpPermissions::default(),
+            }],
+        }
+    }
+
+    pub fn render_starter_toml() -> Result<String> {
+        toml::to_string_pretty(&Self::starter())
+            .map_err(|e| Error::parse(format!("failed to serialize starter config: {e}")))
+    }
+
+    pub fn render_toml(&self) -> Result<String> {
+        toml::to_string_pretty(self)
+            .map_err(|e| Error::parse(format!("failed to serialize config: {e}")))
+    }
+
+    /// Returns a copy of the config with every literal `token` value replaced
+    /// by `"[redacted]"`. `token_env` values (env var names) are not secrets
+    /// and are left as-is.
+    pub fn redact(&self) -> Self {
+        AppConfig {
+            servers: self
+                .servers
+                .iter()
+                .map(|s| DnsServerConfig {
+                    token: s.token.as_ref().map(|_| "[redacted]".to_string()),
+                    ..s.clone()
+                })
+                .collect(),
+        }
+    }
+
+    /// Load the config file if it already exists; return `Ok(None)` if it does
+    /// not. Unlike `load`, this never creates the file.
+    pub fn load_if_exists(path: Option<PathBuf>) -> Result<Option<Self>> {
+        let Some(path) = path.or_else(default_config_path) else {
+            return Ok(None);
+        };
+        if !path.exists() {
+            return Ok(None);
+        }
+        load_from_path(&path).map(Some)
+    }
+
+    /// Load the config file, creating it with starter defaults if it does not
+    /// exist yet.
     pub fn load(path: Option<PathBuf>) -> Result<Option<Self>> {
         let Some(path) = path.or_else(default_config_path) else {
             return Ok(None);
@@ -71,18 +119,7 @@ impl AppConfig {
             write_default_config(&path, false)?;
         }
 
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?;
-
-        let config: Self = toml::from_str(&contents).map_err(|e| {
-            Error::parse(format!(
-                "could not parse config file '{}': {e}",
-                path.display()
-            ))
-        })?;
-
-        config.validate()?;
-        Ok(Some(config))
+        load_from_path(&path).map(Some)
     }
 
     pub fn selected_server(&self, selected_id: Option<&str>) -> Result<&DnsServerConfig> {
@@ -136,6 +173,94 @@ pub fn init_config(path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Append a new server entry to the config file. Creates the file if it does
+/// not exist yet. Existing file content — including comments and formatting —
+/// is preserved; only the new `[[servers]]` block is appended.
+pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<PathBuf> {
+    let Some(path) = path.or_else(default_config_path) else {
+        return Err(Error::parse(
+            "could not determine a default config path; pass --config <path>",
+        ));
+    };
+
+    // Validate via the serde types: check for duplicate IDs etc.
+    let mut config = if path.exists() {
+        load_from_path(&path)?
+    } else {
+        AppConfig::default()
+    };
+    config.servers.push(server.clone());
+    config.validate()?;
+
+    // Read the raw file so toml_edit can preserve comments and formatting.
+    let raw = if path.exists() {
+        std::fs::read_to_string(&path)
+            .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?
+    } else {
+        String::new()
+    };
+
+    let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e| {
+        Error::parse(format!("could not parse config file '{}': {e}", path.display()))
+    })?;
+
+    append_server_entry(&mut doc, &server);
+
+    ensure_config_dir(&path)?;
+    write_private_file(&path, &doc.to_string())?;
+    Ok(path)
+}
+
+/// Append a `[[servers]]` entry to a toml_edit document without touching
+/// any existing content.
+fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfig) {
+    use toml_edit::{Array, ArrayOfTables, Item, Table, value};
+
+    let mut tbl = Table::new();
+    // Blank line before each [[servers]] header for readability.
+    tbl.decor_mut().set_prefix("\n");
+
+    tbl["id"] = value(server.id.as_str());
+    tbl["vendor"] = value(match server.vendor {
+        VendorKind::Technitium => "technitium",
+        VendorKind::Pangolin => "pangolin",
+    });
+    if let Some(ref v) = server.base_url {
+        tbl["base_url"] = value(v.as_str());
+    }
+    if let Some(ref v) = server.token_env {
+        tbl["token_env"] = value(v.as_str());
+    }
+    if let Some(ref v) = server.token {
+        tbl["token"] = value(v.as_str());
+    }
+    if let Some(ref v) = server.org_id {
+        tbl["org_id"] = value(v.as_str());
+    }
+
+    let mut mcp = Table::new();
+    mcp["readonly"] = value(server.mcp.readonly);
+    let mut zones = Array::new();
+    for zone in &server.mcp.allowed_zones {
+        zones.push(zone.as_str());
+    }
+    mcp["allowed_zones"] = value(zones);
+    tbl["mcp"] = Item::Table(mcp);
+
+    match doc.entry("servers") {
+        toml_edit::Entry::Occupied(mut e) => {
+            if let Some(aot) = e.get_mut().as_array_of_tables_mut() {
+                aot.push(tbl);
+            }
+        }
+        toml_edit::Entry::Vacant(e) => {
+            let mut aot = ArrayOfTables::new();
+            aot.push(tbl);
+            e.insert(Item::ArrayOfTables(aot));
+        }
+    }
+}
+
 fn write_default_config(path: &Path, force: bool) -> Result<()> {
     if path.exists() && !force {
         return Err(Error::parse(format!(
@@ -144,52 +269,136 @@ fn write_default_config(path: &Path, force: bool) -> Result<()> {
         )));
     }
 
+    ensure_config_dir(path)?;
+    let contents = AppConfig::render_starter_toml()?;
+    write_private_file(path, &contents)
+}
+
+fn ensure_config_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            Error::io(
-                format!("creating config directory '{}'", parent.display()),
-                e,
-            )
+            Error::io(format!("creating config directory '{}'", parent.display()), e)
         })?;
+        restrict_dir_permissions(parent)?;
     }
+    Ok(())
+}
 
-    std::fs::write(path, DEFAULT_CONFIG)
+fn load_from_path(path: &Path) -> Result<AppConfig> {
+    check_config_permissions(path)?;
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?;
+    let config: AppConfig = toml::from_str(&contents).map_err(|e| {
+        Error::parse(format!(
+            "could not parse config file '{}': {e}",
+            path.display()
+        ))
+    })?;
+    config.validate()?;
+    Ok(config)
+}
+
+/// Write `contents` to `path` with owner-only permissions (0o600 on Unix).
+/// Uses `OpenOptions::mode` so the file is never created world-readable,
+/// then explicitly sets permissions to handle the overwrite (force) case.
+#[cfg(unix)]
+fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| Error::io(format!("creating config file '{}'", path.display()), e))?;
+
+    file.write_all(contents.as_bytes())
+        .map_err(|e| Error::io(format!("writing config file '{}'", path.display()), e))?;
+
+    // mode() only applies when the file is newly created; set explicitly for overwrites.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| Error::io(format!("setting permissions on '{}'", path.display()), e))
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    std::fs::write(path, contents)
         .map_err(|e| Error::io(format!("creating config file '{}'", path.display()), e))
+}
+
+/// Restrict the config directory to owner-only access (0o700 on Unix).
+#[cfg(unix)]
+fn restrict_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| Error::io(format!("setting permissions on '{}'", path.display()), e))
+}
+
+#[cfg(not(unix))]
+fn restrict_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+/// Error if the config file is readable by anyone other than the owner.
+#[cfg(unix)]
+fn check_config_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path)
+        .map_err(|e| Error::io(format!("reading metadata for '{}'", path.display()), e))?;
+    let mode = meta.mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(Error::parse(format!(
+            "config file '{}' has permissions {:04o} — group or world can read it.\n\
+             API tokens must be owner-readable only. Fix with:\n\
+             \n    chmod 600 {}",
+            path.display(),
+            mode,
+            path.display(),
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_config_permissions(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 impl DnsServerConfig {
     pub fn resolved_base_url(&self, override_url: Option<&str>) -> String {
         override_url
             .map(ToOwned::to_owned)
-            .or_else(|| env::var("DNSYNC_TECHNITIUM_BASE_URL").ok())
             .or_else(|| self.base_url.clone())
             .unwrap_or_else(|| "http://localhost:5380".to_string())
     }
 
-    pub fn resolved_token(&self, override_token: Option<&str>) -> Result<String> {
+    pub fn resolved_token(&self, override_token: Option<&str>) -> Result<ApiToken> {
         if let Some(token) = override_token {
-            return Ok(token.to_string());
-        }
-
-        if let Ok(token) = env::var("DNSYNC_TECHNITIUM_API_TOKEN") {
-            return Ok(token);
+            return Ok(ApiToken::new(token));
         }
 
         if let Some(ref env_name) = self.token_env {
-            return env::var(env_name).map_err(|_| {
-                Error::parse(format!(
-                    "DNS server '{}' requires token env var '{}'",
-                    self.id, env_name
-                ))
-            });
+            return env::var(env_name)
+                .map(ApiToken::new)
+                .map_err(|_| {
+                    Error::parse(format!(
+                        "DNS server '{}' requires token env var '{env_name}' to be set",
+                        self.id
+                    ))
+                });
         }
 
-        self.token.clone().ok_or_else(|| {
-            Error::parse(format!(
-                "DNS server '{}' requires an API token from token, token_env, --token, or env",
-                self.id
-            ))
-        })
+        self.token
+            .clone()
+            .map(ApiToken::new)
+            .ok_or_else(|| {
+                Error::parse(format!(
+                    "DNS server '{}' has no token configured; set token or token_env in config, or pass --token",
+                    self.id
+                ))
+            })
     }
 }
 
@@ -327,9 +536,16 @@ mod tests {
             server.token_env.as_deref(),
             Some("DNSYNC_TECHNITIUM_API_TOKEN")
         );
+        assert!(server.token.is_none());
         assert!(!server.mcp.readonly);
         assert!(server.mcp.allowed_zones.is_empty());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+
+        // Verify the written file round-trips and uses token_env, not token
+        let written = std::fs::read_to_string(&path).unwrap();
+        let reparsed: AppConfig = toml::from_str(&written).expect("written config should be valid TOML");
+        let reparsed_server = reparsed.selected_server(None).unwrap();
+        assert_eq!(reparsed_server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert!(reparsed_server.token.is_none());
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
@@ -347,6 +563,12 @@ mod tests {
             "#,
         )
         .unwrap();
+        // match the permissions the production code sets so the load check passes
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
 
         let config = AppConfig::load(Some(path.clone()))
             .expect("existing config should load")
@@ -385,10 +607,13 @@ mod tests {
         let written_path = init_config(Some(path.clone()), true).unwrap();
 
         assert_eq!(written_path, path);
-        assert_eq!(
-            std::fs::read_to_string(&written_path).unwrap(),
-            DEFAULT_CONFIG
-        );
+
+        let written = std::fs::read_to_string(&written_path).unwrap();
+        let config: AppConfig = toml::from_str(&written).expect("written config should be valid TOML");
+        let server = config.selected_server(None).unwrap();
+        assert_eq!(server.id, "default");
+        assert_eq!(server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert!(server.token.is_none());
 
         std::fs::remove_dir_all(written_path.parent().unwrap()).unwrap();
     }
@@ -408,7 +633,7 @@ mod tests {
         let server = config().selected_server(Some("home")).unwrap().clone();
 
         assert_eq!(
-            server.resolved_token(Some("override-token")).unwrap(),
+            server.resolved_token(Some("override-token")).unwrap().expose_for_auth(),
             "override-token"
         );
     }
@@ -424,5 +649,252 @@ mod tests {
                 .join("dnsync")
                 .join("config.toml")
         );
+    }
+
+    #[test]
+    fn starter_config_contains_token_env() {
+        let toml = AppConfig::render_starter_toml().unwrap();
+        assert!(
+            toml.contains(r#"token_env = "DNSYNC_TECHNITIUM_API_TOKEN""#),
+            "starter TOML should contain token_env assignment"
+        );
+    }
+
+    #[test]
+    fn starter_config_does_not_contain_literal_token() {
+        let toml = AppConfig::render_starter_toml().unwrap();
+        assert!(
+            !toml.lines().any(|l| l.trim_start().starts_with("token =")),
+            "starter TOML must not contain a bare `token = ...` key"
+        );
+    }
+
+    #[test]
+    fn starter_config_round_trips() {
+        let toml = AppConfig::render_starter_toml().unwrap();
+        let reparsed: AppConfig = toml::from_str(&toml).expect("starter TOML should parse back");
+        let server = reparsed.selected_server(None).unwrap();
+        assert_eq!(server.id, "default");
+        assert_eq!(server.vendor, VendorKind::Technitium);
+        assert_eq!(server.base_url.as_deref(), Some("http://localhost:5380"));
+        assert_eq!(server.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+        assert!(server.token.is_none());
+        assert!(!server.mcp.readonly);
+        assert!(server.mcp.allowed_zones.is_empty());
+    }
+
+    #[test]
+    fn starter_config_validates() {
+        AppConfig::starter()
+            .validate()
+            .expect("starter config should pass validation");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn written_config_file_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_config_path("perms-file");
+
+        init_config(Some(path.clone()), false).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "config file should be owner read/write only (0600)");
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn written_config_dir_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_config_path("perms-dir");
+
+        init_config(Some(path.clone()), false).unwrap();
+
+        let dir = path.parent().unwrap();
+        let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "config directory should be owner-only (0700)");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn redact_replaces_token_but_preserves_token_env() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "home"
+                token = "secret"
+                token_env = "MY_TOKEN_VAR"
+            "#,
+        )
+        .unwrap();
+
+        let redacted = cfg.redact();
+        let server = redacted.selected_server(None).unwrap();
+        assert_eq!(server.token.as_deref(), Some("[redacted]"));
+        assert_eq!(server.token_env.as_deref(), Some("MY_TOKEN_VAR"));
+    }
+
+    #[test]
+    fn redact_leaves_none_token_as_none() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "home"
+                token_env = "MY_TOKEN_VAR"
+            "#,
+        )
+        .unwrap();
+
+        let redacted = cfg.redact();
+        assert!(redacted.selected_server(None).unwrap().token.is_none());
+    }
+
+    #[test]
+    fn load_if_exists_returns_none_when_no_file() {
+        let path = temp_config_path("load-if-exists-missing");
+        assert!(!path.exists());
+
+        let result = AppConfig::load_if_exists(Some(path)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_if_exists_returns_config_when_file_present() {
+        let path = temp_config_path("load-if-exists-present");
+        // Use init_config so the file is created with correct permissions
+        init_config(Some(path.clone()), false).unwrap();
+
+        let config = AppConfig::load_if_exists(Some(path.clone()))
+            .expect("should load")
+            .expect("should be Some");
+        assert_eq!(config.selected_server(None).unwrap().id, "default");
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn add_server_creates_config_with_single_server() {
+        let path = temp_config_path("add-server-new");
+        let server = DnsServerConfig {
+            id: "myserver".to_string(),
+            vendor: VendorKind::Technitium,
+            base_url: Some("http://192.168.1.10:5380".to_string()),
+            token: None,
+            token_env: Some("MY_API_TOKEN".to_string()),
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+
+        let written = add_server(Some(path.clone()), server).unwrap();
+        assert_eq!(written, path);
+
+        let config = AppConfig::load(Some(path.clone())).unwrap().unwrap();
+        let s = config.selected_server(None).unwrap();
+        assert_eq!(s.id, "myserver");
+        assert_eq!(s.token_env.as_deref(), Some("MY_API_TOKEN"));
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn add_server_appends_to_existing_config() {
+        let path = temp_config_path("add-server-existing");
+        init_config(Some(path.clone()), false).unwrap();
+
+        let server = DnsServerConfig {
+            id: "lab".to_string(),
+            vendor: VendorKind::Technitium,
+            base_url: Some("http://192.168.1.20:5380".to_string()),
+            token: None,
+            token_env: Some("LAB_TOKEN".to_string()),
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+
+        add_server(Some(path.clone()), server).unwrap();
+
+        let config = AppConfig::load(Some(path.clone())).unwrap().unwrap();
+        assert_eq!(config.servers.len(), 2);
+        assert!(config.selected_server(Some("default")).is_ok());
+        assert!(config.selected_server(Some("lab")).is_ok());
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn add_server_preserves_comments_in_existing_config() {
+        let path = temp_config_path("add-server-comments");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = concat!(
+            "# My DNS servers\n",
+            "[[servers]]\n",
+            "id = \"home\"\n",
+            "# Home server uses its own env var\n",
+            "token_env = \"HOME_TOKEN\"\n",
+        );
+        std::fs::write(&path, original).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let server = DnsServerConfig {
+            id: "lab".to_string(),
+            vendor: VendorKind::Technitium,
+            base_url: None,
+            token: None,
+            token_env: Some("LAB_TOKEN".to_string()),
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+        add_server(Some(path.clone()), server).unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("# My DNS servers"), "top-level comment should be preserved");
+        assert!(written.contains("# Home server uses its own env var"), "inline comment should be preserved");
+        assert!(written.contains("id = \"lab\""), "new server should be appended");
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn add_server_rejects_duplicate_id() {
+        let path = temp_config_path("add-server-duplicate");
+        init_config(Some(path.clone()), false).unwrap();
+
+        let server = DnsServerConfig {
+            id: "default".to_string(), // already exists
+            vendor: VendorKind::Technitium,
+            base_url: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+
+        let err = add_server(Some(path.clone()), server).unwrap_err();
+        assert!(err.to_string().contains("duplicate DNS server id"));
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_errors_if_config_is_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_config_path("world-readable");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, AppConfig::render_starter_toml().unwrap()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let err = AppConfig::load(Some(path.clone())).unwrap_err();
+
+        assert!(err.to_string().contains("chmod 600"), "error should include remediation command");
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

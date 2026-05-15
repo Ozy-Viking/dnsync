@@ -10,7 +10,7 @@ fn main() {}
 use dnslib::{
     cli,
     control_plane::{config, policy},
-    core::{dns::service::DnsService, error},
+    core::{dns::service::DnsService, error, secret::ApiToken},
     mcp::server,
 };
 
@@ -52,13 +52,49 @@ async fn main() {
 
 #[cfg(any(feature = "technitium", feature = "pangolin"))]
 async fn run(cli: Cli) -> i32 {
-    if let Command::Config(ConfigCmd::Init { force }) = cli.command {
-        return match config::init_config(cli.config, force) {
-            Ok(path) => {
-                println!("Wrote config file: {}", path.display());
-                0
+    if let Command::Config(config_cmd) = cli.command {
+        return match config_cmd {
+            ConfigCmd::Init { force } => match config::init_config(cli.config, force) {
+                Ok(path) => {
+                    println!("Wrote config file: {}", path.display());
+                    0
+                }
+                Err(e) => render_error(e),
+            },
+
+            ConfigCmd::Print => {
+                let toml = match config::AppConfig::load_if_exists(cli.config.clone()) {
+                    Ok(Some(cfg)) => cfg.redact().render_toml(),
+                    Ok(None) => config::AppConfig::render_starter_toml(),
+                    Err(e) => return render_error(e),
+                };
+                match toml {
+                    Ok(s) => { print!("{s}"); 0 }
+                    Err(e) => render_error(e),
+                }
             }
-            Err(e) => render_error(e),
+
+            ConfigCmd::Add { id, vendor, base_url, token_env, token, org_id, readonly, allow_zone } => {
+                let server = config::DnsServerConfig {
+                    id,
+                    vendor,
+                    base_url,
+                    token,
+                    token_env,
+                    org_id,
+                    mcp: config::McpPermissions {
+                        readonly,
+                        allowed_zones: allow_zone,
+                    },
+                };
+                match config::add_server(cli.config, server) {
+                    Ok(path) => {
+                        println!("Updated config file: {}", path.display());
+                        0
+                    }
+                    Err(e) => render_error(e),
+                }
+            }
         };
     }
 
@@ -175,15 +211,19 @@ fn render_error(e: Error) -> i32 {
 fn resolve_technitium_credentials(
     cli: &Cli,
     config: Option<&config::AppConfig>,
-) -> Result<(String, String), Error> {
+) -> Result<(String, ApiToken), Error> {
     let Some(config) = config else {
         let base_url = cli
             .base_url
             .clone()
             .unwrap_or_else(|| "http://localhost:5380".to_string());
-        let token = cli.token.clone().ok_or_else(|| {
-            Error::parse("API token is required from --token, TECHNITIUM_API_TOKEN, or config")
-        })?;
+        let token = cli
+            .token
+            .clone()
+            .ok_or_else(|| {
+                Error::parse("API token is required from --token, TECHNITIUM_API_TOKEN, or config")
+            })
+            .map(ApiToken::new)?;
         return Ok((base_url, token));
     };
 
@@ -197,7 +237,7 @@ fn resolve_technitium_credentials(
 fn resolve_pangolin_credentials(
     cli: &Cli,
     config: Option<&config::AppConfig>,
-) -> Result<(String, String, String), Error> {
+) -> Result<(String, ApiToken, String), Error> {
     use std::env;
 
     let (base_url, token, org_id_opt) = if let Some(config) = config {
@@ -225,7 +265,8 @@ fn resolve_pangolin_credentials(
                 Error::parse(
                     "Pangolin API token is required from --token, DNSYNC_PANGOLIN_API_TOKEN, token_env, or config token",
                 )
-            })?;
+            })
+            .map(ApiToken::new)?;
 
         let org_id = env::var("DNSYNC_PANGOLIN_ORG_ID")
             .ok()
@@ -250,7 +291,8 @@ fn resolve_pangolin_credentials(
                 Error::parse(
                     "Pangolin API token is required from --token or DNSYNC_PANGOLIN_API_TOKEN",
                 )
-            })?;
+            })
+            .map(ApiToken::new)?;
         let org_id = env::var("DNSYNC_PANGOLIN_ORG_ID").ok();
         (base_url, token, org_id)
     };
@@ -348,13 +390,6 @@ mod tests {
             readonly: false,
             allow_zone: Vec::new(),
             command: Command::Config(ConfigCmd::Init { force }),
-        }
-    }
-
-    fn permissions() -> config::McpPermissions {
-        config::McpPermissions {
-            readonly: false,
-            allowed_zones: vec!["example.com".to_string()],
         }
     }
 

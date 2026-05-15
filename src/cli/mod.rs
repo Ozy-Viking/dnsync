@@ -83,11 +83,50 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum ConfigCmd {
-    /// Write the default config file and exit
+    /// Write the starter config file and exit
     Init {
         /// Overwrite an existing config file
         #[arg(long)]
         force: bool,
+    },
+
+    /// Print the config to stdout (existing config with tokens redacted, or the
+    /// starter template if no config file exists yet)
+    Print,
+
+    /// Add a server entry to the config file (creates the file if needed)
+    Add {
+        /// Unique ID for this server
+        #[arg(long)]
+        id: String,
+
+        /// DNS vendor backend
+        #[arg(long, default_value = "technitium")]
+        vendor: crate::control_plane::config::VendorKind,
+
+        /// Base URL of the DNS server API
+        #[arg(long)]
+        base_url: Option<String>,
+
+        /// Name of the environment variable that holds the API token (recommended)
+        #[arg(long)]
+        token_env: Option<String>,
+
+        /// API token literal — stored in plain text in the config file; prefer --token-env
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Organisation ID (Pangolin only)
+        #[arg(long)]
+        org_id: Option<String>,
+
+        /// Restrict MCP tools to read-only operations for this server
+        #[arg(long)]
+        readonly: bool,
+
+        /// Restrict MCP zone-targeting tools to this zone (repeatable)
+        #[arg(long, value_name = "ZONE")]
+        allow_zone: Vec<String>,
     },
 }
 

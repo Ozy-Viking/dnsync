@@ -20,34 +20,31 @@ falling back to `~/.config/dnsync/config.toml` on Linux. Debug builds use
 do not affect your real user config. If the selected config file does not
 exist, `dnsync` creates it with safe defaults and no embedded secrets.
 
+The config file must be readable only by its owner (`chmod 600`); the
+containing directory must be owner-only as well (`chmod 700`). `dnsync`
+sets these permissions automatically when it creates the file, and
+refuses to start if it finds a config that is group- or world-readable.
+
 Use `--config /path/to/config.toml` or `DNSYNC_CONFIG=/path/to/config.toml` to
 load a custom config file. When a config contains multiple DNS servers, select
 one with `--server <id>` or `DNSYNC_SERVER=<id>`.
 
-The generated first-run config looks like this:
-
-```toml
-[[servers]]
-id = "default"
-vendor = "technitium"
-base_url = "http://localhost:5380"
-token_env = "DNSYNC_TECHNITIUM_API_TOKEN"
-
-[servers.mcp]
-readonly = false
-allowed_zones = []
-```
-
 Set `DNSYNC_TECHNITIUM_API_TOKEN` in the environment, pass `--token`, or edit
 the config to use a different `token_env`.
 
+To preview the starter config without writing any files:
+
+```bash
+dns config print
+```
+
 To create the config file without starting the DNS client or requiring an API
-token, run:
+token:
 
 ```bash
 dns config init
 dns --config ./dnsync.toml config init
-dns config init --force
+dns config init --force   # overwrite an existing file
 ```
 
 ```toml
@@ -84,14 +81,12 @@ Flags and environment variables override config values:
 |---|---|---|
 | `--config` | `DNSYNC_CONFIG` | release: `$XDG_CONFIG_HOME/dnsync/config.toml`; debug: `./.config/dnsync/config.toml` |
 | `--server` | `DNSYNC_SERVER` | only server in config |
-| `--base-url` | `TECHNITIUM_BASE_URL` | `http://localhost:5380` |
-| `--token` | `TECHNITIUM_API_TOKEN` | *(required)* |
+| `--base-url` | `TECHNITIUM_BASE_URL` | config `base_url`, then `http://localhost:5380` |
+| `--token` | `TECHNITIUM_API_TOKEN` | config `token_env` → env lookup, then `token` |
 | `--readonly` | `DNS_READONLY` | config `readonly` |
 | `--allow-zone` | `DNS_ALLOWED_ZONES` | config `allowed_zones` |
-| *(none)* | `DNSYNC_TECHNITIUM_BASE_URL` | config `base_url` |
-| *(none)* | `DNSYNC_TECHNITIUM_API_TOKEN` | config `token` / `token_env` |
 
-Get a token from the Technitium web console: **Settings → Users → your user → API Tokens → Create Token**
+Token resolution per server: `--token` / `TECHNITIUM_API_TOKEN` → `token_env` (env var named in config) → `token` (literal in config).
 
 ---
 
@@ -101,7 +96,7 @@ Get a token from the Technitium web console: **Settings → Users → your user 
 dns [OPTIONS] <COMMAND>
 
 Commands:
-  config    Write a starter config file
+  config    Manage the config file (init, print)
   mcp       Start as MCP stdio server
   zone      Manage DNS zones
   record    Manage DNS records

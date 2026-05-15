@@ -2,31 +2,27 @@ use reqwest::{Client, Response};
 use serde_json::Value;
 
 use crate::core::error::{Error, Result};
+use crate::core::secret::ApiToken;
 
 /// Pangolin API client.
 ///
 /// All Pangolin responses use the envelope:
 /// `{"data": {...}, "success": true, "error": false, "message": "...", "status": 200}`
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PangolinClient {
     pub http: Client,
     pub base_url: String,
-    pub token: String,
+    token: ApiToken,
     pub org_id: String,
 }
 
 impl PangolinClient {
-    pub fn new(base_url: String, token: String, org_id: String) -> Result<Self> {
+    pub fn new(base_url: String, token: ApiToken, org_id: String) -> Result<Self> {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(Error::Network)?;
-        Ok(Self {
-            http,
-            base_url,
-            token,
-            org_id,
-        })
+        Ok(Self { http, base_url, token, org_id })
     }
 
     /// GET the given path (relative to base_url) with query parameters.
@@ -36,7 +32,7 @@ impl PangolinClient {
         let resp = self
             .http
             .get(&url)
-            .bearer_auth(&self.token)
+            .bearer_auth(self.token.expose_for_auth())
             .query(params)
             .send()
             .await
