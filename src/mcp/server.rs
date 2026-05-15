@@ -9,9 +9,12 @@ use serde::Deserialize;
 
 use crate::control_plane::policy::Policy;
 use crate::core::dns::records::RecordData;
+use crate::core::dns::service::{
+    AccessListRead, AccessListWrite, CacheRead, CacheWrite, RecordWrite, SettingsRead, StatsRead,
+    ZoneImport, ZoneRead, ZoneWrite,
+};
 use crate::core::error::Error;
 use crate::vendors::technitium::client::TechnitiumClient;
-use crate::vendors::technitium::service as dns;
 
 // ─── Server state ─────────────────────────────────────────────────────────────
 
@@ -354,14 +357,11 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ListZonesParams>,
     ) -> Result<CallToolResult, McpError> {
-        dns::list_zones(
-            &self.client,
-            p.page_number.unwrap_or(1),
-            p.zones_per_page.unwrap_or(50),
-        )
-        .await
-        .map(json_result)
-        .map_err(mcp_err)
+        self.client
+            .list_zones(p.page_number.unwrap_or(1), p.zones_per_page.unwrap_or(50))
+            .await
+            .map(json_result)
+            .map_err(mcp_err)
     }
 
     #[tool(description = "Create a new DNS zone. Types: Primary, Secondary, Stub, Forwarder.")]
@@ -371,7 +371,8 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        dns::create_zone(&self.client, &p.zone, &p.zone_type)
+        self.client
+            .create_zone(&p.zone, &p.zone_type)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -384,7 +385,8 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        dns::delete_zone(&self.client, &p.zone)
+        self.client
+            .delete_zone(&p.zone)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -397,7 +399,8 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        dns::enable_zone(&self.client, &p.zone)
+        self.client
+            .enable_zone(&p.zone)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -410,7 +413,8 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        dns::disable_zone(&self.client, &p.zone)
+        self.client
+            .disable_zone(&p.zone)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -428,18 +432,18 @@ impl DnsServer {
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         let file_name = p.file_name.unwrap_or_else(|| format!("{}.txt", p.zone));
-        dns::import_zone_file(
-            &self.client,
-            &p.zone,
-            file_name,
-            p.content.into_bytes(),
-            p.overwrite.unwrap_or(true),
-            p.overwrite_zone.unwrap_or(false),
-            p.overwrite_soa_serial.unwrap_or(false),
-        )
-        .await
-        .map(json_result)
-        .map_err(mcp_err)
+        self.client
+            .import_zone_file(
+                &p.zone,
+                file_name,
+                p.content.into_bytes(),
+                p.overwrite.unwrap_or(true),
+                p.overwrite_zone.unwrap_or(false),
+                p.overwrite_soa_serial.unwrap_or(false),
+            )
+            .await
+            .map(json_result)
+            .map_err(mcp_err)
     }
 
     // ── Records ───────────────────────────────────────────────────────────
@@ -451,10 +455,11 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ListRecordsParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(z) = p.zone.as_deref() {
-            self.policy.check_zone(z).map_err(mcp_err)?;
-        }
-        dns::list_records(&self.client, &p.domain, p.zone.as_deref())
+        self.policy
+            .check_zone(p.zone.as_deref().unwrap_or(&p.domain))
+            .map_err(mcp_err)?;
+        self.client
+            .list_records(&p.domain, p.zone.as_deref())
             .await
             .and_then(|r| serde_json::to_value(&r).map_err(|e| Error::parse(e.to_string())))
             .map(json_result)
@@ -470,16 +475,11 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        dns::add_record(
-            &self.client,
-            &p.zone,
-            &p.domain,
-            p.ttl.unwrap_or(3600),
-            &p.record,
-        )
-        .await
-        .map(json_result)
-        .map_err(mcp_err)
+        self.client
+            .add_record(&p.zone, &p.domain, p.ttl.unwrap_or(3600), &p.record)
+            .await
+            .map(json_result)
+            .map_err(mcp_err)
     }
 
     #[tool(
@@ -493,7 +493,9 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        dns::delete_record(&self.client, &p.zone, &p.domain, &p.record.to_api_params())
+        let type_params = p.record.to_api_params();
+        self.client
+            .delete_record(&p.zone, &p.domain, &type_params)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -506,7 +508,8 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
-        dns::list_cache(&self.client, &p.domain)
+        self.client
+            .list_cache(&p.domain)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -518,7 +521,8 @@ impl DnsServer {
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
-        dns::delete_cache_zone(&self.client, &p.domain)
+        self.client
+            .delete_cache_zone(&p.domain)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -527,7 +531,8 @@ impl DnsServer {
     #[tool(description = "Flush the entire DNS cache, forcing all records to be resolved fresh.")]
     async fn dns_flush_cache(&self) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
-        dns::flush_cache(&self.client)
+        self.client
+            .flush_cache()
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -542,7 +547,8 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<StatsParams>,
     ) -> Result<CallToolResult, McpError> {
-        dns::get_stats(&self.client, p.stats_type.as_deref().unwrap_or("LastDay"))
+        self.client
+            .get_stats(p.stats_type.as_deref().unwrap_or("LastDay"))
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -552,7 +558,8 @@ impl DnsServer {
 
     #[tool(description = "List all manually blocked domains.")]
     async fn dns_list_blocked_zones(&self) -> Result<CallToolResult, McpError> {
-        dns::list_blocked(&self.client)
+        self.client
+            .list_blocked()
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -564,7 +571,8 @@ impl DnsServer {
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
-        dns::add_blocked(&self.client, &p.domain)
+        self.client
+            .add_blocked(&p.domain)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -576,7 +584,8 @@ impl DnsServer {
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
-        dns::delete_blocked(&self.client, &p.domain)
+        self.client
+            .delete_blocked(&p.domain)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -586,7 +595,8 @@ impl DnsServer {
 
     #[tool(description = "List all whitelisted domains.")]
     async fn dns_list_allowed_zones(&self) -> Result<CallToolResult, McpError> {
-        dns::list_allowed(&self.client)
+        self.client
+            .list_allowed()
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -598,7 +608,8 @@ impl DnsServer {
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
-        dns::add_allowed(&self.client, &p.domain)
+        self.client
+            .add_allowed(&p.domain)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -610,7 +621,8 @@ impl DnsServer {
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
         self.policy.check_write().map_err(mcp_err)?;
-        dns::delete_allowed(&self.client, &p.domain)
+        self.client
+            .delete_allowed(&p.domain)
             .await
             .map(json_result)
             .map_err(mcp_err)
@@ -620,7 +632,8 @@ impl DnsServer {
 
     #[tool(description = "Get the current Technitium DNS server configuration.")]
     async fn dns_get_settings(&self) -> Result<CallToolResult, McpError> {
-        dns::get_settings(&self.client)
+        self.client
+            .get_settings()
             .await
             .map(json_result)
             .map_err(mcp_err)

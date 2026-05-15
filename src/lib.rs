@@ -18,7 +18,7 @@ pub mod client {
 
 #[cfg(feature = "technitium")]
 pub mod dns {
-    pub use crate::vendors::technitium::service::*;
+    pub use crate::core::dns::service::*;
 }
 
 pub mod error {

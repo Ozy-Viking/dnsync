@@ -2,6 +2,7 @@
 pub mod runner;
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 // ─── Top-level CLI ───────────────────────────────────────────────────────────
 
@@ -12,17 +13,21 @@ use clap::{Parser, Subcommand};
     version
 )]
 pub struct Cli {
+    /// Config file path (defaults to $XDG_CONFIG_HOME/dnsync/config.toml or ~/.config/dnsync/config.toml)
+    #[arg(long, env = "DNSYNC_CONFIG")]
+    pub config: Option<PathBuf>,
+
+    /// DNS server ID from the config file
+    #[arg(long, env = "DNSYNC_SERVER")]
+    pub server: Option<String>,
+
     /// Technitium base URL (overrides TECHNITIUM_BASE_URL env)
-    #[arg(
-        long,
-        env = "TECHNITIUM_BASE_URL",
-        default_value = "http://localhost:5380"
-    )]
-    pub base_url: String,
+    #[arg(long, env = "TECHNITIUM_BASE_URL")]
+    pub base_url: Option<String>,
 
     /// API token (overrides TECHNITIUM_API_TOKEN env)
     #[arg(long, env = "TECHNITIUM_API_TOKEN")]
-    pub token: String,
+    pub token: Option<String>,
 
     /// MCP only: reject all write operations
     #[arg(long, env = "DNS_READONLY")]
@@ -38,6 +43,10 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Write a starter config file
+    #[command(subcommand)]
+    Config(ConfigCmd),
+
     /// Start the MCP stdio server (for use with Claude Desktop)
     Mcp,
 
@@ -70,6 +79,16 @@ pub enum Command {
 
     /// Show server settings
     Settings,
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCmd {
+    /// Write the default config file and exit
+    Init {
+        /// Overwrite an existing config file
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 // ─── Zone subcommands ────────────────────────────────────────────────────────

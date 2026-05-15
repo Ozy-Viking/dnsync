@@ -1,8 +1,8 @@
 //! Guardrail policy for the MCP server.
 //!
 //! Policy is evaluated before any tool call dispatches to `dns::*`.
-//! The CLI and env vars are the source of truth — callers of `DnsServer::new`
-//! must construct a `Policy` and pass it in.
+//! Config, CLI, and env vars are the source of truth — callers of `DnsServer::new`
+//! must construct a `Policy` for the selected DNS server and pass it in.
 //!
 //! # Modes
 //!
@@ -41,7 +41,7 @@ impl Policy {
         if self.readonly {
             Err(Error::policy_violation(
                 "this MCP server is configured in read-only mode",
-                "Remove the --readonly flag or DNS_READONLY=true env var to enable writes.",
+                "Update this server's MCP permissions or remove --readonly/DNS_READONLY to enable writes.",
             ))
         } else {
             Ok(())
@@ -69,7 +69,9 @@ impl Policy {
             let list = allowed.join(", ");
             Err(Error::policy_violation(
                 format!("zone '{zone}' is not in the allowed-zones list"),
-                format!("Allowed zones: {list}. Pass --allow-zone to expand the list."),
+                format!(
+                    "Allowed zones: {list}. Update this server's MCP permissions or pass --allow-zone to expand the list."
+                ),
             ))
         }
     }
