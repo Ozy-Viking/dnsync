@@ -162,6 +162,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             ZoneCmd::Disable { .. } => "zone disable",
             ZoneCmd::Import { .. } => "zone import",
             ZoneCmd::Export { .. } => "zone export",
+            ZoneCmd::Transfer { .. } => "zone transfer",
         },
         Command::Record(r) => match r {
             RecordCmd::List { .. } => "record list",
@@ -267,6 +268,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             ZoneCmd::Enable { zone } => client.enable_zone(&zone).await?,
             ZoneCmd::Disable { zone } => client.disable_zone(&zone).await?,
             ZoneCmd::Export { .. } => unreachable!("handled above"),
+            ZoneCmd::Transfer { .. } => unreachable!("handled in main"),
             ZoneCmd::Import {
                 zone,
                 file,
