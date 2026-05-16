@@ -235,7 +235,7 @@ async fn run_record_list_across_servers(
     use_local_ip: bool,
     json: bool,
 ) -> i32 {
-    use dnslib::core::dns::service::ListRecordsOptions;
+    use dnslib::core::dns::service::{ListRecordsOptions, ZoneRead};
 
     if cli.token.is_some() || cli.base_url.is_some() {
         return render_error(Error::parse(
