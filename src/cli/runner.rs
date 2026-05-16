@@ -50,6 +50,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         zone,
         use_local_ip,
         json,
+        servers: _,
     }) = command
     {
         let response = client
@@ -61,8 +62,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             .await?;
 
         if json {
-            let value = serde_json::to_value(&response)
-                .map_err(|e| Error::parse(e.to_string()))?;
+            let value = serde_json::to_value(&response).map_err(|e| Error::parse(e.to_string()))?;
             print_result(&value)?;
         } else {
             records::print_records_table(&response);

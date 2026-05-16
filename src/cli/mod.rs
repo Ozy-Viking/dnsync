@@ -22,6 +22,10 @@ pub struct Cli {
     #[arg(long, env = "DNSYNC_SERVER")]
     pub server: Option<String>,
 
+    /// Query all configured servers (record list only)
+    #[arg(long)]
+    pub all: bool,
+
     /// Technitium base URL (overrides TECHNITIUM_BASE_URL env)
     #[arg(long, env = "TECHNITIUM_BASE_URL")]
     pub base_url: Option<String>,
@@ -187,6 +191,9 @@ pub enum RecordCmd {
         domain: String,
         #[arg(long)]
         zone: Option<String>,
+        /// Server IDs to query (repeatable); ignored when --all is used
+        #[arg(long = "server", value_name = "ID")]
+        servers: Vec<String>,
         /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
         #[arg(long)]
         use_local_ip: bool,
