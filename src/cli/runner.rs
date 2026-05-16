@@ -39,7 +39,9 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             AllowedCmd::Delete { .. } => "allowed delete",
         },
         Command::Settings => "settings",
-        Command::Mcp | Command::Config(_) => unreachable!(),
+        Command::Mcp | Command::Config(_) | Command::Completions { .. } | Command::ServerIds => {
+            unreachable!()
+        }
     };
     tracing::Span::current().record("command", cmd_name);
     tracing::info!(command = cmd_name, "running CLI command");
@@ -148,6 +150,10 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         },
 
         Command::Settings => client.get_settings().await?,
+
+        Command::Completions { .. } | Command::ServerIds => {
+            unreachable!("handled in main")
+        }
     };
 
     print_result(&result)?;
