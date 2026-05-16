@@ -412,7 +412,70 @@ Field naming rules:
 
 ---
 
-## 7. Capabilities
+## 7. Logging and Tracing
+
+### Runtime setup
+
+Logging is initialized in `main.rs` using `tracing-subscriber` with an `EnvFilter`:
+
+```rust
+fmt()
+    .with_env_filter(
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+    )
+    .with_writer(std::io::stderr)
+    .init();
+```
+
+Key points:
+- Default level is `warn`. Users raise it with `RUST_LOG=debug` (or `RUST_LOG=dnslib=debug`).
+- **All log output goes to stderr.** Stdout is reserved for structured JSON/table output. Vendor code must never write diagnostics to stdout.
+
+### Log levels
+
+| Level | Use for |
+|---|---|
+| `error!` | Rarely used directly — prefer returning `Err(...)`. Only for fatal process-level failures. |
+| `warn!` | Transport/network failures inside an HTTP method closure, before propagating the error. |
+| `info!` | Significant lifecycle events (server start, mode). Not used in vendor HTTP code. |
+| `debug!` | Request lifecycle (before send, after response), soft non-fatal resolution failures. |
+
+### Patterns used in the codebase
+
+Inside HTTP method closures (network failure):
+```rust
+.map_err(|e| {
+    tracing::warn!(error = %e, "GET failed");
+    Error::Network(e)
+})?;
+```
+
+Request lifecycle around an HTTP call:
+```rust
+tracing::debug!("sending GET");
+// ... .send().await ...
+tracing::debug!("received response");
+```
+
+Soft diagnostic failures (non-fatal, should not block the operation):
+```rust
+tracing::debug!(%error, "failed to build DNS resolver for local IP lookup");
+```
+
+Lifecycle events (main.rs only):
+```rust
+tracing::info!("MCP server starting in read-only mode");
+```
+
+### What not to log
+
+- Never log the token value. `ApiToken::Debug` prints `[REDACTED]`; `expose_for_auth()` must only appear in `.bearer_auth(...)`.
+- Do not add `tracing::` calls inside `parse_response` — it is pure sync parsing with no I/O.
+- Do not log successful record data or zone contents at any level; that is user data and belongs in the return value, not in logs.
+
+---
+
+## 8. Capabilities
 
 Every vendor must declare its supported functionality in `DnsVendor::capabilities()`.
 
@@ -445,7 +508,7 @@ VendorCapabilities {
 
 ---
 
-## 8. Records Must Be Normalized by Default
+## 9. Records Must Be Normalized by Default
 
 `list_records` must return `Result<ListRecordsResponse>`. Map vendor-specific data to the
 vendor-neutral types before returning.
@@ -569,7 +632,7 @@ targets/sites/health → vendor metadata in data
 
 ---
 
-## 9. Runtime Dispatch
+## 10. Runtime Dispatch
 
 Add credential resolution and a dispatch branch in `main.rs`.
 
@@ -607,7 +670,7 @@ config::VendorKind::NewVendor => {
 
 ---
 
-## 10. Module Exports
+## 11. Module Exports
 
 Expose the vendor module from `src/vendors/mod.rs`:
 
@@ -622,7 +685,7 @@ of `lib.rs` must include the new feature.
 
 ---
 
-## 11. Error Types
+## 12. Error Types
 
 Use the existing `Error` variants — do not define new error types:
 
@@ -639,7 +702,7 @@ Use the existing `Error` variants — do not define new error types:
 
 ---
 
-## 12. CLI and Documentation
+## 13. CLI and Documentation
 
 For every vendor, update:
 
@@ -668,7 +731,7 @@ DNSYNC_NEWVENDOR_API_TOKEN
 
 ---
 
-## 13. Tests
+## 14. Tests
 
 Each vendor must include tests for:
 
@@ -706,6 +769,8 @@ For read-only vendors, tests should prove write operations fail clearly and safe
 [ ] Create vendors/newvendor/client.rs with tracing template
 [ ] Create vendors/newvendor/service.rs with all 12 traits
 [ ] Apply #[instrument] to I/O methods; Error::unsupported on unsupported methods
+[ ] Use tracing::warn! inside HTTP error closures; tracing::debug! for request lifecycle
+[ ] Never log token values; never write diagnostics to stdout
 [ ] Set VendorCapabilities correctly
 [ ] Normalize records by default (ZoneRecord with correct rData shape)
 [ ] Preserve vendor metadata in normalized output data field
