@@ -262,6 +262,12 @@ async fn run_record_list_across_servers(
         picked
     };
 
+    if selected.is_empty() {
+        return render_error(Error::parse(
+            "--all requested, but no servers are configured; add at least one server in the config file",
+        ));
+    }
+
     for (idx, server) in selected.iter().enumerate() {
         if idx > 0 {
             println!();
