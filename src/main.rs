@@ -130,18 +130,16 @@ async fn run(cli: Cli) -> i32 {
     if let Command::Record(RecordCmd::List {
         domain,
         zone,
-        servers,
         use_local_ip,
         json,
     }) = &cli.command
     {
-        if cli.all || !servers.is_empty() {
+        if cli.all || !cli.servers.is_empty() {
             return run_record_list_across_servers(
                 &cli,
                 app_config.as_ref(),
                 domain,
                 zone.as_deref(),
-                servers,
                 *use_local_ip,
                 *json,
             )
@@ -156,7 +154,7 @@ async fn run(cli: Cli) -> i32 {
 
     let server_config = app_config
         .as_ref()
-        .and_then(|c| c.selected_server(cli.server.as_deref()).ok());
+        .and_then(|c| c.selected_server(cli.servers.first().map(|s| s.as_str())).ok());
 
     let vendor = server_config
         .map(|s| s.vendor)
@@ -231,7 +229,6 @@ async fn run_record_list_across_servers(
     app_config: Option<&config::AppConfig>,
     domain: &str,
     zone: Option<&str>,
-    servers: &[String],
     use_local_ip: bool,
     json: bool,
 ) -> i32 {
@@ -252,8 +249,8 @@ async fn run_record_list_across_servers(
     let selected: Vec<&config::DnsServerConfig> = if cli.all {
         cfg.servers.iter().collect()
     } else {
-        let mut picked = Vec::with_capacity(servers.len());
-        for server_id in servers {
+        let mut picked = Vec::with_capacity(cli.servers.len());
+        for server_id in &cli.servers {
             match cfg.selected_server(Some(server_id.as_str())) {
                 Ok(s) => picked.push(s),
                 Err(e) => return render_error(e),
@@ -428,7 +425,7 @@ fn resolve_technitium_credentials(
         return Ok((base_url, token));
     };
 
-    let server = config.selected_server(cli.server.as_deref())?;
+    let server = config.selected_server(cli.servers.first().map(|s| s.as_str()))?;
     let base_url = server.resolved_base_url(cli.base_url.as_deref());
     let token = server.resolved_token(cli.token.as_deref())?;
     Ok((base_url, token))
@@ -442,7 +439,7 @@ fn resolve_pangolin_credentials(
     use std::env;
 
     let (base_url, token, org_id_opt) = if let Some(config) = config {
-        let server = config.selected_server(cli.server.as_deref())?;
+        let server = config.selected_server(cli.servers.first().map(|s| s.as_str()))?;
         let base_url = cli
             .base_url
             .clone()
@@ -521,7 +518,7 @@ fn resolve_cloudflare_credentials(
         return Ok((base_url, token));
     };
 
-    let server = config.selected_server(cli.server.as_deref())?;
+    let server = config.selected_server(cli.servers.first().map(|s| s.as_str()))?;
     let base_url = cli
         .base_url
         .clone()
@@ -548,7 +545,7 @@ fn resolve_cloudflare_credentials(
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 fn cli_policy(cli: &Cli, config: Option<&config::AppConfig>) -> Result<Policy, Error> {
     let mcp = config
-        .and_then(|c| c.selected_server(cli.server.as_deref()).ok())
+        .and_then(|c| c.selected_server(cli.servers.first().map(|s| s.as_str())).ok())
         .map(|s| &s.mcp);
 
     let readonly = cli.readonly || mcp.is_some_and(|p| p.readonly);
@@ -596,7 +593,7 @@ mod tests {
     fn cli(allow_zone: Vec<String>) -> Cli {
         Cli {
             config: None,
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: Some("token".to_string()),
@@ -624,7 +621,7 @@ mod tests {
     fn config_cli(path: std::path::PathBuf, force: bool) -> Cli {
         Cli {
             config: Some(path),
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: None,
@@ -688,7 +685,7 @@ mod tests {
 
         let cli = Cli {
             config: None,
-            server: Some("cloud".to_string()),
+            servers: vec!["cloud".to_string()],
             all: false,
             base_url: None,
             token: None,
@@ -710,7 +707,7 @@ mod tests {
     fn cloudflare_credentials_default_base_url_no_config() {
         let cli = Cli {
             config: None,
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: Some("cf-token".to_string()),
@@ -740,7 +737,7 @@ mod tests {
 
         let cli = Cli {
             config: None,
-            server: Some("cf".to_string()),
+            servers: vec!["cf".to_string()],
             all: false,
             base_url: None,
             token: None,
@@ -770,7 +767,7 @@ mod tests {
 
         let cli = Cli {
             config: None,
-            server: Some("cf".to_string()),
+            servers: vec!["cf".to_string()],
             all: false,
             base_url: None,
             token: Some("cli-token".to_string()),
@@ -789,7 +786,7 @@ mod tests {
     fn cloudflare_credentials_error_when_no_token() {
         let cli = Cli {
             config: None,
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: None,

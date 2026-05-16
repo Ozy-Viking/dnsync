@@ -453,18 +453,22 @@ impl ZoneRead for PangolinClient {
 // ─── ZoneWrite (unsupported) ──────────────────────────────────────────────────
 
 impl ZoneWrite for PangolinClient {
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "create_zone"))]
     async fn create_zone(&self, _zone: &str, _zone_type: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "zone creation"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "delete_zone"))]
     async fn delete_zone(&self, _zone: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "zone deletion"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "enable_zone"))]
     async fn enable_zone(&self, _zone: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "zone enable"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "disable_zone"))]
     async fn disable_zone(&self, _zone: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "zone disable"))
     }
@@ -473,6 +477,7 @@ impl ZoneWrite for PangolinClient {
 // ─── RecordWrite (unsupported) ────────────────────────────────────────────────
 
 impl RecordWrite for PangolinClient {
+    #[instrument(skip(self, _record), fields(vendor = "pangolin", operation = "add_record"))]
     async fn add_record(
         &self,
         _zone: &str,
@@ -483,6 +488,7 @@ impl RecordWrite for PangolinClient {
         Err(Error::unsupported("Pangolin", "record add"))
     }
 
+    #[instrument(skip(self, _type_params), fields(vendor = "pangolin", operation = "delete_record"))]
     async fn delete_record(
         &self,
         _zone: &str,
@@ -496,16 +502,19 @@ impl RecordWrite for PangolinClient {
 // ─── CacheRead / CacheWrite (unsupported) ─────────────────────────────────────
 
 impl CacheRead for PangolinClient {
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "list_cache"))]
     async fn list_cache(&self, _domain: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "cache"))
     }
 }
 
 impl CacheWrite for PangolinClient {
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "delete_cache_zone"))]
     async fn delete_cache_zone(&self, _domain: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "cache"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "flush_cache"))]
     async fn flush_cache(&self) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "cache"))
     }
@@ -514,6 +523,7 @@ impl CacheWrite for PangolinClient {
 // ─── StatsRead (unsupported) ──────────────────────────────────────────────────
 
 impl StatsRead for PangolinClient {
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "get_stats"))]
     async fn get_stats(&self, _stats_type: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "stats"))
     }
@@ -522,28 +532,34 @@ impl StatsRead for PangolinClient {
 // ─── AccessListRead / AccessListWrite (unsupported) ───────────────────────────
 
 impl AccessListRead for PangolinClient {
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "list_blocked"))]
     async fn list_blocked(&self) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "access lists"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "list_allowed"))]
     async fn list_allowed(&self) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "access lists"))
     }
 }
 
 impl AccessListWrite for PangolinClient {
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "add_blocked"))]
     async fn add_blocked(&self, _domain: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "access lists"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "delete_blocked"))]
     async fn delete_blocked(&self, _domain: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "access lists"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "add_allowed"))]
     async fn add_allowed(&self, _domain: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "access lists"))
     }
 
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "delete_allowed"))]
     async fn delete_allowed(&self, _domain: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "access lists"))
     }
@@ -552,6 +568,7 @@ impl AccessListWrite for PangolinClient {
 // ─── ZoneImport (unsupported) ─────────────────────────────────────────────────
 
 impl ZoneImport for PangolinClient {
+    #[instrument(skip(self, _file_bytes), fields(vendor = "pangolin", operation = "import_zone_file"))]
     async fn import_zone_file(
         &self,
         _zone: &str,

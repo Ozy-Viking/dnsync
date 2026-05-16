@@ -18,9 +18,9 @@ pub struct Cli {
     #[arg(long, env = "DNSYNC_CONFIG")]
     pub config: Option<PathBuf>,
 
-    /// DNS server ID from the config file
-    #[arg(long, env = "DNSYNC_SERVER")]
-    pub server: Option<String>,
+    /// DNS server ID from the config file (repeatable for record list)
+    #[arg(long = "server", env = "DNSYNC_SERVER")]
+    pub servers: Vec<String>,
 
     /// Query all configured servers (record list only)
     #[arg(long)]
@@ -191,9 +191,6 @@ pub enum RecordCmd {
         domain: String,
         #[arg(long)]
         zone: Option<String>,
-        /// Server IDs to query (repeatable); ignored when --all is used
-        #[arg(long = "server", value_name = "ID")]
-        servers: Vec<String>,
         /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
         #[arg(long)]
         use_local_ip: bool,

@@ -50,7 +50,6 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         zone,
         use_local_ip,
         json,
-        servers: _,
     }) = command
     {
         let response = client
