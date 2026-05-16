@@ -60,11 +60,11 @@ pub fn record_content(record_type: &str, data: &serde_json::Value) -> String {
         "FWD" => str_field(data, "forwarder"),
         "NAPTR" => format!(
             "{} {} \"{}\" \"{}\" \"{}\" {}",
-            data.get("order").and_then(|v| v.as_u64()).unwrap_or(0),
-            data.get("preference").and_then(|v| v.as_u64()).unwrap_or(0),
+            data.get("naptrOrder").and_then(|v| v.as_u64()).unwrap_or(0),
+            data.get("naptrPreference").and_then(|v| v.as_u64()).unwrap_or(0),
             str_field(data, "naptrFlags"),
-            str_field(data, "services"),
-            str_field(data, "regexp"),
+            str_field(data, "naptrServices"),
+            str_field(data, "naptrRegexp"),
             str_field(data, "naptrReplacement"),
         ),
         _ => {
@@ -278,6 +278,24 @@ mod tests {
         let data = json!({"field": "x"});
         let result = record_content("MYSTERY", &data);
         assert!(result.contains("field"));
+    }
+
+    #[test]
+    fn naptr_record_content() {
+        assert_eq!(
+            record_content(
+                "NAPTR",
+                &json!({
+                    "naptrOrder": 10,
+                    "naptrPreference": 20,
+                    "naptrFlags": "U",
+                    "naptrServices": "E2U+sip",
+                    "naptrRegexp": "!^.*$!sip:info@example.com!",
+                    "naptrReplacement": "."
+                })
+            ),
+            "10 20 \"U\" \"E2U+sip\" \"!^.*$!sip:info@example.com!\" ."
+        );
     }
 
     #[test]
