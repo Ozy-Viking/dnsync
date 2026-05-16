@@ -9,7 +9,7 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
 };
 use crate::core::error::Result;
 use crate::vendors::technitium::client::TechnitiumClient;
@@ -27,6 +27,7 @@ impl DnsVendor for TechnitiumClient {
             access_lists: true,
             settings: true,
             zone_import: true,
+            zone_export: true,
         }
     }
 }
@@ -221,6 +222,13 @@ impl ZoneImport for TechnitiumClient {
             file_bytes,
         )
         .await
+    }
+}
+
+impl ZoneExport for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "export_zone_file"))]
+    async fn export_zone_file<'a>(&'a self, zone: &'a str) -> Result<String> {
+        self.get_text("/api/zones/export", &[("zone", zone)]).await
     }
 }
 
