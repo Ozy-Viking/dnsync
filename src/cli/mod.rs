@@ -1,6 +1,6 @@
-pub mod runner;
-
+pub mod interactive;
 pub mod records;
+pub mod runner;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -95,11 +95,12 @@ pub enum ConfigCmd {
     /// starter template if no config file exists yet)
     Print,
 
-    /// Add a server entry to the config file (creates the file if needed)
+    /// Add a server entry to the config file (creates the file if needed).
+    /// Run with no flags to enter interactive setup.
     Add {
         /// Unique ID for this server
         #[arg(long)]
-        id: String,
+        id: Option<String>,
 
         /// DNS vendor backend
         #[arg(long, default_value = "technitium")]
