@@ -80,6 +80,7 @@ async fn run(cli: Cli) -> i32 {
             ConfigCmd::Add {
                 id,
                 vendor,
+                location,
                 base_url,
                 token_env,
                 token,
@@ -90,6 +91,7 @@ async fn run(cli: Cli) -> i32 {
                 let server = config::DnsServerConfig {
                     id,
                     vendor,
+                    location,
                     base_url,
                     token,
                     token_env,
@@ -351,7 +353,7 @@ fn allowed_zones(
     Ok(Some(cli.allow_zone.clone()))
 }
 
-#[cfg(all(test, any(feature = "technitium", feature = "pangolin")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};

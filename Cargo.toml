@@ -14,8 +14,8 @@ path = "src/lib.rs"
 
 [features]
 default = ["technitium", "pangolin"]
-technitium = ["dep:reqwest"]
-pangolin = ["dep:reqwest"]
+technitium = []
+pangolin = []
 
 [dependencies]
 rmcp = { version = "1.7", features = ["server", "transport-io"] }
@@ -25,7 +25,7 @@ reqwest = { version = "0.13", features = [
     "multipart",
     "form",
     "query",
-], optional = true }
+] }
 serde = { version = "1", features = ["derive"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde_json = "1"

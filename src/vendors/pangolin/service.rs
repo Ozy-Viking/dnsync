@@ -298,6 +298,81 @@ fn is_local_ip(ip: &IpAddr) -> bool {
     }
 }
 
+// ─── PangolinClient helpers ───────────────────────────────────────────────────
+
+impl PangolinClient {
+    /// Fetch DNS records for a single Pangolin domain entry.
+    ///
+    /// When `name_filter` is Some, only records whose `base_domain` matches it
+    /// are included (used when a specific record name is requested within a zone).
+    async fn fetch_zone_records(
+        &self,
+        domain: &PangolinDomain,
+        name_filter: Option<&str>,
+        options: ListRecordsOptions,
+    ) -> Result<crate::core::dns::responses::ZoneRecords> {
+        use crate::core::dns::responses::ZoneRecords;
+
+        let records_data = self
+            .get(
+                &format!(
+                    "/org/{}/domain/{}/dns-records",
+                    self.org_id, domain.domain_id
+                ),
+                &[],
+            )
+            .await?;
+
+        let dns_records = parse_dns_records(&records_data)?;
+
+        let lookup_names = if options.use_local_ip {
+            dns_records
+                .iter()
+                .filter(|r| matches!(r.record_type.to_uppercase().as_str(), "A" | "AAAA"))
+                .map(|r| r.base_domain.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let resolved = resolve_local_candidates(&lookup_names).await;
+
+        let records: Vec<ZoneRecord> = dns_records
+            .iter()
+            .filter(|r| r.domain_id == domain.domain_id)
+            .filter(|r| {
+                name_filter
+                    .map(|n| r.base_domain.eq_ignore_ascii_case(n))
+                    .unwrap_or(true)
+            })
+            .map(|r| {
+                dns_record_to_zone_record(
+                    r,
+                    &domain.base_domain,
+                    resolved
+                        .get(&r.base_domain)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    options.use_local_ip,
+                )
+            })
+            .collect();
+
+        let zone_info = ZoneInfo {
+            name: domain.base_domain.clone(),
+            zone_type: format!("Pangolin/{}", domain.domain_type),
+            disabled: domain.failed || !domain.verified,
+            dnssec_status: None,
+        };
+
+        Ok(ZoneRecords {
+            zone: zone_info,
+            records,
+        })
+    }
+}
+
 // ─── DnsVendor ────────────────────────────────────────────────────────────────
 
 impl DnsVendor for PangolinClient {
@@ -336,81 +411,39 @@ impl ZoneRead for PangolinClient {
         zone: Option<&str>,
         options: ListRecordsOptions,
     ) -> Result<ListRecordsResponse> {
-        let zone_name = zone.unwrap_or(domain);
-
-        // Step 1 — resolve domainId for the requested zone.
+        // Fetch all domains regardless — needed for both single-zone and all-zones paths.
         let domains_data = self
             .get(
                 &format!("/org/{}/domains", self.org_id),
                 &[("limit", "1000".to_string()), ("offset", "0".to_string())],
             )
             .await?;
-
         let domains = parse_domains(&domains_data)?;
-        let matching = domains
-            .iter()
-            .find(|d| d.base_domain.eq_ignore_ascii_case(zone_name))
-            .ok_or_else(|| {
-                Error::api(format!(
-                    "zone '{}' not found in Pangolin domains",
-                    zone_name
-                ))
-            })?;
 
-        let records_data = self
-            .get(
-                &format!(
-                    "/org/{}/domain/{}/dns-records",
-                    self.org_id, matching.domain_id
-                ),
-                &[],
-            )
-            .await?;
-
-        let dns_records = parse_dns_records(&records_data)?;
-        let lookup_names = if options.use_local_ip {
-            dns_records
+        if let Some(zone_name) = zone {
+            // Zone explicitly specified — return records for that zone only.
+            let matching = domains
                 .iter()
-                .filter(|r| matches!(r.record_type.to_uppercase().as_str(), "A" | "AAAA"))
-                .map(|r| r.base_domain.clone())
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let resolved = resolve_local_candidates(&lookup_names).await;
-
-        // Step 3 — filter by domainId; optionally narrow to a specific record name.
-        let specific = zone.is_some() && !domain.eq_ignore_ascii_case(zone_name);
-        let records: Vec<ZoneRecord> = dns_records
-            .iter()
-            .filter(|r| r.domain_id == matching.domain_id)
-            .filter(|r| !specific || r.base_domain.eq_ignore_ascii_case(domain))
-            .map(|r| {
-                dns_record_to_zone_record(
-                    r,
-                    &matching.base_domain,
-                    resolved
-                        .get(&r.base_domain)
-                        .map(Vec::as_slice)
-                        .unwrap_or(&[]),
-                    options.use_local_ip,
-                )
+                .find(|d| d.base_domain.eq_ignore_ascii_case(zone_name))
+                .ok_or_else(|| {
+                    Error::api(format!("zone '{zone_name}' not found in Pangolin domains"))
+                })?;
+            let zone_records =
+                self.fetch_zone_records(matching, Some(domain), options).await?;
+            Ok(ListRecordsResponse {
+                zones: vec![zone_records],
             })
-            .collect();
-
-        let zone_info = ZoneInfo {
-            name: matching.base_domain.clone(),
-            zone_type: format!("Pangolin/{}", matching.domain_type),
-            disabled: matching.failed || !matching.verified,
-            dnssec_status: None,
-        };
-
-        Ok(ListRecordsResponse {
-            zone: zone_info,
-            records,
-        })
+        } else {
+            // No zone specified — list records for every domain in the org.
+            let mut all_zones = Vec::with_capacity(domains.len());
+            for domain_entry in &domains {
+                let zone_records = self
+                    .fetch_zone_records(domain_entry, None, options)
+                    .await?;
+                all_zones.push(zone_records);
+            }
+            Ok(ListRecordsResponse { zones: all_zones })
+        }
     }
 }
 

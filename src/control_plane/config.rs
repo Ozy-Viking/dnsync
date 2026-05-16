@@ -1,8 +1,10 @@
 use std::{
     env,
+    net::IpAddr,
     path::{Path, PathBuf},
 };
 
+use hickory_resolver::Resolver;
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::{Error, Result};
@@ -20,6 +22,17 @@ pub enum VendorKind {
     Pangolin,
 }
 
+/// Whether the DNS server is on a local network or an external/cloud service.
+///
+/// When omitted from config, the value is inferred from the base URL:
+/// `localhost` and private-range IPs → `local`; everything else → `external`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerLocation {
+    Local,
+    External,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -34,6 +47,11 @@ pub struct DnsServerConfig {
 
     #[serde(default)]
     pub vendor: VendorKind,
+
+    /// Whether this server is on a local network or an external/cloud service.
+    /// Inferred from the base URL when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<ServerLocation>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
@@ -64,6 +82,7 @@ impl AppConfig {
             servers: vec![DnsServerConfig {
                 id: "default".to_string(),
                 vendor: VendorKind::Technitium,
+                location: None,
                 base_url: Some(TECHNITIUM_DEFAULT_BASE_URL.to_string()),
                 token: None,
                 token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
@@ -231,6 +250,12 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         VendorKind::Technitium => "technitium",
         VendorKind::Pangolin => "pangolin",
     });
+    if let Some(loc) = server.location {
+        tbl["location"] = value(match loc {
+            ServerLocation::Local => "local",
+            ServerLocation::External => "external",
+        });
+    }
     if let Some(ref v) = server.base_url {
         tbl["base_url"] = value(v.as_str());
     }
@@ -376,6 +401,26 @@ fn check_config_permissions(_path: &Path) -> Result<()> {
 }
 
 impl DnsServerConfig {
+    /// Returns whether this server is local or external.
+    ///
+    /// Uses the explicit `location` config field when set; otherwise resolves
+    /// the effective base URL's hostname via hickory — private/loopback IPs
+    /// and `localhost` are `Local`, everything else is `External`.
+    pub async fn resolved_location(&self) -> ServerLocation {
+        if let Some(loc) = self.location {
+            return loc;
+        }
+        let url = self.base_url.as_deref().unwrap_or(match self.vendor {
+            VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
+            VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
+        });
+        if url_is_local(url).await {
+            ServerLocation::Local
+        } else {
+            ServerLocation::External
+        }
+    }
+
     pub fn resolved_base_url(&self, override_url: Option<&str>) -> String {
         override_url
             .map(ToOwned::to_owned)
@@ -409,6 +454,73 @@ impl DnsServerConfig {
                     self.id
                 ))
             })
+    }
+}
+
+/// Extracts the host portion (no port, no brackets around IPv6 literals) from a URL.
+fn url_host(url: &str) -> &str {
+    let without_scheme = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let authority = without_scheme.split('/').next().unwrap_or(without_scheme);
+
+    if authority.starts_with('[') {
+        // IPv6 literal — strip brackets; ignore the trailing `]:port` part.
+        authority
+            .trim_start_matches('[')
+            .split(']')
+            .next()
+            .unwrap_or(authority)
+    } else {
+        // Strip port if present (e.g. "192.168.1.1:5380" → "192.168.1.1").
+        authority.rsplit(':').nth(1).unwrap_or(authority)
+    }
+}
+
+fn is_local_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
+/// Returns true when the URL resolves to a local/private address.
+///
+/// Literal IPs and `localhost` are checked directly. For any other hostname
+/// hickory resolves it to an IP first — if any resolved address is
+/// private/loopback the URL is considered local.
+async fn url_is_local(url: &str) -> bool {
+    let host = url_host(url);
+
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        return true;
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return is_local_ip(ip);
+    }
+
+    // Hostname — resolve via hickory and check the resulting addresses.
+    let resolver = match Resolver::builder_tokio() {
+        Ok(builder) => match builder.build() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(%e, "could not build resolver for location check");
+                return false;
+            }
+        },
+        Err(e) => {
+            tracing::debug!(%e, "could not load resolver config for location check");
+            return false;
+        }
+    };
+
+    match resolver.lookup_ip(host).await {
+        Ok(lookup) => lookup.iter().any(is_local_ip),
+        Err(e) => {
+            tracing::debug!(%e, host, "hostname resolution failed during location check");
+            false
+        }
     }
 }
 
@@ -651,6 +763,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "home".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: None,
             token: None,
             token_env: None,
@@ -666,6 +779,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "cloud".to_string(),
             vendor: VendorKind::Pangolin,
+            location: None,
             base_url: None,
             token: None,
             token_env: None,
@@ -838,6 +952,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "myserver".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: Some("http://192.168.1.10:5380".to_string()),
             token: None,
             token_env: Some("MY_API_TOKEN".to_string()),
@@ -864,6 +979,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "lab".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: Some("http://192.168.1.20:5380".to_string()),
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
@@ -902,6 +1018,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "lab".to_string(),
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: None,
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
@@ -935,6 +1052,7 @@ mod tests {
         let server = DnsServerConfig {
             id: "default".to_string(), // already exists
             vendor: VendorKind::Technitium,
+            location: None,
             base_url: None,
             token: None,
             token_env: None,
@@ -965,5 +1083,139 @@ mod tests {
         );
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // ── resolved_location ─────────────────────────────────────────────────────
+
+    fn server_with_url(url: &str) -> DnsServerConfig {
+        DnsServerConfig {
+            id: "test".to_string(),
+            vendor: VendorKind::Technitium,
+            location: None,
+            base_url: Some(url.to_string()),
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn localhost_url_is_local() {
+        assert_eq!(
+            server_with_url("http://localhost:5380").resolved_location().await,
+            ServerLocation::Local
+        );
+    }
+
+    #[tokio::test]
+    async fn loopback_ip_is_local() {
+        assert_eq!(
+            server_with_url("http://127.0.0.1:5380").resolved_location().await,
+            ServerLocation::Local
+        );
+    }
+
+    #[tokio::test]
+    async fn private_ip_is_local() {
+        assert_eq!(
+            server_with_url("http://192.168.1.10:5380").resolved_location().await,
+            ServerLocation::Local
+        );
+        assert_eq!(
+            server_with_url("http://10.0.0.1:8080").resolved_location().await,
+            ServerLocation::Local
+        );
+    }
+
+    #[tokio::test]
+    async fn public_ip_is_external() {
+        assert_eq!(
+            server_with_url("https://1.2.3.4:5380").resolved_location().await,
+            ServerLocation::External
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_domain_is_external() {
+        assert_eq!(
+            server_with_url("https://api.pangolin.net/v1").resolved_location().await,
+            ServerLocation::External
+        );
+    }
+
+    #[tokio::test]
+    async fn technitium_default_url_is_local() {
+        let server = DnsServerConfig {
+            id: "test".to_string(),
+            vendor: VendorKind::Technitium,
+            location: None,
+            base_url: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+        assert_eq!(server.resolved_location().await, ServerLocation::Local);
+    }
+
+    #[tokio::test]
+    async fn pangolin_default_url_is_external() {
+        let server = DnsServerConfig {
+            id: "test".to_string(),
+            vendor: VendorKind::Pangolin,
+            location: None,
+            base_url: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions::default(),
+        };
+        assert_eq!(server.resolved_location().await, ServerLocation::External);
+    }
+
+    #[tokio::test]
+    async fn explicit_location_overrides_auto_detection() {
+        let mut server = server_with_url("https://api.pangolin.net");
+        server.location = Some(ServerLocation::Local);
+        assert_eq!(server.resolved_location().await, ServerLocation::Local);
+
+        server.location = Some(ServerLocation::External);
+        assert_eq!(server.resolved_location().await, ServerLocation::External);
+    }
+
+    // ── url_host extraction ───────────────────────────────────────────────────
+
+    #[test]
+    fn url_host_strips_scheme_and_port() {
+        assert_eq!(url_host("http://localhost:5380"), "localhost");
+        assert_eq!(url_host("https://192.168.1.1:443"), "192.168.1.1");
+        assert_eq!(url_host("https://api.pangolin.net/v1"), "api.pangolin.net");
+    }
+
+    #[test]
+    fn url_host_handles_ipv6_literals() {
+        assert_eq!(url_host("http://[::1]:5380"), "::1");
+    }
+
+    #[test]
+    fn url_host_no_port() {
+        assert_eq!(url_host("http://myserver"), "myserver");
+    }
+
+    // ── location field TOML round-trip ────────────────────────────────────────
+
+    #[test]
+    fn location_field_round_trips_in_toml() {
+        let toml = r#"
+            [[servers]]
+            id = "home"
+            vendor = "technitium"
+            location = "external"
+            token = "tok"
+        "#;
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let server = config.selected_server(None).unwrap();
+        assert_eq!(server.location, Some(ServerLocation::External));
     }
 }

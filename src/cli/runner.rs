@@ -1,15 +1,43 @@
 use serde_json::Value;
 
 use crate::{
-    cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd},
+    cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd, records},
     core::dns::service::{DnsService, ListRecordsOptions},
     core::error::{Error, Result},
 };
 
 pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
+    // Record list has its own output format logic — handle it before the
+    // generic JSON path.
+    if let Command::Record(RecordCmd::List {
+        domain,
+        zone,
+        use_local_ip,
+        json,
+    }) = command
+    {
+        let response = client
+            .list_records(
+                &domain,
+                zone.as_deref(),
+                ListRecordsOptions { use_local_ip },
+            )
+            .await?;
+
+        if json {
+            let value = serde_json::to_value(&response)
+                .map_err(|e| Error::parse(e.to_string()))?;
+            print_result(&value)?;
+        } else {
+            records::print_records_table(&response);
+        }
+        return Ok(());
+    }
+
     let result = match command {
         Command::Mcp => unreachable!("handled in main"),
         Command::Config(_) => unreachable!("handled in main"),
+        Command::Record(RecordCmd::List { .. }) => unreachable!("handled above"),
 
         Command::Zone(cmd) => match cmd {
             ZoneCmd::List { page, per_page } => client.list_zones(page, per_page).await?,
@@ -44,20 +72,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         },
 
         Command::Record(cmd) => match cmd {
-            RecordCmd::List {
-                domain,
-                zone,
-                use_local_ip,
-            } => serde_json::to_value(
-                client
-                    .list_records(
-                        &domain,
-                        zone.as_deref(),
-                        ListRecordsOptions { use_local_ip },
-                    )
-                    .await?,
-            )
-            .map_err(|e| Error::parse(e.to_string()))?,
+            RecordCmd::List { .. } => unreachable!("handled above"),
             RecordCmd::Add {
                 zone,
                 domain,

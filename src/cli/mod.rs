@@ -1,5 +1,6 @@
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
 pub mod runner;
+
+pub mod records;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -120,6 +121,11 @@ pub enum ConfigCmd {
         #[arg(long)]
         org_id: Option<String>,
 
+        /// Whether the server is on a local network or an external/cloud service
+        /// (auto-detected from base_url when omitted)
+        #[arg(long)]
+        location: Option<crate::control_plane::config::ServerLocation>,
+
         /// Restrict MCP tools to read-only operations for this server
         #[arg(long)]
         readonly: bool,
@@ -183,6 +189,9 @@ pub enum RecordCmd {
         /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
         #[arg(long)]
         use_local_ip: bool,
+        /// Output raw JSON instead of a table
+        #[arg(long)]
+        json: bool,
     },
     /// Add a record — type is a subcommand with typed fields
     Add {

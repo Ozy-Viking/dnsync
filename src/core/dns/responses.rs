@@ -130,16 +130,67 @@ pub struct ZoneInfo {
     pub dnssec_status: Option<String>,
 }
 
+/// Records for a single DNS zone.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ListRecordsResponse {
+pub struct ZoneRecords {
     pub zone: ZoneInfo,
     pub records: Vec<ZoneRecord>,
 }
 
+/// Response from list_records — may contain one zone or many (e.g. Pangolin "list all").
+///
+/// **Serialization shape:**
+/// - Single zone → `{"zone": {...}, "records": [...]}` (flat, matches the historical shape)
+/// - Multiple zones → `{"zones": [{"zone": {...}, "records": [...]}, ...]}`
+#[derive(Debug, Clone)]
+pub struct ListRecordsResponse {
+    pub zones: Vec<ZoneRecords>,
+}
+
+impl serde::Serialize for ListRecordsResponse {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self.zones.as_slice() {
+            [single] => {
+                let mut map = s.serialize_map(Some(2))?;
+                map.serialize_entry("zone", &single.zone)?;
+                map.serialize_entry("records", &single.records)?;
+                map.end()
+            }
+            _ => {
+                let mut map = s.serialize_map(Some(1))?;
+                map.serialize_entry("zones", &self.zones)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ListRecordsResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Multi { zones: Vec<ZoneRecords> },
+            Single { zone: ZoneInfo, records: Vec<ZoneRecord> },
+        }
+        match Repr::deserialize(d)? {
+            Repr::Multi { zones } => Ok(Self { zones }),
+            Repr::Single { zone, records } => Ok(Self::single(zone, records)),
+        }
+    }
+}
+
 impl ListRecordsResponse {
-    /// Parse the raw API JSON into a typed response, populating `parsed` on
-    /// each record where the type is recognised. Returns a typed error if the
-    /// response is missing required fields.
+    /// Convenience constructor for the common single-zone case.
+    pub fn single(zone: ZoneInfo, records: Vec<ZoneRecord>) -> Self {
+        Self {
+            zones: vec![ZoneRecords { zone, records }],
+        }
+    }
+
+    /// Parse the raw Technitium API JSON into a typed response, populating
+    /// `parsed` on each record where the type is recognised.
     pub fn from_value(value: &serde_json::Value) -> Result<Self> {
         let response = value
             .get("response")
@@ -169,7 +220,7 @@ impl ListRecordsResponse {
             })
             .collect();
 
-        Ok(ListRecordsResponse { zone, records })
+        Ok(Self::single(zone, records))
     }
 }
 
@@ -275,16 +326,17 @@ mod tests {
     fn parses_zone_info(zone_json: serde_json::Value) {
         let resp = wrap_response(zone_json, vec![]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
-        assert_eq!(result.zone.name, "example.com");
-        assert_eq!(result.zone.zone_type, "Primary");
-        assert!(!result.zone.disabled);
+        assert_eq!(result.zones.len(), 1);
+        assert_eq!(result.zones[0].zone.name, "example.com");
+        assert_eq!(result.zones[0].zone.zone_type, "Primary");
+        assert!(!result.zones[0].zone.disabled);
     }
 
     #[rstest]
     fn empty_records_list(zone_json: serde_json::Value) {
         let resp = wrap_response(zone_json, vec![]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
-        assert!(result.records.is_empty());
+        assert!(result.zones[0].records.is_empty());
     }
 
     #[rstest]
@@ -292,8 +344,9 @@ mod tests {
         let resp = wrap_response(zone_json, vec![a_record_json]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
 
-        assert_eq!(result.records.len(), 1);
-        let record = &result.records[0];
+        let records = &result.zones[0].records;
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
         assert_eq!(record.record_type, "A");
         assert_eq!(record.ttl, 3600);
         assert_eq!(record.name, "www");
@@ -314,7 +367,7 @@ mod tests {
         let resp = wrap_response(zone_json, vec![rrsig_record_json]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
 
-        match &result.records[0].parsed {
+        match &result.zones[0].records[0].parsed {
             Some(AnyRecordData::ReadOnly(ReadOnlyRecordData::Rrsig(data))) => {
                 assert_eq!(data.type_covered, "A");
                 assert_eq!(data.key_tag, 12345);
@@ -332,7 +385,7 @@ mod tests {
         let resp = wrap_response(zone_json, vec![dnskey_record_json]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
 
-        match &result.records[0].parsed {
+        match &result.zones[0].records[0].parsed {
             Some(AnyRecordData::ReadOnly(ReadOnlyRecordData::Dnskey(data))) => {
                 assert_eq!(data.flags, 257);
                 assert_eq!(data.computed_key_tag, 12345);
@@ -354,7 +407,7 @@ mod tests {
         let resp = wrap_response(zone_json, vec![record]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
         assert!(
-            result.records[0].parsed.is_none(),
+            result.zones[0].records[0].parsed.is_none(),
             "unknown type should produce None"
         );
     }
@@ -369,16 +422,11 @@ mod tests {
         let resp = wrap_response(zone_json, vec![a_record_json, rrsig_record_json, unknown]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse");
 
-        assert_eq!(result.records.len(), 3);
-        assert!(matches!(
-            result.records[0].parsed,
-            Some(AnyRecordData::Writable(_))
-        ));
-        assert!(matches!(
-            result.records[1].parsed,
-            Some(AnyRecordData::ReadOnly(_))
-        ));
-        assert!(result.records[2].parsed.is_none());
+        let records = &result.zones[0].records;
+        assert_eq!(records.len(), 3);
+        assert!(matches!(records[0].parsed, Some(AnyRecordData::Writable(_))));
+        assert!(matches!(records[1].parsed, Some(AnyRecordData::ReadOnly(_))));
+        assert!(records[2].parsed.is_none());
     }
 
     // ── from_value — error paths ──────────────────────────────────────────────
@@ -426,8 +474,9 @@ mod tests {
         let bad_record = json!({ "name": "bad", "ttl": 300, "rData": {} });
         let resp = wrap_response(zone_json, vec![bad_record, a_record_json]);
         let result = ListRecordsResponse::from_value(&resp).expect("should parse overall response");
-        assert_eq!(result.records.len(), 1);
-        assert_eq!(result.records[0].record_type, "A");
+        let records = &result.zones[0].records;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].record_type, "A");
     }
 
     // ── ZoneRecord fields ─────────────────────────────────────────────────────
@@ -440,7 +489,7 @@ mod tests {
         });
         let resp = wrap_response(zone_json, vec![record]);
         let result = ListRecordsResponse::from_value(&resp).unwrap();
-        assert!(!result.records[0].disabled);
+        assert!(!result.zones[0].records[0].disabled);
     }
 
     #[rstest]
@@ -451,6 +500,76 @@ mod tests {
         });
         let resp = wrap_response(zone_json, vec![record]);
         let result = ListRecordsResponse::from_value(&resp).unwrap();
-        assert_eq!(result.records[0].comments, "");
+        assert_eq!(result.zones[0].records[0].comments, "");
+    }
+
+    // ── ListRecordsResponse::single ───────────────────────────────────────────
+
+    #[rstest]
+    fn single_wraps_zone_and_records_in_one_entry(zone_json: serde_json::Value) {
+        let zone: ZoneInfo = serde_json::from_value(zone_json).unwrap();
+        let result = ListRecordsResponse::single(zone, vec![]);
+        assert_eq!(result.zones.len(), 1);
+        assert_eq!(result.zones[0].zone.name, "example.com");
+        assert!(result.zones[0].records.is_empty());
+    }
+
+    // ── Serialization shape ───────────────────────────────────────────────────
+
+    fn make_zone(name: &str) -> ZoneInfo {
+        ZoneInfo {
+            name: name.to_string(),
+            zone_type: "Primary".to_string(),
+            disabled: false,
+            dnssec_status: None,
+        }
+    }
+
+    #[test]
+    fn single_zone_serializes_flat() {
+        let resp = ListRecordsResponse::single(make_zone("example.com"), vec![]);
+        let v = serde_json::to_value(&resp).unwrap();
+        assert!(v.get("zone").is_some(), "should have top-level 'zone'");
+        assert!(v.get("records").is_some(), "should have top-level 'records'");
+        assert!(v.get("zones").is_none(), "should NOT have 'zones' wrapper");
+        assert_eq!(v["zone"]["name"], "example.com");
+    }
+
+    #[test]
+    fn multi_zone_serializes_with_zones_array() {
+        let resp = ListRecordsResponse {
+            zones: vec![
+                ZoneRecords { zone: make_zone("a.example.com"), records: vec![] },
+                ZoneRecords { zone: make_zone("b.example.com"), records: vec![] },
+            ],
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert!(v.get("zones").is_some(), "should have 'zones' array");
+        assert!(v.get("zone").is_none(), "should NOT have top-level 'zone'");
+        assert_eq!(v["zones"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn single_zone_round_trips_through_serde() {
+        let original = ListRecordsResponse::single(make_zone("example.com"), vec![]);
+        let json = serde_json::to_value(&original).unwrap();
+        let restored: ListRecordsResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.zones.len(), 1);
+        assert_eq!(restored.zones[0].zone.name, "example.com");
+    }
+
+    #[test]
+    fn multi_zone_round_trips_through_serde() {
+        let original = ListRecordsResponse {
+            zones: vec![
+                ZoneRecords { zone: make_zone("a.example.com"), records: vec![] },
+                ZoneRecords { zone: make_zone("b.example.com"), records: vec![] },
+            ],
+        };
+        let json = serde_json::to_value(&original).unwrap();
+        let restored: ListRecordsResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.zones.len(), 2);
+        assert_eq!(restored.zones[0].zone.name, "a.example.com");
+        assert_eq!(restored.zones[1].zone.name, "b.example.com");
     }
 }
