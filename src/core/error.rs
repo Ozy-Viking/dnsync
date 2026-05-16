@@ -31,7 +31,6 @@ pub enum Error {
     )]
     Http { status: u16, body: String },
 
-    #[cfg(any(feature = "technitium", feature = "pangolin"))]
     /// A network-level failure — connection refused, timeout, DNS resolution, etc.
     #[error("network error: {0}")]
     #[diagnostic(
@@ -43,7 +42,6 @@ pub enum Error {
     )]
     Network(#[source] reqwest::Error),
 
-    #[cfg(any(feature = "technitium", feature = "pangolin"))]
     /// The HTTP response body could not be decoded as JSON.
     #[error("invalid JSON response from server")]
     #[diagnostic(
@@ -66,7 +64,6 @@ pub enum Error {
     )]
     Parse { context: String },
 
-    #[cfg(any(feature = "technitium", feature = "pangolin"))]
     /// A MIME type string was rejected by reqwest (should never happen in practice).
     #[error("invalid MIME type")]
     #[diagnostic(code(dns::mime))]
@@ -107,11 +104,8 @@ pub enum Error {
 impl Error {
     /// True for transient failures the user might retry (network, timeout).
     pub fn is_transient(&self) -> bool {
-        #[cfg(any(feature = "technitium", feature = "pangolin"))]
-        {
-            if let Self::Network(e) = self {
-                return e.is_timeout() || e.is_connect();
-            }
+        if let Self::Network(e) = self {
+            return e.is_timeout() || e.is_connect();
         }
         false
     }
@@ -127,7 +121,6 @@ impl Error {
             Self::PolicyViolation { .. } => 6,
             Self::Api { .. } => 2,
             Self::Http { .. } => 3,
-            #[cfg(any(feature = "technitium", feature = "pangolin"))]
             Self::Network(_) => 4,
             Self::Io { .. } => 5,
             Self::Unsupported { .. } => 7,
