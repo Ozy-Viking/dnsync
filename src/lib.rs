@@ -3,11 +3,9 @@ compile_error!(
     "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium` or `pangolin`."
 );
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
 pub mod cli;
 pub mod control_plane;
 pub mod core;
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
 pub mod mcp;
 pub mod vendors;
 
@@ -16,7 +14,6 @@ pub mod client {
     pub use crate::vendors::technitium::client::*;
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
 pub mod dns {
     pub use crate::core::dns::service::*;
 }
@@ -37,7 +34,6 @@ pub mod response {
     pub use crate::core::dns::responses::*;
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
 pub mod server {
     pub use crate::mcp::server::*;
 }

@@ -353,7 +353,7 @@ fn allowed_zones(
     Ok(Some(cli.allow_zone.clone()))
 }
 
-#[cfg(all(test, any(feature = "technitium", feature = "pangolin")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
