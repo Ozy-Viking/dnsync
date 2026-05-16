@@ -139,7 +139,7 @@ async fn run(cli: Cli) -> i32 {
             return run_record_list_across_servers(
                 &cli,
                 app_config.as_ref(),
-                domain.as_deref(),
+                domain,
                 zone.as_deref(),
                 servers,
                 *use_local_ip,
@@ -228,7 +228,7 @@ async fn run(cli: Cli) -> i32 {
 async fn run_record_list_across_servers(
     cli: &Cli,
     app_config: Option<&config::AppConfig>,
-    domain: Option<&str>,
+    domain: &str,
     zone: Option<&str>,
     servers: &[String],
     use_local_ip: bool,
@@ -263,11 +263,6 @@ async fn run_record_list_across_servers(
             #[cfg(feature = "technitium")]
             config::VendorKind::Technitium => {
                 use dnslib::vendors::technitium::client::TechnitiumClient;
-                let Some(domain) = domain else {
-                    return render_error(Error::parse(
-                        "Technitium record list requires a domain argument",
-                    ));
-                };
                 let base_url = server.resolved_base_url(None);
                 let token = match server.resolved_token(None) {
                     Ok(t) => t,
@@ -303,21 +298,12 @@ async fn run_record_list_across_servers(
                     Err(e) => return render_error(e),
                 };
                 client
-                    .list_records(
-                        domain.unwrap_or("@"),
-                        zone,
-                        ListRecordsOptions { use_local_ip },
-                    )
+                    .list_records(domain, zone, ListRecordsOptions { use_local_ip })
                     .await
             }
             #[cfg(feature = "cloudflare")]
             config::VendorKind::Cloudflare => {
                 use dnslib::vendors::cloudflare::client::CloudflareClient;
-                let Some(domain) = domain else {
-                    return render_error(Error::parse(
-                        "Cloudflare record list requires a domain argument",
-                    ));
-                };
                 let base_url = server
                     .base_url
                     .clone()

@@ -53,11 +53,12 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         servers: _,
     }) = command
     {
-        let domain = domain.as_deref().ok_or_else(|| {
-            Error::parse("domain is required for single-server record list (use --all/--server for cross-server mode)")
-        })?;
         let response = client
-            .list_records(domain, zone.as_deref(), ListRecordsOptions { use_local_ip })
+            .list_records(
+                &domain,
+                zone.as_deref(),
+                ListRecordsOptions { use_local_ip },
+            )
             .await?;
 
         if json {

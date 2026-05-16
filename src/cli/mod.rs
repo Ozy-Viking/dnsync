@@ -188,8 +188,7 @@ pub enum ZoneCmd {
 pub enum RecordCmd {
     /// List all records for a domain
     List {
-        /// Domain to filter by (optional for vendors that support all-record listing)
-        domain: Option<String>,
+        domain: String,
         #[arg(long)]
         zone: Option<String>,
         /// Server IDs to query (repeatable); ignored when --all is used
