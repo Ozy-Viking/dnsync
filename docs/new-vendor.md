@@ -1,6 +1,7 @@
 # dnsync Vendor Adapter Requirements
 
 This document defines what must be added when introducing a new DNS/vendor backend to `dnsync`.
+It is the authoritative reference for code reviewers and implementors.
 
 ## Summary
 
@@ -19,9 +20,34 @@ Every production-ready vendor must provide:
 - module exports
 - tests and documentation
 
+---
+
+## Project layout relevant to a new vendor
+
+```
+src/
+  core/dns/service.rs       ← vendor-neutral trait contracts  (do not modify)
+  core/dns/records.rs       ← DNS record types                (do not modify)
+  core/dns/responses.rs     ← ListRecordsResponse etc.        (do not modify)
+  core/dns/capabilities.rs  ← VendorCapabilities struct       (do not modify)
+  core/error.rs             ← Error enum and Result alias     (do not modify)
+  core/secret.rs            ← ApiToken wrapper                (do not modify)
+  control_plane/config.rs   ← VendorKind enum + DnsServerConfig  (YOU ADD HERE)
+  vendors/mod.rs            ← feature-gated vendor modules       (YOU ADD HERE)
+  vendors/<yourvendor>/
+    mod.rs                  ← module declarations  (YOU CREATE)
+    client.rs               ← HTTP transport       (YOU CREATE)
+    service.rs              ← trait implementations (YOU CREATE)
+  main.rs                   ← credential resolution + dispatch  (YOU ADD HERE)
+Cargo.toml                  ← feature flag                       (YOU ADD HERE)
+```
+
+---
+
 ## 1. Cargo Feature
 
-Add a feature for the vendor in `Cargo.toml`.
+Add a feature for the vendor in `Cargo.toml`. `reqwest` is a direct dependency and does not
+need to be listed per-feature.
 
 ```toml
 [features]
@@ -36,12 +62,17 @@ New production-ready vendors should be added to `default` so normal builds inclu
 
 Only omit a vendor from default features if it is experimental, requires unusually heavy dependencies, or has platform-specific constraints.
 
+---
+
 ## 2. VendorKind Entry
 
-Add the vendor to the central vendor enum.
+Add the vendor to the central vendor enum in `control_plane/config.rs`.
 
 ```rust
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum VendorKind {
+    #[default]
     Technitium,
     Pangolin,
     NewVendor,
@@ -50,41 +81,61 @@ pub enum VendorKind {
 
 The enum must support:
 
-- config deserialization
-- CLI selection
-- runtime dispatch
-- case-insensitive or predictable user-facing naming
+- config deserialization (`serde(rename_all = "lowercase")`)
+- CLI selection (`clap::ValueEnum`)
+- runtime dispatch (match arms in `main.rs`)
+- case-insensitive user-facing naming
+
+---
 
 ## 3. Vendor Defaults
 
-Every vendor must define default metadata and configuration values.
+Vendor defaults are implemented as constants and match arms — there is no `VendorDefaults` struct.
 
-Recommended shape:
+Add a default base URL constant alongside the existing ones:
 
 ```rust
-pub struct VendorDefaults {
-    pub kind: VendorKind,
-    pub display_name: &'static str,
-    pub default_base_url: Option<&'static str>,
-    pub base_url_env: &'static str,
-    pub token_env: &'static str,
-    pub requires_org_id: bool,
-    pub org_id_env: Option<&'static str>,
-}
+pub const NEWVENDOR_DEFAULT_BASE_URL: &str = "https://api.newvendor.com/v1";
+```
+
+Add match arms in `resolved_base_url()` and `resolved_location()` on `DnsServerConfig`:
+
+```rust
+// resolved_base_url
+.unwrap_or_else(|| match self.vendor {
+    VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
+    VendorKind::Pangolin   => PANGOLIN_DEFAULT_BASE_URL.to_string(),
+    VendorKind::NewVendor  => NEWVENDOR_DEFAULT_BASE_URL.to_string(),
+})
+
+// resolved_location — used to infer local vs external from the default URL
+let url = self.base_url.as_deref().unwrap_or(match self.vendor {
+    VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
+    VendorKind::Pangolin   => PANGOLIN_DEFAULT_BASE_URL,
+    VendorKind::NewVendor  => NEWVENDOR_DEFAULT_BASE_URL,
+});
+```
+
+Add a match arm in `append_server_entry()` for TOML serialisation:
+
+```rust
+tbl["vendor"] = value(match server.vendor {
+    VendorKind::Technitium => "technitium",
+    VendorKind::Pangolin   => "pangolin",
+    VendorKind::NewVendor  => "newvendor",
+});
 ```
 
 Required defaults:
 
-- display name
 - default API base URL, where safe and known
-- vendor-specific base URL environment variable
-- vendor-specific token environment variable
+- vendor-specific base URL environment variable (`DNSYNC_NEWVENDOR_BASE_URL`)
+- vendor-specific token environment variable (`DNSYNC_NEWVENDOR_API_TOKEN`)
 - whether the vendor requires an organisation/account ID
-- organisation/account ID environment variable, if applicable
 
-### Pangolin Default
+### Pangolin default
 
-Pangolin should default to the hosted cloud API root:
+Pangolin defaults to the hosted cloud API root:
 
 ```text
 https://api.pangolin.net/v1
@@ -99,54 +150,128 @@ Resolution order:
 → https://api.pangolin.net/v1
 ```
 
-`org_id` should remain required because Pangolin routes are org-scoped.
+`org_id` is required because Pangolin routes are org-scoped. `DnsServerConfig.org_id` already exists for this purpose.
+
+---
 
 ## 4. Credential Resolution
 
-Each vendor must resolve credentials consistently.
+Each vendor needs a `resolve_<vendor>_credentials` function in `main.rs`, gated with
+`#[cfg(feature = "newvendor")]`. Follow the existing Technitium or Pangolin pattern exactly.
 
-Recommended order:
+Resolution order for the token:
 
 ```text
-CLI override
-→ vendor-specific environment variable
-→ config token_env lookup
+CLI --token
+→ DNSYNC_NEWVENDOR_API_TOKEN env var
+→ config token_env lookup (reads the named env var)
 → config literal token
-→ error
+→ Error::parse(...)
 ```
 
 For base URLs:
 
 ```text
-CLI override
-→ vendor-specific environment variable
+CLI --base-url
+→ DNSYNC_NEWVENDOR_BASE_URL env var
 → config base_url
-→ vendor default base_url
-→ error
+→ vendor default base URL
 ```
 
-For organisation/account IDs, where required:
+For organisation/account IDs where required (`DnsServerConfig.org_id`):
 
 ```text
-CLI/env override
-→ config org_id/account_id
-→ error
+DNSYNC_NEWVENDOR_ORG_ID env var
+→ config org_id
+→ Error::parse(...)
 ```
+
+---
 
 ## 5. Vendor Client
 
-Each vendor needs a client module responsible for:
+Create `src/vendors/<vendor>/client.rs`. Model it on the Technitium or Pangolin client.
 
-- HTTP client construction
-- base URL storage
-- authentication injection
-- request helpers
-- response parsing
-- vendor-specific error mapping
-- safe handling of secrets
-- timeout configuration
+Key rules:
 
-Typical structure:
+1. Build a `reqwest::Client` with a 30-second timeout in `new()`.
+2. Always use bearer auth: `.bearer_auth(self.token.expose_for_auth())`.
+3. Never log the token. `ApiToken` has a `Debug` impl that prints `[REDACTED]`.
+4. Every HTTP method must follow this tracing template exactly:
+
+```rust
+use crate::core::error::{Error, Result};
+use crate::core::secret::ApiToken;
+use reqwest::{Client, Response};
+use serde_json::Value;
+
+#[derive(Clone, Debug)]
+pub struct NewVendorClient {
+    pub http: Client,
+    pub base_url: String,
+    token: ApiToken,
+    // add vendor-specific fields (org_id, etc.)
+}
+
+impl NewVendorClient {
+    pub fn new(base_url: String, token: ApiToken) -> Result<Self> {
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(Error::Network)?;
+        Ok(Self { http, base_url, token })
+    }
+
+    pub async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let span = tracing::debug_span!("http.get", path, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending GET");
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(self.token.expose_for_auth())
+            .query(params)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "GET failed");
+                Error::Network(e)
+            })?;
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
+        parse_response(resp).await
+    }
+
+    // Add post(), delete(), patch() etc. following the same span pattern.
+    // For post_file, extract the zone from params and add it to the span:
+    //   let zone = params.iter().find(|(k,_)| *k == "zone").map(|(_,v)| v.as_str()).unwrap_or("");
+    //   let span = tracing::debug_span!("http.post_file", path, zone, http.status = ...);
+}
+
+async fn parse_response(resp: Response) -> Result<Value> {
+    // Inspect status, parse JSON, map vendor-specific errors to:
+    //   Error::Api { message }       — vendor returned an error payload
+    //   Error::Http { status, body } — non-2xx without a structured error
+    //   Error::Forbidden { .. }      — HTTP 403; use Error::forbidden(msg)
+    //   Error::InvalidJson(e)        — JSON decode failure
+    //   Error::Network(e)            — transport failure
+    // Do NOT add tracing inside parse_response — it is pure sync parsing.
+}
+```
+
+Tracing field rules:
+
+| Field | Value |
+|---|---|
+| Span name | `"http.get"`, `"http.post"`, `"http.post_file"`, etc. |
+| `path` | the API path string |
+| `http.status` | `tracing::field::Empty` as placeholder; recorded via `span.record(...)` after response |
+| On network error | `tracing::warn!(error = %e, "GET failed")` inside the closure, then propagate |
+
+Do **not** add tracing inside `parse_response`.
+
+Typical file structure:
 
 ```text
 src/vendors/<vendor>/
@@ -164,11 +289,14 @@ responses.rs
 config.rs
 ```
 
+---
+
 ## 6. Service Trait Implementations
 
-Every vendor must implement the full vendor-neutral DNS service contract.
+Create `src/vendors/<vendor>/service.rs`. Implement **all** of the following traits on your
+client struct. This is mandatory even for unsupported operations.
 
-Required traits:
+Required traits (all in `crate::core::dns::service`):
 
 - `DnsVendor`
 - `ZoneRead`
@@ -182,21 +310,111 @@ Required traits:
 - `ZoneImport`
 - `SettingsRead`
 
-Unsupported operations must return explicit unsupported errors.
+`DnsService` is a blanket impl — do not implement it directly.
 
-Example:
+Unsupported operations must return explicit unsupported errors:
 
 ```rust
 Err(Error::unsupported("VendorName", "zone import"))
 ```
 
-This keeps CLI and MCP behaviour predictable even when a vendor is read-only or only partially DNS-compatible.
+Full trait signatures for reference:
+
+```rust
+// DnsVendor
+fn kind(&self) -> VendorKind;
+fn capabilities(&self) -> VendorCapabilities;
+
+// ZoneRead
+async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value>;
+async fn list_records<'a>(&'a self, domain: &'a str, zone: Option<&'a str>,
+    options: ListRecordsOptions) -> Result<ListRecordsResponse>;
+
+// ZoneWrite
+async fn create_zone<'a>(&'a self, zone: &'a str, zone_type: &'a str) -> Result<Value>;
+async fn delete_zone<'a>(&'a self, zone: &'a str) -> Result<Value>;
+async fn enable_zone<'a>(&'a self, zone: &'a str) -> Result<Value>;
+async fn disable_zone<'a>(&'a self, zone: &'a str) -> Result<Value>;
+
+// RecordWrite
+async fn add_record<'a>(&'a self, zone: &'a str, domain: &'a str,
+    ttl: u32, record: &'a RecordData) -> Result<Value>;
+async fn delete_record<'a>(&'a self, zone: &'a str, domain: &'a str,
+    type_params: &'a [(&'a str, String)]) -> Result<Value>;
+
+// CacheRead
+async fn list_cache<'a>(&'a self, domain: &'a str) -> Result<Value>;
+
+// CacheWrite
+async fn delete_cache_zone<'a>(&'a self, domain: &'a str) -> Result<Value>;
+async fn flush_cache(&self) -> Result<Value>;
+
+// StatsRead
+async fn get_stats<'a>(&'a self, stats_type: &'a str) -> Result<Value>;
+
+// AccessListRead
+async fn list_blocked(&self) -> Result<Value>;
+async fn list_allowed(&self) -> Result<Value>;
+
+// AccessListWrite
+async fn add_blocked<'a>(&'a self, domain: &'a str) -> Result<Value>;
+async fn delete_blocked<'a>(&'a self, domain: &'a str) -> Result<Value>;
+async fn add_allowed<'a>(&'a self, domain: &'a str) -> Result<Value>;
+async fn delete_allowed<'a>(&'a self, domain: &'a str) -> Result<Value>;
+
+// ZoneImport
+async fn import_zone_file<'a>(&'a self, zone: &'a str, file_name: String,
+    file_bytes: Vec<u8>, overwrite: bool, overwrite_zone: bool,
+    overwrite_soa_serial: bool) -> Result<Value>;
+
+// SettingsRead
+async fn get_settings(&self) -> Result<Value>;
+```
+
+### Tracing standard for service.rs
+
+Apply `#[instrument]` to every method that performs real I/O. Do **not** annotate methods that
+return `Error::unsupported` immediately.
+
+```rust
+use tracing::instrument;
+
+// Supported methods: #[instrument] with vendor and operation fields.
+// Parameters (zone, domain, etc.) are captured automatically from function arguments.
+// Always skip(self). Skip non-Debug params: record, file_bytes, type_params.
+
+#[instrument(skip(self), fields(vendor = "newvendor", operation = "list_zones"))]
+async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> { ... }
+
+#[instrument(skip(self), fields(vendor = "newvendor", operation = "create_zone"))]
+async fn create_zone(&self, zone: &str, zone_type: &str) -> Result<Value> { ... }
+
+#[instrument(skip(self, record), fields(vendor = "newvendor", operation = "add_record"))]
+async fn add_record(&self, zone: &str, domain: &str, ttl: u32, record: &RecordData)
+    -> Result<Value> { ... }
+
+#[instrument(skip(self, file_bytes), fields(vendor = "newvendor", operation = "import_zone_file"))]
+async fn import_zone_file(&self, zone: &str, file_name: String, file_bytes: Vec<u8>, ...)
+    -> Result<Value> { ... }
+
+// Unsupported methods: NO #[instrument], return immediately.
+async fn flush_cache(&self) -> Result<Value> {
+    Err(Error::unsupported("NewVendor", "cache flush"))
+}
+```
+
+Field naming rules:
+
+- `vendor` — lowercase string literal matching your vendor name
+- `operation` — snake_case trait method name
+- `zone`, `domain`, `stats_type` — captured automatically from params; do not re-list in `fields()`
+- `skip(self, record)` — skip `self` always; skip `&RecordData`, `Vec<u8>`, and `&[(&str, String)]` (not Debug)
+
+---
 
 ## 7. Capabilities
 
-Every vendor must declare its supported functionality.
-
-Current capability fields:
+Every vendor must declare its supported functionality in `DnsVendor::capabilities()`.
 
 ```rust
 pub struct VendorCapabilities {
@@ -209,9 +427,10 @@ pub struct VendorCapabilities {
 }
 ```
 
-Capabilities must reflect actual behaviour, not aspirational support.
+Set each boolean to `true` only for operations you fully implement. Capabilities must reflect
+actual behaviour, not aspirational support.
 
-Example for Pangolin:
+Example for Pangolin (read-only):
 
 ```rust
 VendorCapabilities {
@@ -224,41 +443,78 @@ VendorCapabilities {
 }
 ```
 
+---
+
 ## 8. Records Must Be Normalized by Default
 
-Every vendor adapter must normalize vendor-specific DNS/resource data into dnsync's vendor-neutral record model before returning it to CLI or MCP callers.
-
-Default flow:
+`list_records` must return `Result<ListRecordsResponse>`. Map vendor-specific data to the
+vendor-neutral types before returning.
 
 ```text
 vendor API response
 → vendor-specific parser
-→ normalized ZoneRecord / RecordData / ListRecordsResponse
+→ normalized ZoneRecord / ListRecordsResponse
 → CLI/MCP output
 ```
 
-Normalized records should consistently expose:
+### Key types
 
-- zone
-- record name
-- fully qualified domain name, where available
-- record type
-- TTL, where meaningful
-- enabled/disabled state
-- comments or description, where available
-- parsed typed record data, where possible
-- vendor metadata in `data`
+**`ListRecordsResponse`** — wraps one or more zones. Construct with:
+
+```rust
+ListRecordsResponse::single(zone_info, records)  // most vendors: one zone per call
+```
+
+**`ZoneInfo`** fields:
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `String` | zone FQDN |
+| `zone_type` | `String` | e.g. `"Primary"` |
+| `disabled` | `bool` | |
+| `dnssec_status` | `Option<String>` | `None` if not applicable |
+
+**`ZoneRecord`** fields:
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `String` | relative name or `"@"` for apex |
+| `record_type` | `String` | uppercase, e.g. `"A"`, `"MX"` |
+| `ttl` | `u32` | 0 if unavailable |
+| `disabled` | `bool` | |
+| `comments` | `String` | empty string if unavailable |
+| `expiry_ttl` | `u64` | 0 if unavailable |
+| `data` | `serde_json::Value` | serialized as `rData`; vendor-neutral shape |
+| `parsed` | `Option<AnyRecordData>` | typed form; set to `None` if you don't populate it |
+
+### rData shape
+
+The `data` field should contain a JSON object whose keys match what `RecordData`'s serde
+deserialisation expects, so that typed `parsed` can be populated by callers. Standard shapes:
+
+| Type | rData shape |
+|---|---|
+| A / AAAA | `{"ipAddress": "1.2.3.4"}` |
+| CNAME | `{"cname": "target.example.com"}` |
+| MX | `{"preference": 10, "exchange": "mail.example.com"}` |
+| TXT | `{"text": "v=spf1 ~all", "splitText": false}` |
+| NS | `{"nameServer": "ns1.example.com", "glue": null}` |
+| PTR | `{"ptrName": "host.example.com"}` |
+| SRV | `{"priority": 10, "weight": 20, "port": 5060, "target": "sip.example.com"}` |
+| CAA | `{"flags": 0, "tag": "issue", "value": "letsencrypt.org"}` |
+| unknown | `{"value": "<raw content>"}` |
+
+Additional vendor metadata (IDs, proxied state, health, etc.) can be added as extra keys in the
+same `data` object.
 
 Rules:
 
-- Standard DNS records such as `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`, `HTTPS`, and `SVCB` should map to typed normalized records where possible.
+- Standard DNS records (`A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`, `HTTPS`, `SVCB`) should map to typed normalized records where possible.
 - Vendor-specific or non-DNS-native resources should still return as normalized records.
 - Raw vendor API shapes should not be the primary output format.
 - If a field is unavailable, use a safe neutral default and preserve useful original vendor data in `data`.
 
-### Pangolin Normalization
-
-Pangolin should normalize resources as DNS-like records:
+### Pangolin normalization
 
 ```text
 Pangolin domain      → ZoneInfo
@@ -270,38 +526,79 @@ resource.enabled     → disabled = !enabled
 targets/sites/health → vendor metadata in data
 ```
 
+---
+
 ## 9. Runtime Dispatch
 
-Add a runtime dispatch branch in `main.rs` for the new vendor.
+Add credential resolution and a dispatch branch in `main.rs`.
 
-Pattern:
+Update every `#[cfg(any(feature = "technitium", feature = "pangolin"))]` guard to include
+the new feature:
 
 ```rust
-match vendor {
-    VendorKind::Technitium => { /* construct TechnitiumClient */ }
-    VendorKind::Pangolin => { /* construct PangolinClient */ }
-    VendorKind::NewVendor => { /* construct NewVendorClient */ }
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "newvendor"))]
+```
+
+Update the `compile_error!` guard:
+
+```rust
+#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "newvendor")))]
+compile_error!("No DNS vendor feature is enabled...");
+```
+
+Add a dispatch branch in `run()`:
+
+```rust
+#[cfg(feature = "newvendor")]
+config::VendorKind::NewVendor => {
+    use dnslib::vendors::newvendor::client::NewVendorClient;
+    let (base_url, token) = match resolve_newvendor_credentials(&cli, app_config.as_ref()) {
+        Ok(v) => v,
+        Err(e) => return render_error(e),
+    };
+    let client = match NewVendorClient::new(base_url, token) {
+        Ok(c) => c,
+        Err(e) => return render_error(e),
+    };
+    run_with_client(cli, client, policy).await
 }
 ```
 
-The dispatch branch must:
-
-- resolve credentials
-- construct the vendor client
-- pass the client into the shared CLI/MCP runner
+---
 
 ## 10. Module Exports
 
-Expose the vendor module from `src/vendors/mod.rs`.
+Expose the vendor module from `src/vendors/mod.rs`:
 
 ```rust
 #[cfg(feature = "newvendor")]
 pub mod newvendor;
 ```
 
-Also ensure `src/lib.rs` and `src/main.rs` feature gates include the new vendor where required.
+`src/lib.rs` only needs updating if the new vendor warrants a dedicated re-export in the
+`pub mod client` block (currently only Technitium has one). The `compile_error!` at the top
+of `lib.rs` must include the new feature.
 
-## 11. CLI and Documentation
+---
+
+## 11. Error Types
+
+Use the existing `Error` variants — do not define new error types:
+
+| Variant | Constructor / usage |
+|---|---|
+| `Error::Network(reqwest::Error)` | transport/timeout failure |
+| `Error::InvalidJson(reqwest::Error)` | JSON decode failure |
+| `Error::Api { message }` | vendor returned error payload |
+| `Error::Http { status, body }` | non-2xx without structured error |
+| `Error::Forbidden { .. }` | `Error::forbidden(msg)` |
+| `Error::Unsupported { .. }` | `Error::unsupported("VendorName", "operation")` |
+| `Error::Parse { .. }` | `Error::parse("description")` |
+| `Error::Io { .. }` | `Error::io("context", io_error)` |
+
+---
+
+## 12. CLI and Documentation
 
 For every vendor, update:
 
@@ -312,12 +609,9 @@ For every vendor, update:
 - MCP examples
 - supported/unsupported operation notes
 
-Avoid hard-coding one vendor's name in generic CLI/MCP descriptions.
-
-Prefer generic naming:
+Prefer generic naming for shared env vars:
 
 ```text
-dnsync
 DNSYNC_BASE_URL
 DNSYNC_API_TOKEN
 DNSYNC_SERVER
@@ -331,47 +625,54 @@ DNSYNC_PANGOLIN_API_TOKEN
 DNSYNC_NEWVENDOR_API_TOKEN
 ```
 
-## 12. Tests
+---
+
+## 13. Tests
 
 Each vendor must include tests for:
 
-- default base URL resolution
-- token resolution
-- required org/account ID handling
-- config round-trip
-- response-envelope parsing
-- error parsing
-- capability declaration
-- normalized record conversion
+- default base URL constant value
+- token resolution order (CLI > env > config)
+- required org/account ID error when missing
+- config round-trip (`VendorKind` serde: `"newvendor"` → enum → `"newvendor"`)
+- response envelope parsing (success, API error, forbidden, empty errors)
+- capability declaration matches `VendorCapabilities` struct exactly
+- normalized record conversion (A, MX, TXT, unknown type, proxied flag, vendor ID)
 - supported read operations
-- unsupported write/non-DNS operations
-- feature-gated compilation
+- all unsupported operations return `Error::Unsupported` with correct vendor name
+- feature-gated compilation (`cargo build --features newvendor`)
 
 For read-only vendors, tests should prove write operations fail clearly and safely.
 
+---
+
 ## New Vendor Checklist
 
-Use this checklist when adding a vendor.
-
 ```text
-[ ] Add Cargo feature
+[ ] Add Cargo feature (empty: `newvendor = []`)
 [ ] Add vendor to default features if production-ready
 [ ] Add VendorKind enum variant
-[ ] Add vendor defaults
-[ ] Add default base URL, if known and safe
-[ ] Add vendor-specific env vars
-[ ] Add credential resolver
-[ ] Add client module
-[ ] Add service trait implementations
-[ ] Add unsupported-operation behaviour
-[ ] Add capabilities
-[ ] Normalize records by default
-[ ] Preserve vendor metadata in normalized output
-[ ] Add runtime dispatch
-[ ] Export vendor module
+[ ] Add default base URL constant
+[ ] Add match arm in resolved_base_url()
+[ ] Add match arm in resolved_location()
+[ ] Add match arm in append_server_entry()
+[ ] Add vendor-specific env vars (DNSYNC_NEWVENDOR_API_TOKEN, DNSYNC_NEWVENDOR_BASE_URL)
+[ ] Add credential resolver function in main.rs (feature-gated)
+[ ] Update all cfg(any(...)) guards in main.rs
+[ ] Update compile_error! guards in main.rs and lib.rs
+[ ] Add vendor module declaration in vendors/mod.rs (feature-gated)
+[ ] Create vendors/newvendor/mod.rs
+[ ] Create vendors/newvendor/client.rs with tracing template
+[ ] Create vendors/newvendor/service.rs with all 12 traits
+[ ] Apply #[instrument] to I/O methods; Error::unsupported on unsupported methods
+[ ] Set VendorCapabilities correctly
+[ ] Normalize records by default (ZoneRecord with correct rData shape)
+[ ] Preserve vendor metadata in normalized output data field
+[ ] Add runtime dispatch branch in main.rs
 [ ] Update CLI help text
 [ ] Update README/config examples
-[ ] Add tests
-[ ] Verify vendor-only feature build
-[ ] Verify default-feature build
+[ ] Add tests (credential resolution, envelope parsing, normalization, unsupported ops)
+[ ] Verify vendor-only feature build: cargo build --features newvendor
+[ ] Verify default-feature build: cargo build
+[ ] Verify all tests pass: cargo test
 ```

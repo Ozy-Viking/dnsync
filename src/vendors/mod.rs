@@ -8,6 +8,9 @@ pub mod technitium;
 #[cfg(feature = "pangolin")]
 pub mod pangolin;
 
+#[cfg(feature = "cloudflare")]
+pub mod cloudflare;
+
 pub struct DnsClient<Vendor> {
     vendor_id: VendorKind,
     vendor_client: Vendor,

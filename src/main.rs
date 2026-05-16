@@ -1,12 +1,12 @@
-#[cfg(not(any(feature = "technitium", feature = "pangolin")))]
+#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "cloudflare")))]
 compile_error!(
-    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium` or `pangolin`."
+    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, or `cloudflare`."
 );
 
-#[cfg(not(any(feature = "technitium", feature = "pangolin")))]
+#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "cloudflare")))]
 fn main() {}
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use dnslib::{
     cli,
     control_plane::{config, policy},
@@ -14,28 +14,28 @@ use dnslib::{
     mcp::server,
 };
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use std::process;
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use clap::Parser;
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use miette::Report;
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use rmcp::ServiceExt;
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use tracing_subscriber::{EnvFilter, fmt};
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use cli::{Cli, Command, ConfigCmd};
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use error::Error;
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use policy::Policy;
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use server::DnsServer;
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -50,7 +50,7 @@ async fn main() {
     process::exit(run(cli).await);
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run(cli: Cli) -> i32 {
     if let Command::Config(config_cmd) = cli.command {
         return match config_cmd {
@@ -167,6 +167,24 @@ async fn run(cli: Cli) -> i32 {
             run_with_client(cli, client, policy).await
         }
 
+        #[cfg(feature = "cloudflare")]
+        config::VendorKind::Cloudflare => {
+            use dnslib::vendors::cloudflare::client::CloudflareClient;
+
+            let (base_url, token) =
+                match resolve_cloudflare_credentials(&cli, app_config.as_ref()) {
+                    Ok(v) => v,
+                    Err(e) => return render_error(e),
+                };
+
+            let client = match CloudflareClient::new(base_url, token) {
+                Ok(c) => c,
+                Err(e) => return render_error(e),
+            };
+
+            run_with_client(cli, client, policy).await
+        }
+
         #[allow(unreachable_patterns)]
         _ => {
             eprintln!("error: vendor not supported in this build");
@@ -175,7 +193,7 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     cli: Cli,
     client: C,
@@ -214,7 +232,7 @@ async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     }
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 fn render_error(e: Error) -> i32 {
     let code = e.exit_code();
     eprintln!("{:?}", Report::from(e));
@@ -267,9 +285,7 @@ fn resolve_pangolin_credentials(
             .token
             .clone()
             .or_else(|| env::var("DNSYNC_PANGOLIN_API_TOKEN").ok())
-            .or_else(|| {
-                server.token_env.as_ref().and_then(|k| env::var(k).ok())
-            })
+            .or_else(|| server.token_env.as_ref().and_then(|k| env::var(k).ok()))
             .or_else(|| server.token.clone())
             .ok_or_else(|| {
                 Error::parse(
@@ -310,7 +326,57 @@ fn resolve_pangolin_credentials(
     Ok((base_url, token, org_id))
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(feature = "cloudflare")]
+fn resolve_cloudflare_credentials(
+    cli: &Cli,
+    config: Option<&config::AppConfig>,
+) -> Result<(String, ApiToken), Error> {
+    use std::env;
+
+    let Some(config) = config else {
+        let base_url = cli
+            .base_url
+            .clone()
+            .or_else(|| env::var("DNSYNC_CLOUDFLARE_BASE_URL").ok())
+            .unwrap_or_else(|| config::CLOUDFLARE_DEFAULT_BASE_URL.to_string());
+        let token = cli
+            .token
+            .clone()
+            .or_else(|| env::var("DNSYNC_CLOUDFLARE_API_TOKEN").ok())
+            .ok_or_else(|| {
+                Error::parse(
+                    "Cloudflare API token is required from --token or DNSYNC_CLOUDFLARE_API_TOKEN",
+                )
+            })
+            .map(ApiToken::new)?;
+        return Ok((base_url, token));
+    };
+
+    let server = config.selected_server(cli.server.as_deref())?;
+    let base_url = cli
+        .base_url
+        .clone()
+        .or_else(|| env::var("DNSYNC_CLOUDFLARE_BASE_URL").ok())
+        .or_else(|| server.base_url.clone())
+        .unwrap_or_else(|| config::CLOUDFLARE_DEFAULT_BASE_URL.to_string());
+
+    let token = cli
+        .token
+        .clone()
+        .or_else(|| env::var("DNSYNC_CLOUDFLARE_API_TOKEN").ok())
+        .or_else(|| server.token_env.as_ref().and_then(|k| env::var(k).ok()))
+        .or_else(|| server.token.clone())
+        .ok_or_else(|| {
+            Error::parse(
+                "Cloudflare API token is required from --token, DNSYNC_CLOUDFLARE_API_TOKEN, token_env, or config token",
+            )
+        })
+        .map(ApiToken::new)?;
+
+    Ok((base_url, token))
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 fn cli_policy(cli: &Cli, config: Option<&config::AppConfig>) -> Result<Policy, Error> {
     let mcp = config
         .and_then(|c| c.selected_server(cli.server.as_deref()).ok())
@@ -321,7 +387,7 @@ fn cli_policy(cli: &Cli, config: Option<&config::AppConfig>) -> Result<Policy, E
     Ok(Policy::new(readonly, allowed_zones))
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 fn allowed_zones(
     cli: &Cli,
     mcp: Option<&config::McpPermissions>,
@@ -407,7 +473,6 @@ mod tests {
 
     #[test]
     fn cli_allow_zone_cannot_broaden_configured_zones() {
-        // Build a minimal AppConfig with one server that has allowed_zones
         let config: config::AppConfig = toml::from_str(
             r#"
                 [[servers]]
@@ -466,5 +531,99 @@ mod tests {
         assert_eq!(base_url, config::PANGOLIN_DEFAULT_BASE_URL);
         assert_eq!(token.expose_for_auth(), "pangolin-token");
         assert_eq!(org_id, "org_123");
+    }
+
+    #[cfg(feature = "cloudflare")]
+    #[test]
+    fn cloudflare_credentials_default_base_url_no_config() {
+        let cli = Cli {
+            config: None,
+            server: None,
+            base_url: None,
+            token: Some("cf-token".to_string()),
+            readonly: false,
+            allow_zone: Vec::new(),
+            command: Command::Mcp,
+        };
+
+        let (base_url, token) = resolve_cloudflare_credentials(&cli, None).unwrap();
+
+        assert_eq!(base_url, config::CLOUDFLARE_DEFAULT_BASE_URL);
+        assert_eq!(token.expose_for_auth(), "cf-token");
+    }
+
+    #[cfg(feature = "cloudflare")]
+    #[test]
+    fn cloudflare_credentials_from_config() {
+        let app_config: config::AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf"
+                vendor = "cloudflare"
+                token = "config-token"
+            "#,
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: None,
+            server: Some("cf".to_string()),
+            base_url: None,
+            token: None,
+            readonly: false,
+            allow_zone: Vec::new(),
+            command: Command::Mcp,
+        };
+
+        let (base_url, token) =
+            resolve_cloudflare_credentials(&cli, Some(&app_config)).unwrap();
+
+        assert_eq!(base_url, config::CLOUDFLARE_DEFAULT_BASE_URL);
+        assert_eq!(token.expose_for_auth(), "config-token");
+    }
+
+    #[cfg(feature = "cloudflare")]
+    #[test]
+    fn cloudflare_credentials_cli_token_wins_over_config() {
+        let app_config: config::AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf"
+                vendor = "cloudflare"
+                token = "config-token"
+            "#,
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: None,
+            server: Some("cf".to_string()),
+            base_url: None,
+            token: Some("cli-token".to_string()),
+            readonly: false,
+            allow_zone: Vec::new(),
+            command: Command::Mcp,
+        };
+
+        let (_, token) = resolve_cloudflare_credentials(&cli, Some(&app_config)).unwrap();
+
+        assert_eq!(token.expose_for_auth(), "cli-token");
+    }
+
+    #[cfg(feature = "cloudflare")]
+    #[test]
+    fn cloudflare_credentials_error_when_no_token() {
+        let cli = Cli {
+            config: None,
+            server: None,
+            base_url: None,
+            token: None,
+            readonly: false,
+            allow_zone: Vec::new(),
+            command: Command::Mcp,
+        };
+
+        let err = resolve_cloudflare_credentials(&cli, None).unwrap_err();
+        assert!(err.to_string().contains("Cloudflare API token"));
     }
 }
