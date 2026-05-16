@@ -1,6 +1,7 @@
 //! Technitium implementations of the vendor-neutral DNS service traits.
 
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
@@ -31,6 +32,7 @@ impl DnsVendor for TechnitiumClient {
 }
 
 impl ZoneRead for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "list_zones"))]
     async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> {
         self.get(
             "/api/zones/list",
@@ -42,6 +44,7 @@ impl ZoneRead for TechnitiumClient {
         .await
     }
 
+    #[instrument(skip(self, _options), fields(vendor = "technitium", operation = "list_records"))]
     async fn list_records(
         &self,
         domain: &str,
@@ -58,25 +61,30 @@ impl ZoneRead for TechnitiumClient {
 }
 
 impl ZoneWrite for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "create_zone"))]
     async fn create_zone(&self, zone: &str, zone_type: &str) -> Result<Value> {
         self.post("/api/zones/create", &[("zone", zone), ("type", zone_type)])
             .await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "delete_zone"))]
     async fn delete_zone(&self, zone: &str) -> Result<Value> {
         self.post("/api/zones/delete", &[("zone", zone)]).await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "enable_zone"))]
     async fn enable_zone(&self, zone: &str) -> Result<Value> {
         self.post("/api/zones/enable", &[("zone", zone)]).await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "disable_zone"))]
     async fn disable_zone(&self, zone: &str) -> Result<Value> {
         self.post("/api/zones/disable", &[("zone", zone)]).await
     }
 }
 
 impl RecordWrite for TechnitiumClient {
+    #[instrument(skip(self, record), fields(vendor = "technitium", operation = "add_record"))]
     async fn add_record(
         &self,
         zone: &str,
@@ -95,6 +103,7 @@ impl RecordWrite for TechnitiumClient {
         self.post("/api/zones/records/add", &form).await
     }
 
+    #[instrument(skip(self, type_params), fields(vendor = "technitium", operation = "delete_record"))]
     async fn delete_record(
         &self,
         zone: &str,
@@ -110,22 +119,26 @@ impl RecordWrite for TechnitiumClient {
 }
 
 impl CacheRead for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "list_cache"))]
     async fn list_cache(&self, domain: &str) -> Result<Value> {
         self.get("/api/cache/list", &[("domain", domain)]).await
     }
 }
 
 impl CacheWrite for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "delete_cache_zone"))]
     async fn delete_cache_zone(&self, domain: &str) -> Result<Value> {
         self.post("/api/cache/delete", &[("domain", domain)]).await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "flush_cache"))]
     async fn flush_cache(&self) -> Result<Value> {
         self.get("/api/cache/flush", &[]).await
     }
 }
 
 impl StatsRead for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "get_stats"))]
     async fn get_stats(&self, stats_type: &str) -> Result<Value> {
         self.get("/api/dashboard/stats/get", &[("type", stats_type)])
             .await
@@ -133,29 +146,35 @@ impl StatsRead for TechnitiumClient {
 }
 
 impl AccessListRead for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "list_blocked"))]
     async fn list_blocked(&self) -> Result<Value> {
         self.get("/api/blocked/list", &[]).await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "list_allowed"))]
     async fn list_allowed(&self) -> Result<Value> {
         self.get("/api/allowed/list", &[]).await
     }
 }
 
 impl AccessListWrite for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "add_blocked"))]
     async fn add_blocked(&self, domain: &str) -> Result<Value> {
         self.post("/api/blocked/add", &[("domain", domain)]).await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "delete_blocked"))]
     async fn delete_blocked(&self, domain: &str) -> Result<Value> {
         self.post("/api/blocked/delete", &[("domain", domain)])
             .await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "add_allowed"))]
     async fn add_allowed(&self, domain: &str) -> Result<Value> {
         self.post("/api/allowed/add", &[("domain", domain)]).await
     }
 
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "delete_allowed"))]
     async fn delete_allowed(&self, domain: &str) -> Result<Value> {
         self.post("/api/allowed/delete", &[("domain", domain)])
             .await
@@ -163,6 +182,7 @@ impl AccessListWrite for TechnitiumClient {
 }
 
 impl ZoneImport for TechnitiumClient {
+    #[instrument(skip(self, file_bytes), fields(vendor = "technitium", operation = "import_zone_file"))]
     async fn import_zone_file(
         &self,
         zone: &str,
@@ -198,6 +218,7 @@ impl ZoneImport for TechnitiumClient {
 }
 
 impl SettingsRead for TechnitiumClient {
+    #[instrument(skip(self), fields(vendor = "technitium", operation = "get_settings"))]
     async fn get_settings(&self) -> Result<Value> {
         self.get("/api/settings/get", &[]).await
     }

@@ -27,6 +27,9 @@ impl TechnitiumClient {
     /// GET with query params.
     pub async fn get(&self, path: &str, params: &[(&str, &str)]) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
+        let span = tracing::debug_span!("http.get", path, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending GET");
         let resp = self
             .http
             .get(&url)
@@ -34,13 +37,21 @@ impl TechnitiumClient {
             .query(params)
             .send()
             .await
-            .map_err(Error::Network)?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "GET failed");
+                Error::Network(e)
+            })?;
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
         parse_response(resp).await
     }
 
     /// POST with form-encoded body.
     pub async fn post(&self, path: &str, form: &[(&str, &str)]) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
+        let span = tracing::debug_span!("http.post", path, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending POST");
         let resp = self
             .http
             .post(&url)
@@ -48,7 +59,12 @@ impl TechnitiumClient {
             .form(form)
             .send()
             .await
-            .map_err(Error::Network)?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "POST failed");
+                Error::Network(e)
+            })?;
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
         parse_response(resp).await
     }
 
@@ -62,6 +78,10 @@ impl TechnitiumClient {
         file_bytes: Vec<u8>,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
+        let zone = params.iter().find(|(k, _)| *k == "zone").map(|(_, v)| *v).unwrap_or("");
+        let span = tracing::debug_span!("http.post_file", path, zone, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending POST (multipart)");
 
         let file_part = multipart::Part::bytes(file_bytes)
             .file_name(file_name)
@@ -78,8 +98,13 @@ impl TechnitiumClient {
             .multipart(form)
             .send()
             .await
-            .map_err(Error::Network)?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "POST (multipart) failed");
+                Error::Network(e)
+            })?;
 
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
         parse_response(resp).await
     }
 }

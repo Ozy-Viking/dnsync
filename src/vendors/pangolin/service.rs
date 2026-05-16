@@ -16,6 +16,7 @@ use serde::Deserialize;
 #[cfg(test)]
 use serde::Serialize;
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
@@ -395,6 +396,7 @@ impl DnsVendor for PangolinClient {
 // ─── ZoneRead ─────────────────────────────────────────────────────────────────
 
 impl ZoneRead for PangolinClient {
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "list_zones"))]
     async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> {
         let limit = per_page.to_string();
         let offset = ((page.saturating_sub(1)) * per_page).to_string();
@@ -405,6 +407,7 @@ impl ZoneRead for PangolinClient {
         .await
     }
 
+    #[instrument(skip(self, options), fields(vendor = "pangolin", operation = "list_records"))]
     async fn list_records(
         &self,
         domain: &str,
@@ -568,6 +571,7 @@ impl SettingsRead for PangolinClient {
     /// Returns the list of organizations visible to this API token.
     /// Use this to discover the `org_id` value for your dnsync config.
     /// SSH CA key fields are omitted from the output.
+    #[instrument(skip(self), fields(vendor = "pangolin", operation = "get_settings"))]
     async fn get_settings(&self) -> Result<Value> {
         let data = self
             .get(
