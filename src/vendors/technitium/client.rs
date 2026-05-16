@@ -15,6 +15,7 @@ impl TechnitiumClient {
     pub fn new(base_url: String, token: ApiToken) -> Result<Self> {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .no_proxy()
             .build()
             .map_err(Error::Network)?;
         Ok(Self {
