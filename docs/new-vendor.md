@@ -492,24 +492,65 @@ ListRecordsResponse::single(zone_info, records)  // most vendors: one zone per c
 The `data` field should contain a JSON object whose keys match what `RecordData`'s serde
 deserialisation expects, so that typed `parsed` can be populated by callers. Standard shapes:
 
-| Type | rData shape |
+| Type | rData keys |
 |---|---|
 | A / AAAA | `{"ipAddress": "1.2.3.4"}` |
 | CNAME | `{"cname": "target.example.com"}` |
+| DNAME | `{"dname": "target.example.com"}` |
 | MX | `{"preference": 10, "exchange": "mail.example.com"}` |
 | TXT | `{"text": "v=spf1 ~all", "splitText": false}` |
 | NS | `{"nameServer": "ns1.example.com", "glue": null}` |
 | PTR | `{"ptrName": "host.example.com"}` |
 | SRV | `{"priority": 10, "weight": 20, "port": 5060, "target": "sip.example.com"}` |
 | CAA | `{"flags": 0, "tag": "issue", "value": "letsencrypt.org"}` |
+| SSHFP | `{"sshfpAlgorithm": "RSA", "sshfpFingerprintType": "SHA256", "sshfpFingerprint": "abcdef"}` |
+| TLSA | `{"tlsaCertificateUsage": "DANE-EE", "tlsaSelector": "SPKI", "tlsaMatchingType": "SHA2-256", "tlsaCertificateAssociationData": "deadbeef"}` |
+| DS | `{"keyTag": 1234, "algorithm": "ECDSAP256SHA256", "digestType": "SHA256", "digest": "abcdef"}` |
+| HTTPS / SVCB | `{"svcPriority": 1, "svcTargetName": ".", "svcParams": "alpn=h2", "autoIpv4Hint": false, "autoIpv6Hint": false}` |
+| NAPTR | `{"naptrOrder": 100, "naptrPreference": 10, "naptrFlags": "U", "naptrServices": "E2U+sip", "naptrRegexp": "!^.*$!", "naptrReplacement": "."}` |
+| URI | `{"uriPriority": 10, "uriWeight": 1, "uri": "https://example.com"}` |
 | unknown | `{"value": "<raw content>"}` |
 
 Additional vendor metadata (IDs, proxied state, health, etc.) can be added as extra keys in the
 same `data` object.
 
+### Vendors that use numeric enum values
+
+Some vendors (e.g. Cloudflare) encode SSHFP, TLSA, DS, and similar types using IANA numeric
+values in their `data` objects, while `RecordData` uses string enum names (e.g. `"RSA"`,
+`"DANE-EE"`, `"SHA256"`). Both directions need conversion helpers.
+
+Numeric → string (for `normalize_rdata`, Cloudflare → internal):
+
+| Enum | Numeric → string |
+|---|---|
+| SSHFP algorithm | 1→RSA, 2→DSA, 3→ECDSA, 4→Ed25519, 6→Ed448 |
+| SSHFP fingerprint type | 1→SHA1, 2→SHA256 |
+| TLSA cert usage | 0→PKIX-TA, 1→PKIX-EE, 2→DANE-TA, 3→DANE-EE |
+| TLSA selector | 0→Cert, 1→SPKI |
+| TLSA matching type | 0→Full, 1→SHA2-256, 2→SHA2-512 |
+| DS algorithm (IANA) | 1→RSAMD5, 3→DSA, 5→RSASHA1, 6→DSA-NSEC3-SHA1, 7→RSASHA1-NSEC3-SHA1, 8→RSASHA256, 10→RSASHA512, 12→ECC-GOST, 13→ECDSAP256SHA256, 14→ECDSAP384SHA384, 15→ED25519, 16→ED448 |
+| DS digest type | 1→SHA1, 2→SHA256, 3→GOST-R-34-11-94, 4→SHA384 |
+
+String → numeric (for `record_data_to_<vendor>_body`, internal → Cloudflare):
+The reverse of the table above. Implement as separate helper functions, one per enum type.
+
+Cloudflare API shapes for structured record types:
+
+| Type | Cloudflare `data` keys |
+|---|---|
+| SRV | `{priority, weight, port, target}` |
+| CAA | `{flags, tag, value}` |
+| SSHFP | `{algorithm: u8, type: u8, fingerprint: hex_string}` |
+| TLSA | `{usage: u8, selector: u8, matching_type: u8, certificate: hex_string}` |
+| DS | `{key_tag: u16, algorithm: u8, digest_type: u8, digest: hex_string}` |
+| HTTPS / SVCB | `{priority: u16, target: string, value: params_string}` |
+| NAPTR | `{order, preference, flags, service, regexp, replacement}` |
+| URI | `{priority: u16, weight: u16, content: string}` |
+
 Rules:
 
-- Standard DNS records (`A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`, `HTTPS`, `SVCB`) should map to typed normalized records where possible.
+- Standard DNS records (`A`, `AAAA`, `CNAME`, `DNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`, `SSHFP`, `TLSA`, `DS`, `HTTPS`, `SVCB`, `NAPTR`, `URI`) should map to typed normalized records where possible.
 - Vendor-specific or non-DNS-native resources should still return as normalized records.
 - Raw vendor API shapes should not be the primary output format.
 - If a field is unavailable, use a safe neutral default and preserve useful original vendor data in `data`.
@@ -637,7 +678,7 @@ Each vendor must include tests for:
 - config round-trip (`VendorKind` serde: `"newvendor"` → enum → `"newvendor"`)
 - response envelope parsing (success, API error, forbidden, empty errors)
 - capability declaration matches `VendorCapabilities` struct exactly
-- normalized record conversion (A, MX, TXT, unknown type, proxied flag, vendor ID)
+- normalized record conversion (A, AAAA, MX, TXT, SRV, CAA, SSHFP, TLSA, DS, HTTPS, NAPTR, URI, DNAME, unknown type, proxied flag, vendor ID)
 - supported read operations
 - all unsupported operations return `Error::Unsupported` with correct vendor name
 - feature-gated compilation (`cargo build --features newvendor`)
