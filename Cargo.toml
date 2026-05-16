@@ -39,6 +39,7 @@ thiserror = "2"
 tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hickory-resolver = "0.26"
+inquire = "0.7"
 
 [dev-dependencies]
 rstest = "0.26"
