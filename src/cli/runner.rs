@@ -161,6 +161,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             ZoneCmd::Enable { .. } => "zone enable",
             ZoneCmd::Disable { .. } => "zone disable",
             ZoneCmd::Import { .. } => "zone import",
+            ZoneCmd::Export { .. } => "zone export",
         },
         Command::Record(r) => match r {
             RecordCmd::List { .. } => "record list",
@@ -243,6 +244,17 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         return Ok(());
     }
 
+    if let Command::Zone(ZoneCmd::Export { zone, output }) = command {
+        let zone_text = client.export_zone_file(&zone).await?;
+        if let Some(path) = output {
+            std::fs::write(&path, &zone_text)
+                .map_err(|e| Error::io(format!("writing zone file '{}'", path.display()), e))?;
+        } else {
+            print!("{zone_text}");
+        }
+        return Ok(());
+    }
+
     let result = match command {
         Command::Mcp => unreachable!("handled in main"),
         Command::Config(_) => unreachable!("handled in main"),
@@ -254,6 +266,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             ZoneCmd::Delete { zone } => client.delete_zone(&zone).await?,
             ZoneCmd::Enable { zone } => client.enable_zone(&zone).await?,
             ZoneCmd::Disable { zone } => client.disable_zone(&zone).await?,
+            ZoneCmd::Export { .. } => unreachable!("handled above"),
             ZoneCmd::Import {
                 zone,
                 file,

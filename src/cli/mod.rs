@@ -180,6 +180,13 @@ pub enum ZoneCmd {
         #[arg(long, default_value_t = false)]
         overwrite_soa_serial: bool,
     },
+    /// Export a zone as a BIND-format (RFC 1035) zone file
+    Export {
+        zone: String,
+        /// Write zone file to this path instead of stdout
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+    },
 }
 
 // ─── Record subcommands ──────────────────────────────────────────────────────

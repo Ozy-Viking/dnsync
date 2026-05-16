@@ -322,6 +322,12 @@ pub struct StatsParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct ExportZoneFileParams {
+    /// Zone name to export, e.g. "example.com"
+    pub zone: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ImportZoneFileParams {
     /// Zone name the file will be imported into (must already exist)
     pub zone: String,
@@ -453,6 +459,24 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
             )
             .await
             .map(json_result)
+            .map_err(mcp_err)
+    }
+
+    #[tool(
+        description = "Export a DNS zone as a BIND-format (RFC 1035) zone file. \
+        Returns the full zone file text, which can be saved to disk or imported into another DNS provider."
+    )]
+    async fn dns_export_zone_file(
+        &self,
+        Parameters(p): Parameters<ExportZoneFileParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_export_zone_file", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, "tool invoked");
+        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
+        self.client
+            .export_zone_file(&p.zone)
+            .await
+            .map(text_result)
             .map_err(mcp_err)
     }
 
@@ -721,4 +745,8 @@ fn json_result(value: serde_json::Value) -> CallToolResult {
     CallToolResult::success(vec![Content::text(
         serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
     )])
+}
+
+fn text_result(s: String) -> CallToolResult {
+    CallToolResult::success(vec![Content::text(s)])
 }

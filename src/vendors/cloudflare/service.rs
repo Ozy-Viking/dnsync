@@ -10,7 +10,10 @@
 //!   - `delete_record` → GET /zones/{id}/dns_records?name=&type= → DELETE /zones/{id}/dns_records/{id}
 //!   - `get_settings`  → GET /user/tokens/verify
 //!
-//! Cache, stats, access lists, zone import, enable/disable zone return `Error::Unsupported`.
+//!   - `import_zone_file` → POST /zones/{id}/dns_records/import
+//!   - `export_zone_file` → GET /zones/{id}/dns_records/export
+//!
+//! Cache, stats, access lists, enable/disable zone return `Error::Unsupported`.
 
 use serde_json::Value;
 use tracing::instrument;
@@ -21,7 +24,7 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 use crate::vendors::cloudflare::client::CloudflareClient;
@@ -543,7 +546,8 @@ impl DnsVendor for CloudflareClient {
             cache: false,
             access_lists: false,
             settings: true,
-            zone_import: false,
+            zone_import: true,
+            zone_export: true,
         }
     }
 }
@@ -747,16 +751,32 @@ impl AccessListWrite for CloudflareClient {
 }
 
 impl ZoneImport for CloudflareClient {
+    #[instrument(skip(self, file_bytes), fields(vendor = "cloudflare", operation = "import_zone_file"))]
     async fn import_zone_file<'a>(
         &'a self,
-        _zone: &'a str,
-        _file_name: String,
-        _file_bytes: Vec<u8>,
+        zone: &'a str,
+        file_name: String,
+        file_bytes: Vec<u8>,
         _overwrite: bool,
         _overwrite_zone: bool,
         _overwrite_soa_serial: bool,
     ) -> Result<Value> {
-        Err(Error::unsupported("Cloudflare", "zone import"))
+        let zone_id = self.resolve_zone_id(zone).await?;
+        self.post_multipart(
+            &format!("/zones/{zone_id}/dns_records/import"),
+            file_name,
+            file_bytes,
+        )
+        .await
+    }
+}
+
+impl ZoneExport for CloudflareClient {
+    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "export_zone_file"))]
+    async fn export_zone_file<'a>(&'a self, zone: &'a str) -> Result<String> {
+        let zone_id = self.resolve_zone_id(zone).await?;
+        self.get_text(&format!("/zones/{zone_id}/dns_records/export"), &[])
+            .await
     }
 }
 
@@ -798,7 +818,8 @@ mod tests {
         assert!(!caps.cache);
         assert!(!caps.access_lists);
         assert!(caps.settings);
-        assert!(!caps.zone_import);
+        assert!(caps.zone_import);
+        assert!(caps.zone_export);
     }
 
     // ── Unsupported operations return correct error ────────────────────────────
@@ -840,12 +861,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn zone_import_is_unsupported() {
+    async fn zone_import_attempts_api_call() {
+        // import now attempts the Cloudflare API; a network error confirms it's no longer a stub
         let err = make_client()
             .import_zone_file("example.com", "zone.txt".into(), vec![], false, false, false)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        assert!(!matches!(err, Error::Unsupported { .. }));
     }
 
     // ── Record normalization ──────────────────────────────────────────────────

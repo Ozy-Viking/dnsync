@@ -7,4 +7,5 @@ pub struct VendorCapabilities {
     pub access_lists: bool,
     pub settings: bool,
     pub zone_import: bool,
+    pub zone_export: bool,
 }

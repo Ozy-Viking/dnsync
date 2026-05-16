@@ -24,7 +24,7 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 use crate::vendors::pangolin::client::PangolinClient;
@@ -389,6 +389,7 @@ impl DnsVendor for PangolinClient {
             access_lists: false,
             settings: true,
             zone_import: false,
+            zone_export: false,
         }
     }
 }
@@ -552,7 +553,7 @@ impl AccessListWrite for PangolinClient {
     }
 }
 
-// ─── ZoneImport (unsupported) ─────────────────────────────────────────────────
+// ─── ZoneImport / ZoneExport (unsupported) ───────────────────────────────────
 
 impl ZoneImport for PangolinClient {
     async fn import_zone_file(
@@ -565,6 +566,12 @@ impl ZoneImport for PangolinClient {
         _overwrite_soa_serial: bool,
     ) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "zone import"))
+    }
+}
+
+impl ZoneExport for PangolinClient {
+    async fn export_zone_file<'a>(&'a self, _zone: &'a str) -> Result<String> {
+        Err(Error::unsupported("Pangolin", "zone export"))
     }
 }
 
