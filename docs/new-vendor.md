@@ -85,6 +85,7 @@ The enum must support:
 - CLI selection (`clap::ValueEnum`)
 - runtime dispatch (match arms in `main.rs`)
 - case-insensitive user-facing naming
+- interactive setup wizard (see section 13)
 
 ---
 
@@ -712,6 +713,41 @@ For every vendor, update:
 - environment variable table
 - MCP examples
 - supported/unsupported operation notes
+- interactive setup wizard (`src/cli/interactive.rs`)
+
+### Interactive setup wizard
+
+`dns config add` (run with no flags) prompts the user through each field. The vendor
+selection list and the `org_id` prompt are hardcoded in `src/cli/interactive.rs` and
+**must be updated by hand** for each new vendor.
+
+**Vendor selection** — add a `VendorChoice` entry to `run_add_wizard()`:
+
+```rust
+let choices = vec![
+    VendorChoice { kind: VendorKind::Technitium, label: "technitium" },
+    VendorChoice { kind: VendorKind::Pangolin,   label: "pangolin" },
+    VendorChoice { kind: VendorKind::Cloudflare, label: "cloudflare" },
+    VendorChoice { kind: VendorKind::NewVendor,  label: "newvendor" },
+];
+```
+
+The default base URL shown to the user is derived from the match arm in `optional_text`
+for `base_url`, which uses `NEWVENDOR_DEFAULT_BASE_URL` — that constant is already added
+in step 3, so no extra change is needed there.
+
+**Organisation / account ID** — the `org_id` prompt is currently gated on Pangolin.
+If your vendor also requires an org or account ID, extend the condition:
+
+```rust
+let org_id = if matches!(vendor, VendorKind::Pangolin | VendorKind::NewVendor) {
+    optional_text("Organisation ID:", "Leave empty to skip", None)?
+} else {
+    None
+};
+```
+
+If your vendor does not use `org_id`, no change is needed.
 
 Prefer generic naming for shared env vars:
 
@@ -776,6 +812,8 @@ For read-only vendors, tests should prove write operations fail clearly and safe
 [ ] Preserve vendor metadata in normalized output data field
 [ ] Add runtime dispatch branch in main.rs
 [ ] Update CLI help text
+[ ] Add VendorChoice entry in src/cli/interactive.rs run_add_wizard()
+[ ] Extend org_id prompt condition in interactive.rs if the vendor requires an org/account ID
 [ ] Update README/config examples
 [ ] Add tests (credential resolution, envelope parsing, normalization, unsupported ops)
 [ ] Verify vendor-only feature build: cargo build --features newvendor
