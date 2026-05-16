@@ -130,6 +130,7 @@ async fn run(cli: Cli) -> i32 {
     if let Command::Record(RecordCmd::List {
         domain,
         zone,
+        all_subdomains,
         servers,
         use_local_ip,
         json,
@@ -141,6 +142,7 @@ async fn run(cli: Cli) -> i32 {
                 app_config.as_ref(),
                 domain,
                 zone.as_deref(),
+                *all_subdomains,
                 servers,
                 *use_local_ip,
                 *json,
@@ -231,10 +233,12 @@ async fn run_record_list_across_servers(
     app_config: Option<&config::AppConfig>,
     domain: &str,
     zone: Option<&str>,
+    all_subdomains: bool,
     servers: &[String],
     use_local_ip: bool,
     json: bool,
 ) -> i32 {
+    use dnslib::cli::runner::{filter_records_by_domain, infer_zone, resolve_fqdn};
     use dnslib::core::dns::service::{ListRecordsOptions, ZoneRead};
 
     if cli.token.is_some() || cli.base_url.is_some() {
@@ -268,6 +272,18 @@ async fn run_record_list_across_servers(
         ));
     }
 
+    let effective_fqdn = resolve_fqdn(domain, zone);
+    let (query_domain, query_zone) = if all_subdomains {
+        let zone_name = zone
+            .map(str::to_string)
+            .or_else(|| infer_zone(&effective_fqdn))
+            .unwrap_or_else(|| effective_fqdn.clone());
+        (zone_name.clone(), Some(zone_name))
+    } else {
+        (effective_fqdn.clone(), zone.map(str::to_string))
+    };
+    let options = ListRecordsOptions { use_local_ip, all_subdomains };
+
     for (idx, server) in selected.iter().enumerate() {
         if idx > 0 {
             println!();
@@ -287,7 +303,7 @@ async fn run_record_list_across_servers(
                     Err(e) => return render_error(e),
                 };
                 client
-                    .list_records(domain, zone, ListRecordsOptions { use_local_ip })
+                    .list_records(&query_domain, query_zone.as_deref(), options)
                     .await
             }
             #[cfg(feature = "pangolin")]
@@ -312,7 +328,7 @@ async fn run_record_list_across_servers(
                     Err(e) => return render_error(e),
                 };
                 client
-                    .list_records(domain, zone, ListRecordsOptions { use_local_ip })
+                    .list_records(&query_domain, query_zone.as_deref(), options)
                     .await
             }
             #[cfg(feature = "cloudflare")]
@@ -331,7 +347,7 @@ async fn run_record_list_across_servers(
                     Err(e) => return render_error(e),
                 };
                 client
-                    .list_records(domain, zone, ListRecordsOptions { use_local_ip })
+                    .list_records(&query_domain, query_zone.as_deref(), options)
                     .await
             }
             #[allow(unreachable_patterns)]
@@ -342,7 +358,10 @@ async fn run_record_list_across_servers(
         };
 
         match result {
-            Ok(response) => {
+            Ok(mut response) => {
+                if all_subdomains {
+                    filter_records_by_domain(&mut response, &effective_fqdn, true);
+                }
                 if json {
                     match serde_json::to_string_pretty(&response) {
                         Ok(pretty) => println!("{pretty}"),

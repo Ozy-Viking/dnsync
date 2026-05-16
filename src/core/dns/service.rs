@@ -16,6 +16,8 @@ use crate::core::error::Result;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ListRecordsOptions {
     pub use_local_ip: bool,
+    /// Fetch all records in the zone so the caller can filter for a domain and its subdomains.
+    pub all_subdomains: bool,
 }
 
 pub trait DnsVendor {

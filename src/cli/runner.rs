@@ -2,9 +2,68 @@ use serde_json::Value;
 
 use crate::{
     cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd, records},
+    core::dns::responses::ListRecordsResponse,
     core::dns::service::{DnsService, ListRecordsOptions},
     core::error::{Error, Result},
 };
+
+/// Build the fully-qualified domain name from a possibly-relative label and an optional zone.
+///
+/// Examples:
+/// - `("huly", Some("hankin.io"))` → `"huly.hankin.io"`
+/// - `("huly.hankin.io", Some("hankin.io"))` → `"huly.hankin.io"` (already qualified)
+/// - `("@", Some("hankin.io"))` → `"hankin.io"` (zone apex)
+/// - `("huly.hankin.io", None)` → `"huly.hankin.io"` (passed through)
+pub fn resolve_fqdn(domain: &str, zone: Option<&str>) -> String {
+    let Some(zone) = zone else {
+        return domain.trim_end_matches('.').to_string();
+    };
+    let domain = domain.trim_end_matches('.');
+    let zone = zone.trim_end_matches('.');
+    if domain == "@" {
+        return zone.to_string();
+    }
+    let d_lower = domain.to_lowercase();
+    let z_lower = zone.to_lowercase();
+    if d_lower == z_lower || d_lower.ends_with(&format!(".{z_lower}")) {
+        domain.to_string()
+    } else {
+        format!("{domain}.{zone}")
+    }
+}
+
+/// Strip the leftmost DNS label to get the likely parent zone name.
+/// Returns `None` for single-label names (e.g. `"hankin"`).
+pub fn infer_zone(fqdn: &str) -> Option<String> {
+    let fqdn = fqdn.trim_end_matches('.');
+    fqdn.find('.').map(|pos| fqdn[pos + 1..].to_string())
+}
+
+/// Retain only records whose FQDN matches `target_fqdn` (or, when `all_subdomains`
+/// is true, any record at or under `target_fqdn`). Zones that become empty are dropped.
+pub fn filter_records_by_domain(
+    response: &mut ListRecordsResponse,
+    target_fqdn: &str,
+    all_subdomains: bool,
+) {
+    let target = target_fqdn.trim_end_matches('.').to_lowercase();
+    for zone_records in &mut response.zones {
+        let zone = zone_records.zone.name.to_lowercase();
+        zone_records.records.retain(|r| {
+            let record_fqdn = if r.name == "@" {
+                zone.clone()
+            } else {
+                format!("{}.{}", r.name.to_lowercase(), zone)
+            };
+            if all_subdomains {
+                record_fqdn == target || record_fqdn.ends_with(&format!(".{target}"))
+            } else {
+                record_fqdn == target
+            }
+        });
+    }
+    response.zones.retain(|z| !z.records.is_empty());
+}
 
 #[tracing::instrument(skip(client, command), fields(command = tracing::field::Empty))]
 pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
@@ -48,18 +107,34 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
     if let Command::Record(RecordCmd::List {
         domain,
         zone,
+        all_subdomains,
         use_local_ip,
         json,
         servers: _,
     }) = command
     {
-        let response = client
-            .list_records(
-                &domain,
-                zone.as_deref(),
-                ListRecordsOptions { use_local_ip },
-            )
+        let effective_fqdn = resolve_fqdn(&domain, zone.as_deref());
+
+        // For --all-subdomains we need every record in the zone, so we query
+        // the zone apex and let filter_records_by_domain narrow the results.
+        let (query_domain, query_zone) = if all_subdomains {
+            let zone_name = zone
+                .clone()
+                .or_else(|| infer_zone(&effective_fqdn))
+                .unwrap_or_else(|| effective_fqdn.clone());
+            (zone_name.clone(), Some(zone_name))
+        } else {
+            (effective_fqdn.clone(), zone)
+        };
+
+        let options = ListRecordsOptions { use_local_ip, all_subdomains };
+        let mut response = client
+            .list_records(&query_domain, query_zone.as_deref(), options)
             .await?;
+
+        if all_subdomains {
+            filter_records_by_domain(&mut response, &effective_fqdn, true);
+        }
 
         if json {
             let value = serde_json::to_value(&response).map_err(|e| Error::parse(e.to_string()))?;
@@ -161,4 +236,143 @@ fn print_result(value: &Value) -> Result<()> {
         .map_err(|e| Error::parse(format!("could not serialise response: {e}")))?;
     println!("{out}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord, ZoneRecords};
+    use serde_json::json;
+
+    fn make_zone(name: &str) -> ZoneInfo {
+        ZoneInfo { name: name.to_string(), zone_type: "Primary".to_string(), disabled: false, dnssec_status: None }
+    }
+
+    fn make_record(name: &str) -> ZoneRecord {
+        ZoneRecord {
+            name: name.to_string(),
+            record_type: "A".to_string(),
+            ttl: 300,
+            disabled: false,
+            comments: String::new(),
+            expiry_ttl: 0,
+            data: json!({"ipAddress": "1.2.3.4"}),
+            parsed: None,
+        }
+    }
+
+    // ── resolve_fqdn ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn relative_label_is_qualified_with_zone() {
+        assert_eq!(resolve_fqdn("huly", Some("hankin.io")), "huly.hankin.io");
+    }
+
+    #[test]
+    fn already_qualified_fqdn_is_unchanged() {
+        assert_eq!(resolve_fqdn("huly.hankin.io", Some("hankin.io")), "huly.hankin.io");
+    }
+
+    #[test]
+    fn at_symbol_resolves_to_zone_apex() {
+        assert_eq!(resolve_fqdn("@", Some("hankin.io")), "hankin.io");
+    }
+
+    #[test]
+    fn no_zone_passes_domain_through() {
+        assert_eq!(resolve_fqdn("huly.hankin.io", None), "huly.hankin.io");
+    }
+
+    #[test]
+    fn domain_equal_to_zone_is_unchanged() {
+        assert_eq!(resolve_fqdn("hankin.io", Some("hankin.io")), "hankin.io");
+    }
+
+    #[test]
+    fn trailing_dots_are_stripped() {
+        assert_eq!(resolve_fqdn("huly.", Some("hankin.io.")), "huly.hankin.io");
+    }
+
+    #[test]
+    fn case_insensitive_fqdn_detection() {
+        assert_eq!(resolve_fqdn("Huly.Hankin.IO", Some("hankin.io")), "Huly.Hankin.IO");
+    }
+
+    // ── infer_zone ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn infer_zone_strips_first_label() {
+        assert_eq!(infer_zone("huly.hankin.io"), Some("hankin.io".to_string()));
+    }
+
+    #[test]
+    fn infer_zone_returns_none_for_single_label() {
+        assert_eq!(infer_zone("hankin"), None);
+    }
+
+    #[test]
+    fn infer_zone_handles_trailing_dot() {
+        assert_eq!(infer_zone("huly.hankin.io."), Some("hankin.io".to_string()));
+    }
+
+    // ── filter_records_by_domain ─────────────────────────────────────────────
+
+    #[test]
+    fn filter_exact_keeps_matching_record() {
+        let mut resp = ListRecordsResponse {
+            zones: vec![ZoneRecords {
+                zone: make_zone("hankin.io"),
+                records: vec![make_record("huly"), make_record("other")],
+            }],
+        };
+        filter_records_by_domain(&mut resp, "huly.hankin.io", false);
+        assert_eq!(resp.zones[0].records.len(), 1);
+        assert_eq!(resp.zones[0].records[0].name, "huly");
+    }
+
+    #[test]
+    fn filter_exact_removes_non_matching_record() {
+        let mut resp = ListRecordsResponse {
+            zones: vec![ZoneRecords {
+                zone: make_zone("hankin.io"),
+                records: vec![make_record("other")],
+            }],
+        };
+        filter_records_by_domain(&mut resp, "huly.hankin.io", false);
+        assert!(resp.zones.is_empty());
+    }
+
+    #[test]
+    fn filter_all_subdomains_includes_target_and_children() {
+        let mut resp = ListRecordsResponse {
+            zones: vec![ZoneRecords {
+                zone: make_zone("hankin.io"),
+                records: vec![
+                    make_record("huly"),
+                    make_record("sub.huly"),
+                    make_record("other"),
+                    make_record("@"),
+                ],
+            }],
+        };
+        filter_records_by_domain(&mut resp, "huly.hankin.io", true);
+        let names: Vec<&str> = resp.zones[0].records.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"huly"), "should include huly");
+        assert!(names.contains(&"sub.huly"), "should include sub.huly");
+        assert!(!names.contains(&"other"), "should exclude other");
+        assert!(!names.contains(&"@"), "should exclude zone apex");
+    }
+
+    #[test]
+    fn filter_at_record_matches_zone_apex() {
+        let mut resp = ListRecordsResponse {
+            zones: vec![ZoneRecords {
+                zone: make_zone("hankin.io"),
+                records: vec![make_record("@"), make_record("www")],
+            }],
+        };
+        filter_records_by_domain(&mut resp, "hankin.io", false);
+        assert_eq!(resp.zones[0].records.len(), 1);
+        assert_eq!(resp.zones[0].records[0].name, "@");
+    }
 }
