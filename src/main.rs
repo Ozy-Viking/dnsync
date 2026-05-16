@@ -237,6 +237,12 @@ async fn run_record_list_across_servers(
 ) -> i32 {
     use dnslib::core::dns::service::ListRecordsOptions;
 
+    if cli.token.is_some() || cli.base_url.is_some() {
+        return render_error(Error::parse(
+            "cross-server record list does not accept --token/--base-url; configure credentials per server via config file or environment variables",
+        ));
+    }
+
     let Some(cfg) = app_config else {
         return render_error(Error::parse(
             "--all/--server for record list requires a config file with server entries",
