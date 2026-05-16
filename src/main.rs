@@ -132,7 +132,7 @@ async fn run(cli: Cli) -> i32 {
         zone,
         servers,
         use_local_ip,
-        json: _,
+        json,
     }) = &cli.command
     {
         if cli.all || !servers.is_empty() {
@@ -143,6 +143,7 @@ async fn run(cli: Cli) -> i32 {
                 zone.as_deref(),
                 servers,
                 *use_local_ip,
+                *json,
             )
             .await;
         }
@@ -232,6 +233,7 @@ async fn run_record_list_across_servers(
     zone: Option<&str>,
     servers: &[String],
     use_local_ip: bool,
+    json: bool,
 ) -> i32 {
     use dnslib::core::dns::service::ListRecordsOptions;
 
@@ -328,7 +330,20 @@ async fn run_record_list_across_servers(
         };
 
         match result {
-            Ok(response) => cli::records::print_records_table(&response),
+            Ok(response) => {
+                if json {
+                    match serde_json::to_string_pretty(&response) {
+                        Ok(pretty) => println!("{pretty}"),
+                        Err(e) => {
+                            return render_error(Error::parse(format!(
+                                "could not serialise record list response: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    cli::records::print_records_table(&response);
+                }
+            }
             Err(e) => return render_error(e),
         }
     }
