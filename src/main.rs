@@ -489,8 +489,6 @@ mod tests {
                 id = "home"
                 vendor = "technitium"
                 token = "tok"
-
-                [servers.mcp]
                 allowed_zones = ["example.com"]
             "#,
         )

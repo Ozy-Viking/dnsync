@@ -64,7 +64,7 @@ pub struct DnsServerConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
 
-    #[serde(default)]
+    #[serde(flatten, default)]
     pub mcp: McpPermissions,
 }
 
@@ -272,14 +272,12 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         tbl["org_id"] = value(v.as_str());
     }
 
-    let mut mcp = Table::new();
-    mcp["readonly"] = value(server.mcp.readonly);
+    tbl["readonly"] = value(server.mcp.readonly);
     let mut zones = Array::new();
     for zone in &server.mcp.allowed_zones {
         zones.push(zone.as_str());
     }
-    mcp["allowed_zones"] = value(zones);
-    tbl["mcp"] = Item::Table(mcp);
+    tbl["allowed_zones"] = value(zones);
 
     match doc.entry("servers") {
         toml_edit::Entry::Occupied(mut e) => {
@@ -572,8 +570,6 @@ mod tests {
                 vendor = "technitium"
                 base_url = "http://home.local:5380"
                 token = "home-token"
-
-                [servers.mcp]
                 readonly = true
                 allowed_zones = ["example.com", "internal.lan"]
 
@@ -630,8 +626,6 @@ mod tests {
             r#"
                 [[servers]]
                 id = "home"
-
-                [servers.mcp]
                 read_only = true
             "#,
         )
