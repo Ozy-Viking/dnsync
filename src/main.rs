@@ -88,18 +88,28 @@ async fn run(cli: Cli) -> i32 {
                 readonly,
                 allow_zone,
             } => {
-                let server = config::DnsServerConfig {
-                    id,
-                    vendor,
-                    location,
-                    base_url,
-                    token,
-                    token_env,
-                    org_id,
-                    mcp: config::McpPermissions {
-                        readonly,
-                        allowed_zones: allow_zone,
-                    },
+                let server = if id.is_none() {
+                    match cli::interactive::run_add_wizard() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Error: {e:?}");
+                            return 1;
+                        }
+                    }
+                } else {
+                    config::DnsServerConfig {
+                        id: id.unwrap(),
+                        vendor,
+                        location,
+                        base_url,
+                        token,
+                        token_env,
+                        org_id,
+                        mcp: config::McpPermissions {
+                            readonly,
+                            allowed_zones: allow_zone,
+                        },
+                    }
                 };
                 match config::add_server(cli.config, server) {
                     Ok(path) => {
