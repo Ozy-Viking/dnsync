@@ -50,19 +50,18 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         zone,
         use_local_ip,
         json,
+        servers: _,
     }) = command
     {
+        let domain = domain.as_deref().ok_or_else(|| {
+            Error::parse("domain is required for single-server record list (use --all/--server for cross-server mode)")
+        })?;
         let response = client
-            .list_records(
-                &domain,
-                zone.as_deref(),
-                ListRecordsOptions { use_local_ip },
-            )
+            .list_records(domain, zone.as_deref(), ListRecordsOptions { use_local_ip })
             .await?;
 
         if json {
-            let value = serde_json::to_value(&response)
-                .map_err(|e| Error::parse(e.to_string()))?;
+            let value = serde_json::to_value(&response).map_err(|e| Error::parse(e.to_string()))?;
             print_result(&value)?;
         } else {
             records::print_records_table(&response);

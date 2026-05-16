@@ -8,7 +8,7 @@ fn main() {}
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use dnslib::{
-    cli,
+    cli::{self, RecordCmd},
     control_plane::{config, policy},
     core::{dns::service::DnsService, error, secret::ApiToken},
     mcp::server,
@@ -127,6 +127,27 @@ async fn run(cli: Cli) -> i32 {
         Err(e) => return render_error(e),
     };
 
+    if let Command::Record(RecordCmd::List {
+        domain,
+        zone,
+        servers,
+        use_local_ip,
+        json: _,
+    }) = &cli.command
+    {
+        if cli.all || !servers.is_empty() {
+            return run_record_list_across_servers(
+                &cli,
+                app_config.as_ref(),
+                domain.as_deref(),
+                zone.as_deref(),
+                servers,
+                *use_local_ip,
+            )
+            .await;
+        }
+    }
+
     let policy = match cli_policy(&cli, app_config.as_ref()) {
         Ok(p) => p,
         Err(e) => return render_error(e),
@@ -181,11 +202,11 @@ async fn run(cli: Cli) -> i32 {
         config::VendorKind::Cloudflare => {
             use dnslib::vendors::cloudflare::client::CloudflareClient;
 
-            let (base_url, token) =
-                match resolve_cloudflare_credentials(&cli, app_config.as_ref()) {
-                    Ok(v) => v,
-                    Err(e) => return render_error(e),
-                };
+            let (base_url, token) = match resolve_cloudflare_credentials(&cli, app_config.as_ref())
+            {
+                Ok(v) => v,
+                Err(e) => return render_error(e),
+            };
 
             let client = match CloudflareClient::new(base_url, token) {
                 Ok(c) => c,
@@ -201,6 +222,131 @@ async fn run(cli: Cli) -> i32 {
             1
         }
     }
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+async fn run_record_list_across_servers(
+    cli: &Cli,
+    app_config: Option<&config::AppConfig>,
+    domain: Option<&str>,
+    zone: Option<&str>,
+    servers: &[String],
+    use_local_ip: bool,
+) -> i32 {
+    use dnslib::core::dns::service::ListRecordsOptions;
+
+    let Some(cfg) = app_config else {
+        return render_error(Error::parse(
+            "--all/--server for record list requires a config file with server entries",
+        ));
+    };
+
+    let selected: Vec<&config::DnsServerConfig> = if cli.all {
+        cfg.servers.iter().collect()
+    } else {
+        let mut picked = Vec::with_capacity(servers.len());
+        for server_id in servers {
+            match cfg.selected_server(Some(server_id.as_str())) {
+                Ok(s) => picked.push(s),
+                Err(e) => return render_error(e),
+            }
+        }
+        picked
+    };
+
+    for (idx, server) in selected.iter().enumerate() {
+        if idx > 0 {
+            println!();
+        }
+        println!("=== Server: {} ({:?}) ===", server.id, server.vendor);
+        let result = match server.vendor {
+            #[cfg(feature = "technitium")]
+            config::VendorKind::Technitium => {
+                use dnslib::vendors::technitium::client::TechnitiumClient;
+                let Some(domain) = domain else {
+                    return render_error(Error::parse(
+                        "Technitium record list requires a domain argument",
+                    ));
+                };
+                let base_url = server.resolved_base_url(None);
+                let token = match server.resolved_token(None) {
+                    Ok(t) => t,
+                    Err(e) => return render_error(e),
+                };
+                let client = match TechnitiumClient::new(base_url, token) {
+                    Ok(c) => c,
+                    Err(e) => return render_error(e),
+                };
+                client
+                    .list_records(domain, zone, ListRecordsOptions { use_local_ip })
+                    .await
+            }
+            #[cfg(feature = "pangolin")]
+            config::VendorKind::Pangolin => {
+                use dnslib::vendors::pangolin::client::PangolinClient;
+                let base_url = server
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| config::PANGOLIN_DEFAULT_BASE_URL.to_string());
+                let token = match server.resolved_token(None) {
+                    Ok(t) => t,
+                    Err(e) => return render_error(e),
+                };
+                let Some(org_id) = server.org_id.clone() else {
+                    return render_error(Error::parse(format!(
+                        "Pangolin server '{}' is missing org_id",
+                        server.id
+                    )));
+                };
+                let client = match PangolinClient::new(base_url, token, org_id) {
+                    Ok(c) => c,
+                    Err(e) => return render_error(e),
+                };
+                client
+                    .list_records(
+                        domain.unwrap_or("@"),
+                        zone,
+                        ListRecordsOptions { use_local_ip },
+                    )
+                    .await
+            }
+            #[cfg(feature = "cloudflare")]
+            config::VendorKind::Cloudflare => {
+                use dnslib::vendors::cloudflare::client::CloudflareClient;
+                let Some(domain) = domain else {
+                    return render_error(Error::parse(
+                        "Cloudflare record list requires a domain argument",
+                    ));
+                };
+                let base_url = server
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| config::CLOUDFLARE_DEFAULT_BASE_URL.to_string());
+                let token = match server.resolved_token(None) {
+                    Ok(t) => t,
+                    Err(e) => return render_error(e),
+                };
+                let client = match CloudflareClient::new(base_url, token) {
+                    Ok(c) => c,
+                    Err(e) => return render_error(e),
+                };
+                client
+                    .list_records(domain, zone, ListRecordsOptions { use_local_ip })
+                    .await
+            }
+            #[allow(unreachable_patterns)]
+            _ => Err(Error::parse(format!(
+                "server '{}' has unsupported vendor in this build",
+                server.id
+            ))),
+        };
+
+        match result {
+            Ok(response) => cli::records::print_records_table(&response),
+            Err(e) => return render_error(e),
+        }
+    }
+    0
 }
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
@@ -438,6 +584,7 @@ mod tests {
         Cli {
             config: None,
             server: None,
+            all: false,
             base_url: None,
             token: Some("token".to_string()),
             readonly: false,
@@ -465,6 +612,7 @@ mod tests {
         Cli {
             config: Some(path),
             server: None,
+            all: false,
             base_url: None,
             token: None,
             readonly: false,
@@ -528,6 +676,7 @@ mod tests {
         let cli = Cli {
             config: None,
             server: Some("cloud".to_string()),
+            all: false,
             base_url: None,
             token: None,
             readonly: false,
@@ -549,6 +698,7 @@ mod tests {
         let cli = Cli {
             config: None,
             server: None,
+            all: false,
             base_url: None,
             token: Some("cf-token".to_string()),
             readonly: false,
@@ -578,6 +728,7 @@ mod tests {
         let cli = Cli {
             config: None,
             server: Some("cf".to_string()),
+            all: false,
             base_url: None,
             token: None,
             readonly: false,
@@ -585,8 +736,7 @@ mod tests {
             command: Command::Mcp,
         };
 
-        let (base_url, token) =
-            resolve_cloudflare_credentials(&cli, Some(&app_config)).unwrap();
+        let (base_url, token) = resolve_cloudflare_credentials(&cli, Some(&app_config)).unwrap();
 
         assert_eq!(base_url, config::CLOUDFLARE_DEFAULT_BASE_URL);
         assert_eq!(token.expose_for_auth(), "config-token");
@@ -608,6 +758,7 @@ mod tests {
         let cli = Cli {
             config: None,
             server: Some("cf".to_string()),
+            all: false,
             base_url: None,
             token: Some("cli-token".to_string()),
             readonly: false,
@@ -626,6 +777,7 @@ mod tests {
         let cli = Cli {
             config: None,
             server: None,
+            all: false,
             base_url: None,
             token: None,
             readonly: false,
