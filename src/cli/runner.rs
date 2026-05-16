@@ -3,7 +3,7 @@ use serde_json::Value;
 use crate::{
     cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd, records},
     core::dns::responses::ListRecordsResponse,
-    core::dns::service::{DnsService, ListRecordsOptions},
+    core::dns::service::{DnsService, ListRecordsOptions, ZoneRead},
     core::error::{Error, Result},
 };
 
@@ -37,6 +37,87 @@ pub fn resolve_fqdn(domain: &str, zone: Option<&str>) -> String {
 pub fn infer_zone(fqdn: &str) -> Option<String> {
     let fqdn = fqdn.trim_end_matches('.');
     fqdn.find('.').map(|pos| fqdn[pos + 1..].to_string())
+}
+
+/// Extract zone/domain names from a `list_zones` response.
+/// Handles the three known vendor formats:
+/// - Technitium: `{"response": {"zones": [{"name": "..."}]}}`
+/// - Pangolin:   `{"domains": [{"baseDomain": "..."}]}`
+/// - Cloudflare: `[{"name": "..."}]`  (array at root after envelope unwrap)
+pub fn extract_zone_names(value: &Value) -> Vec<String> {
+    // Technitium
+    if let Some(arr) = value
+        .get("response")
+        .and_then(|r| r.get("zones"))
+        .and_then(|z| z.as_array())
+    {
+        let names: Vec<_> = arr
+            .iter()
+            .filter_map(|z| z.get("name").and_then(|n| n.as_str()).map(str::to_string))
+            .collect();
+        if !names.is_empty() {
+            return names;
+        }
+    }
+    // Pangolin
+    if let Some(arr) = value.get("domains").and_then(|d| d.as_array()) {
+        let names: Vec<_> = arr
+            .iter()
+            .filter_map(|d| d.get("baseDomain").and_then(|n| n.as_str()).map(str::to_string))
+            .collect();
+        if !names.is_empty() {
+            return names;
+        }
+    }
+    // Cloudflare (array at root)
+    if let Some(arr) = value.as_array() {
+        let names: Vec<_> = arr
+            .iter()
+            .filter_map(|z| z.get("name").and_then(|n| n.as_str()).map(str::to_string))
+            .collect();
+        if !names.is_empty() {
+            return names;
+        }
+    }
+    Vec::new()
+}
+
+/// Query every hosted zone for records whose DNS name equals `label`.
+/// When `all_subdomains` is true, records beneath `label` in each zone are also included.
+/// Zones where the label does not exist are silently skipped.
+pub async fn search_bare_label_in_zones<C: ZoneRead + Send + Sync>(
+    client: &C,
+    label: &str,
+    all_subdomains: bool,
+    options: ListRecordsOptions,
+) -> Result<ListRecordsResponse> {
+    let zones_value = client.list_zones(1, 1000).await?;
+    let zone_names = extract_zone_names(&zones_value);
+
+    let mut all_zone_records = Vec::new();
+    for zone_name in &zone_names {
+        let target_fqdn = format!("{label}.{zone_name}");
+        if all_subdomains {
+            let mut resp = match client
+                .list_records(zone_name, Some(zone_name.as_str()), options)
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            filter_records_by_domain(&mut resp, &target_fqdn, true);
+            all_zone_records.extend(resp.zones);
+        } else {
+            match client
+                .list_records(&target_fqdn, Some(zone_name.as_str()), options)
+                .await
+            {
+                Ok(resp) => all_zone_records.extend(resp.zones),
+                Err(_) => {} // label doesn't exist in this zone
+            }
+        }
+    }
+    Ok(ListRecordsResponse { zones: all_zone_records })
 }
 
 /// Retain only records whose FQDN matches `target_fqdn` (or, when `all_subdomains`
@@ -114,27 +195,34 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
     }) = command
     {
         let effective_fqdn = resolve_fqdn(&domain, zone.as_deref());
-
-        // For --all-subdomains we need every record in the zone, so we query
-        // the zone apex and let filter_records_by_domain narrow the results.
-        let (query_domain, query_zone) = if all_subdomains {
-            let zone_name = zone
-                .clone()
-                .or_else(|| infer_zone(&effective_fqdn))
-                .unwrap_or_else(|| effective_fqdn.clone());
-            (zone_name.clone(), Some(zone_name))
-        } else {
-            (effective_fqdn.clone(), zone)
-        };
-
+        let is_bare_label = zone.is_none() && !effective_fqdn.contains('.');
         let options = ListRecordsOptions { use_local_ip, all_subdomains };
-        let mut response = client
-            .list_records(&query_domain, query_zone.as_deref(), options)
-            .await?;
 
-        if all_subdomains {
-            filter_records_by_domain(&mut response, &effective_fqdn, true);
-        }
+        let response = if is_bare_label {
+            // No zone given and no dots — search every hosted zone for this label.
+            search_bare_label_in_zones(client, &effective_fqdn, all_subdomains, options).await?
+        } else {
+            // For --all-subdomains we need every record in the zone, so we query
+            // the zone apex and let filter_records_by_domain narrow the results.
+            let (query_domain, query_zone) = if all_subdomains {
+                let zone_name = zone
+                    .clone()
+                    .or_else(|| infer_zone(&effective_fqdn))
+                    .unwrap_or_else(|| effective_fqdn.clone());
+                (zone_name.clone(), Some(zone_name))
+            } else {
+                (effective_fqdn.clone(), zone)
+            };
+
+            let mut resp = client
+                .list_records(&query_domain, query_zone.as_deref(), options)
+                .await?;
+
+            if all_subdomains {
+                filter_records_by_domain(&mut resp, &effective_fqdn, true);
+            }
+            resp
+        };
 
         if json {
             let value = serde_json::to_value(&response).map_err(|e| Error::parse(e.to_string()))?;
@@ -259,6 +347,31 @@ mod tests {
             data: json!({"ipAddress": "1.2.3.4"}),
             parsed: None,
         }
+    }
+
+    // ── extract_zone_names ────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_technitium_zones() {
+        let v = json!({"response": {"zones": [{"name": "hankin.io"}, {"name": "example.com"}]}});
+        assert_eq!(extract_zone_names(&v), vec!["hankin.io", "example.com"]);
+    }
+
+    #[test]
+    fn extract_pangolin_zones() {
+        let v = json!({"domains": [{"baseDomain": "app.hankin.io"}, {"baseDomain": "other.io"}]});
+        assert_eq!(extract_zone_names(&v), vec!["app.hankin.io", "other.io"]);
+    }
+
+    #[test]
+    fn extract_cloudflare_zones() {
+        let v = json!([{"id": "abc", "name": "hankin.io"}, {"id": "def", "name": "example.com"}]);
+        assert_eq!(extract_zone_names(&v), vec!["hankin.io", "example.com"]);
+    }
+
+    #[test]
+    fn extract_zone_names_returns_empty_for_unknown_format() {
+        assert!(extract_zone_names(&json!({"other": "stuff"})).is_empty());
     }
 
     // ── resolve_fqdn ──────────────────────────────────────────────────────────

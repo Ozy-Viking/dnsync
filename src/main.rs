@@ -238,7 +238,7 @@ async fn run_record_list_across_servers(
     use_local_ip: bool,
     json: bool,
 ) -> i32 {
-    use dnslib::cli::runner::{filter_records_by_domain, infer_zone, resolve_fqdn};
+    use dnslib::cli::runner::{filter_records_by_domain, infer_zone, resolve_fqdn, search_bare_label_in_zones};
     use dnslib::core::dns::service::{ListRecordsOptions, ZoneRead};
 
     if cli.token.is_some() || cli.base_url.is_some() {
@@ -273,7 +273,8 @@ async fn run_record_list_across_servers(
     }
 
     let effective_fqdn = resolve_fqdn(domain, zone);
-    let (query_domain, query_zone) = if all_subdomains {
+    let is_bare_label = zone.is_none() && !effective_fqdn.contains('.');
+    let (query_domain, query_zone) = if !is_bare_label && all_subdomains {
         let zone_name = zone
             .map(str::to_string)
             .or_else(|| infer_zone(&effective_fqdn))
@@ -302,9 +303,11 @@ async fn run_record_list_across_servers(
                     Ok(c) => c,
                     Err(e) => return render_error(e),
                 };
-                client
-                    .list_records(&query_domain, query_zone.as_deref(), options)
-                    .await
+                if is_bare_label {
+                    search_bare_label_in_zones(&client, &effective_fqdn, all_subdomains, options).await
+                } else {
+                    client.list_records(&query_domain, query_zone.as_deref(), options).await
+                }
             }
             #[cfg(feature = "pangolin")]
             config::VendorKind::Pangolin => {
@@ -327,9 +330,11 @@ async fn run_record_list_across_servers(
                     Ok(c) => c,
                     Err(e) => return render_error(e),
                 };
-                client
-                    .list_records(&query_domain, query_zone.as_deref(), options)
-                    .await
+                if is_bare_label {
+                    search_bare_label_in_zones(&client, &effective_fqdn, all_subdomains, options).await
+                } else {
+                    client.list_records(&query_domain, query_zone.as_deref(), options).await
+                }
             }
             #[cfg(feature = "cloudflare")]
             config::VendorKind::Cloudflare => {
@@ -346,9 +351,11 @@ async fn run_record_list_across_servers(
                     Ok(c) => c,
                     Err(e) => return render_error(e),
                 };
-                client
-                    .list_records(&query_domain, query_zone.as_deref(), options)
-                    .await
+                if is_bare_label {
+                    search_bare_label_in_zones(&client, &effective_fqdn, all_subdomains, options).await
+                } else {
+                    client.list_records(&query_domain, query_zone.as_deref(), options).await
+                }
             }
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
