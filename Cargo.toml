@@ -36,7 +36,7 @@ schemars = "1.2"
 clap = { version = "4", features = ["derive", "env"] }
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
-tracing = "0.1"
+tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hickory-resolver = "0.26"
 

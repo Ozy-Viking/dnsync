@@ -34,6 +34,9 @@ impl PangolinClient {
     /// Strips the Pangolin envelope and returns the inner `data` value.
     pub async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
+        let span = tracing::debug_span!("http.get", path, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending GET");
         let resp = self
             .http
             .get(&url)
@@ -41,7 +44,12 @@ impl PangolinClient {
             .query(params)
             .send()
             .await
-            .map_err(Error::Network)?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "GET failed");
+                Error::Network(e)
+            })?;
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
         parse_response(resp).await
     }
 }

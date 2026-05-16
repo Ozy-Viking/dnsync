@@ -39,6 +39,7 @@ impl Policy {
     /// Call at the start of every mutating tool handler.
     pub fn check_write(&self) -> Result<()> {
         if self.readonly {
+            tracing::warn!("write rejected: server is in read-only mode");
             Err(Error::policy_violation(
                 "this MCP server is configured in read-only mode",
                 "Update this server's MCP permissions or remove --readonly/DNS_READONLY to enable writes.",
@@ -66,6 +67,7 @@ impl Policy {
         if permitted {
             Ok(())
         } else {
+            tracing::warn!(zone, "write rejected: zone not in allow-list");
             let list = allowed.join(", ");
             Err(Error::policy_violation(
                 format!("zone '{zone}' is not in the allowed-zones list"),

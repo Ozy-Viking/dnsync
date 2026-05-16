@@ -6,7 +6,43 @@ use crate::{
     core::error::{Error, Result},
 };
 
+#[tracing::instrument(skip(client, command), fields(command = tracing::field::Empty))]
 pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
+    let cmd_name = match &command {
+        Command::Zone(z) => match z {
+            ZoneCmd::List { .. } => "zone list",
+            ZoneCmd::Create { .. } => "zone create",
+            ZoneCmd::Delete { .. } => "zone delete",
+            ZoneCmd::Enable { .. } => "zone enable",
+            ZoneCmd::Disable { .. } => "zone disable",
+            ZoneCmd::Import { .. } => "zone import",
+        },
+        Command::Record(r) => match r {
+            RecordCmd::List { .. } => "record list",
+            RecordCmd::Add { .. } => "record add",
+            RecordCmd::Delete { .. } => "record delete",
+        },
+        Command::Cache(c) => match c {
+            CacheCmd::List { .. } => "cache list",
+            CacheCmd::Delete { .. } => "cache delete",
+            CacheCmd::Flush => "cache flush",
+        },
+        Command::Stats { .. } => "stats",
+        Command::Blocked(b) => match b {
+            BlockedCmd::List => "blocked list",
+            BlockedCmd::Add { .. } => "blocked add",
+            BlockedCmd::Delete { .. } => "blocked delete",
+        },
+        Command::Allowed(a) => match a {
+            AllowedCmd::List => "allowed list",
+            AllowedCmd::Add { .. } => "allowed add",
+            AllowedCmd::Delete { .. } => "allowed delete",
+        },
+        Command::Settings => "settings",
+        Command::Mcp | Command::Config(_) => unreachable!(),
+    };
+    tracing::Span::current().record("command", cmd_name);
+    tracing::info!(command = cmd_name, "running CLI command");
     // Record list has its own output format logic — handle it before the
     // generic JSON path.
     if let Command::Record(RecordCmd::List {

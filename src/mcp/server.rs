@@ -356,6 +356,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<ListZonesParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_list_zones", "MCP tool invoked");
         self.client
             .list_zones(p.page_number.unwrap_or(1), p.zones_per_page.unwrap_or(50))
             .await
@@ -368,6 +369,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<CreateZoneParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_create_zone", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         self.client
@@ -382,6 +385,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<ZoneParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_delete_zone", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         self.client
@@ -396,6 +401,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<ZoneParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_enable_zone", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         self.client
@@ -410,6 +417,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<ZoneParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_disable_zone", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         self.client
@@ -428,6 +437,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<ImportZoneFileParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_import_zone_file", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         let file_name = p.file_name.unwrap_or_else(|| format!("{}.txt", p.zone));
@@ -454,6 +465,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<ListRecordsParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_list_records", "MCP tool invoked");
+        tracing::debug!(domain = %p.domain, zone = ?p.zone, "tool invoked");
         self.policy
             .check_zone(p.zone.as_deref().unwrap_or(&p.domain))
             .map_err(mcp_err)?;
@@ -478,6 +491,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<AddRecordParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_add_record", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, domain = %p.domain, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         self.client
@@ -496,6 +511,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<DeleteRecordParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_delete_record", "MCP tool invoked");
+        tracing::debug!(zone = %p.zone, domain = %p.domain, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.policy.check_zone(&p.zone).map_err(mcp_err)?;
         let type_params = p.record.to_api_params();
@@ -513,6 +530,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_list_cache", "MCP tool invoked");
+        tracing::debug!(domain = %p.domain, "tool invoked");
         self.client
             .list_cache(&p.domain)
             .await
@@ -525,6 +544,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_delete_cache_zone", "MCP tool invoked");
+        tracing::debug!(domain = %p.domain, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.client
             .delete_cache_zone(&p.domain)
@@ -535,6 +556,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
 
     #[tool(description = "Flush the entire DNS cache, forcing all records to be resolved fresh.")]
     async fn dns_flush_cache(&self) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_flush_cache", "MCP tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.client
             .flush_cache()
@@ -552,6 +574,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<StatsParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_get_stats", "MCP tool invoked");
+        tracing::debug!(stats_type = p.stats_type.as_deref().unwrap_or("LastDay"), "tool invoked");
         self.client
             .get_stats(p.stats_type.as_deref().unwrap_or("LastDay"))
             .await
@@ -563,6 +587,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
 
     #[tool(description = "List all manually blocked domains.")]
     async fn dns_list_blocked_zones(&self) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_list_blocked_zones", "MCP tool invoked");
         self.client
             .list_blocked()
             .await
@@ -575,6 +600,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_add_blocked_zone", "MCP tool invoked");
+        tracing::debug!(domain = %p.domain, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.client
             .add_blocked(&p.domain)
@@ -588,6 +615,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_delete_blocked_zone", "MCP tool invoked");
+        tracing::debug!(domain = %p.domain, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.client
             .delete_blocked(&p.domain)
@@ -600,6 +629,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
 
     #[tool(description = "List all whitelisted domains.")]
     async fn dns_list_allowed_zones(&self) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_list_allowed_zones", "MCP tool invoked");
         self.client
             .list_allowed()
             .await
@@ -612,6 +642,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_add_allowed_zone", "MCP tool invoked");
+        tracing::debug!(domain = %p.domain, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.client
             .add_allowed(&p.domain)
@@ -625,6 +657,8 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_delete_allowed_zone", "MCP tool invoked");
+        tracing::debug!(domain = %p.domain, "tool invoked");
         self.policy.check_write().map_err(mcp_err)?;
         self.client
             .delete_allowed(&p.domain)
@@ -637,6 +671,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
 
     #[tool(description = "Get the current Technitium DNS server configuration.")]
     async fn dns_get_settings(&self) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_get_settings", "MCP tool invoked");
         self.client
             .get_settings()
             .await
