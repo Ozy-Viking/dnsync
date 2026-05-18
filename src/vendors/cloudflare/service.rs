@@ -757,10 +757,22 @@ impl ZoneImport for CloudflareClient {
         zone: &'a str,
         file_name: String,
         file_bytes: Vec<u8>,
-        _overwrite: bool,
-        _overwrite_zone: bool,
+        overwrite: bool,
+        overwrite_zone: bool,
         _overwrite_soa_serial: bool,
     ) -> Result<Value> {
+        if overwrite_zone {
+            tracing::warn!(
+                "overwrite_zone is not supported by Cloudflare — import will be additive; \
+                 delete records manually first if a clean replace is needed"
+            );
+        }
+        if !overwrite {
+            tracing::warn!(
+                "overwrite=false is not supported by Cloudflare — \
+                 existing records will still be updated by the import"
+            );
+        }
         let zone_id = self.resolve_zone_id(zone).await?;
         self.post_multipart(
             &format!("/zones/{zone_id}/dns_records/import"),
@@ -861,8 +873,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn zone_import_attempts_api_call() {
-        // import now attempts the Cloudflare API; a network error confirms it's no longer a stub
+    async fn zone_import_attempts_api_call_with_default_flags() {
+        // overwrite=true, overwrite_zone=false — network error confirms it reaches the API
+        let err = make_client()
+            .import_zone_file("example.com", "zone.txt".into(), vec![], true, false, false)
+            .await
+            .unwrap_err();
+        assert!(!matches!(err, Error::Unsupported { .. }));
+    }
+
+    #[tokio::test]
+    async fn zone_import_overwrite_zone_warns_and_proceeds() {
+        // overwrite_zone=true emits a warning but still reaches the API (not an error)
+        let err = make_client()
+            .import_zone_file("example.com", "zone.txt".into(), vec![], true, true, false)
+            .await
+            .unwrap_err();
+        assert!(!matches!(err, Error::Unsupported { .. }));
+    }
+
+    #[tokio::test]
+    async fn zone_import_no_overwrite_warns_and_proceeds() {
+        // overwrite=false emits a warning but still reaches the API (not an error)
         let err = make_client()
             .import_zone_file("example.com", "zone.txt".into(), vec![], false, false, false)
             .await
