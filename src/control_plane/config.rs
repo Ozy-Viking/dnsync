@@ -155,13 +155,15 @@ impl AppConfig {
     }
 
     pub fn render_starter_toml() -> Result<String> {
-        toml::to_string_pretty(&Self::starter())
-            .map_err(|e| Error::config(format!("failed to serialize starter config: {e}")))
+        Self::starter().render_toml()
     }
 
     pub fn render_toml(&self) -> Result<String> {
-        toml::to_string_pretty(self)
-            .map_err(|e| Error::config(format!("failed to serialize config: {e}")))
+        let mut doc = toml_edit::DocumentMut::new();
+        for server in &self.servers {
+            append_server_entry(&mut doc, server);
+        }
+        Ok(doc.to_string())
     }
 
     /// Returns a copy of the config with every literal `token` value replaced
