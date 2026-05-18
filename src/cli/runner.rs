@@ -112,7 +112,12 @@ pub async fn search_bare_label_in_zones<C: ZoneRead + Send + Sync>(
                 .list_records(&target_fqdn, Some(zone_name.as_str()), options)
                 .await
             {
-                Ok(resp) => all_zone_records.extend(resp.zones),
+                Ok(mut resp) => {
+                    // Cloudflare ignores the domain argument and returns the full
+                    // zone record set, so filter to the exact target FQDN.
+                    filter_records_by_domain(&mut resp, &target_fqdn, false);
+                    all_zone_records.extend(resp.zones);
+                }
                 Err(_) => {} // label doesn't exist in this zone
             }
         }

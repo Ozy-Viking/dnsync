@@ -277,7 +277,7 @@ async fn run_record_list_across_servers(
     let (query_domain, query_zone) = if !is_bare_label && all_subdomains {
         let zone_name = zone
             .map(str::to_string)
-            .or_else(|| infer_zone(&effective_fqdn))
+            .or_else(|| infer_zone(&effective_fqdn).filter(|z| z.contains('.')))
             .unwrap_or_else(|| effective_fqdn.clone());
         (zone_name.clone(), Some(zone_name))
     } else {
