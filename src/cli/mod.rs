@@ -188,9 +188,17 @@ pub enum ZoneCmd {
 pub enum RecordCmd {
     /// List all records for a domain
     List {
+        /// Domain to look up — may be a bare label (e.g. `huly`) when --zone is given,
+        /// or a fully-qualified name (e.g. `huly.hankin.io`). Omitting --zone searches
+        /// across all zones.
         domain: String,
+        /// Zone the domain belongs to.  When given, a bare domain label is automatically
+        /// qualified: `huly` + `--zone hankin.io` → `huly.hankin.io`.
         #[arg(long)]
         zone: Option<String>,
+        /// Also show records for every subdomain of the given domain
+        #[arg(long)]
+        all_subdomains: bool,
         /// Server IDs to query (repeatable); ignored when --all is used
         #[arg(long = "server", value_name = "ID")]
         servers: Vec<String>,

@@ -476,6 +476,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
                 p.zone.as_deref(),
                 ListRecordsOptions {
                     use_local_ip: p.use_local_ip.unwrap_or(false),
+                    all_subdomains: false,
                 },
             )
             .await
