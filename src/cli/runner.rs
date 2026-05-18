@@ -200,6 +200,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         all_subdomains,
         use_local_ip,
         json,
+        servers: _,
     }) = command
     {
         let effective_fqdn = resolve_fqdn(&domain, zone.as_deref());

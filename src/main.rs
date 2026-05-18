@@ -109,7 +109,7 @@ async fn run(cli: Cli) -> i32 {
     }
 
     if let Command::ServerIds = cli.command {
-        let config = config::AppConfig::load(cli.config).ok().flatten();
+        let config = config::AppConfig::load_if_exists(cli.config).ok().flatten();
         if let Some(cfg) = config {
             for server in &cfg.servers {
                 println!("{}", server.id);
@@ -197,19 +197,26 @@ async fn run(cli: Cli) -> i32 {
         domain,
         zone,
         all_subdomains,
-        servers,
+        servers: subcmd_servers,
         use_local_ip,
         json,
     }) = &cli.command
     {
-        if cli.all || !cli.servers.is_empty() {
+        // Accept --server before or after the subcommand, preferring the more
+        // specific (subcommand-level) flag when both are given.
+        let effective_servers: &[String] = if !subcmd_servers.is_empty() {
+            subcmd_servers
+        } else {
+            &cli.servers
+        };
+        if cli.all || !effective_servers.is_empty() {
             return run_record_list_across_servers(
                 &cli,
                 app_config.as_ref(),
                 domain,
                 zone.as_deref(),
                 *all_subdomains,
-                servers,
+                effective_servers,
                 *use_local_ip,
                 *json,
             )
@@ -347,8 +354,8 @@ async fn run_record_list_across_servers(
     let selected: Vec<&config::DnsServerConfig> = if cli.all {
         cfg.servers.iter().collect()
     } else {
-        let mut picked = Vec::with_capacity(cli.servers.len());
-        for server_id in &cli.servers {
+        let mut picked = Vec::with_capacity(servers.len());
+        for server_id in servers {
             match cfg.selected_server(Some(server_id.as_str())) {
                 Ok(s) => picked.push(s),
                 Err(e) => return render_error(e),
