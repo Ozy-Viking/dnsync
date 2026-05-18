@@ -366,7 +366,9 @@ async fn run_record_list_across_servers(
 
         match result {
             Ok(mut response) => {
-                if all_subdomains {
+                // search_bare_label_in_zones already filters internally; only
+                // apply the outer filter for non-bare-label --all-subdomains queries.
+                if all_subdomains && !is_bare_label {
                     filter_records_by_domain(&mut response, &effective_fqdn, true);
                 }
                 if json {

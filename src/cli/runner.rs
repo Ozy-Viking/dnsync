@@ -205,9 +205,14 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             // For --all-subdomains we need every record in the zone, so we query
             // the zone apex and let filter_records_by_domain narrow the results.
             let (query_domain, query_zone) = if all_subdomains {
+                // Use the zone from --zone if given, otherwise try to infer it by
+                // stripping the leftmost label.  If inference would produce a TLD
+                // (no dot in the result), the effective_fqdn IS the zone apex, so
+                // use it directly — e.g. `example.com --all-subdomains` stays as
+                // `example.com`, not the bogus `com`.
                 let zone_name = zone
                     .clone()
-                    .or_else(|| infer_zone(&effective_fqdn))
+                    .or_else(|| infer_zone(&effective_fqdn).filter(|z| z.contains('.')))
                     .unwrap_or_else(|| effective_fqdn.clone());
                 (zone_name.clone(), Some(zone_name))
             } else {
@@ -347,6 +352,23 @@ mod tests {
             data: json!({"ipAddress": "1.2.3.4"}),
             parsed: None,
         }
+    }
+
+    // ── infer_zone TLD guard ─────────────────────────────────────────────────
+
+    #[test]
+    fn infer_zone_tld_falls_back_to_apex_for_all_subdomains() {
+        // example.com → infer_zone gives "com" (no dot) → should not be used as zone
+        let z = infer_zone("example.com");
+        let filtered = z.filter(|z| z.contains('.'));
+        assert!(filtered.is_none(), "TLD result should be filtered out");
+    }
+
+    #[test]
+    fn infer_zone_subdomain_is_usable_as_zone() {
+        let z = infer_zone("huly.hankin.io");
+        let filtered = z.filter(|z| z.contains('.'));
+        assert_eq!(filtered.as_deref(), Some("hankin.io"));
     }
 
     // ── extract_zone_names ────────────────────────────────────────────────────
