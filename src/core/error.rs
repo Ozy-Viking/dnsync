@@ -64,6 +64,18 @@ pub enum Error {
     )]
     Parse { context: String },
 
+    /// The config file could not be read or is structurally invalid.
+    #[error("config error: {context}")]
+    #[diagnostic(
+        code(dns::config),
+        help(
+            "Check the config file syntax and field names.\n\
+              Run `dns config print` to inspect the parsed result, or\n\
+              `dns config init` to regenerate a starter template."
+        )
+    )]
+    Config { context: String },
+
     /// A MIME type string was rejected by reqwest (should never happen in practice).
     #[error("invalid MIME type")]
     #[diagnostic(code(dns::mime))]
@@ -146,6 +158,12 @@ impl Error {
 
     pub fn parse(context: impl Into<String>) -> Self {
         Self::Parse {
+            context: context.into(),
+        }
+    }
+
+    pub fn config(context: impl Into<String>) -> Self {
+        Self::Config {
             context: context.into(),
         }
     }

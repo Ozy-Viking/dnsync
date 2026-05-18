@@ -43,7 +43,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "DnsServerConfigRaw")]
 pub struct DnsServerConfig {
     pub id: String,
 
@@ -64,8 +64,62 @@ pub struct DnsServerConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "McpPermissions::is_default")]
     pub mcp: McpPermissions,
+}
+
+/// Intermediate struct used only for TOML deserialization.
+///
+/// Accepts `readonly` and `allowed_zones` directly on the server entry
+/// (flat format) in addition to the nested `[servers.mcp]` table, then
+/// merges them into `McpPermissions` via the `From` impl.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DnsServerConfigRaw {
+    id: String,
+    #[serde(default)]
+    vendor: VendorKind,
+    #[serde(default)]
+    location: Option<ServerLocation>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    token_env: Option<String>,
+    #[serde(default)]
+    org_id: Option<String>,
+    #[serde(default)]
+    mcp: McpPermissions,
+    // Flat shorthands — merged into `mcp` on conversion.
+    #[serde(default)]
+    readonly: bool,
+    #[serde(default)]
+    allowed_zones: Vec<String>,
+}
+
+impl From<DnsServerConfigRaw> for DnsServerConfig {
+    fn from(raw: DnsServerConfigRaw) -> Self {
+        let mut zones = raw.mcp.allowed_zones;
+        for z in raw.allowed_zones {
+            if !zones.contains(&z) {
+                zones.push(z);
+            }
+        }
+        DnsServerConfig {
+            id: raw.id,
+            vendor: raw.vendor,
+            location: raw.location,
+            base_url: raw.base_url,
+            token: raw.token,
+            token_env: raw.token_env,
+            org_id: raw.org_id,
+            mcp: McpPermissions {
+                readonly: raw.mcp.readonly || raw.readonly,
+                allowed_zones: zones,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -76,6 +130,12 @@ pub struct McpPermissions {
 
     #[serde(default)]
     pub allowed_zones: Vec<String>,
+}
+
+impl McpPermissions {
+    fn is_default(&self) -> bool {
+        !self.readonly && self.allowed_zones.is_empty()
+    }
 }
 
 impl AppConfig {
@@ -96,12 +156,12 @@ impl AppConfig {
 
     pub fn render_starter_toml() -> Result<String> {
         toml::to_string_pretty(&Self::starter())
-            .map_err(|e| Error::parse(format!("failed to serialize starter config: {e}")))
+            .map_err(|e| Error::config(format!("failed to serialize starter config: {e}")))
     }
 
     pub fn render_toml(&self) -> Result<String> {
         toml::to_string_pretty(self)
-            .map_err(|e| Error::parse(format!("failed to serialize config: {e}")))
+            .map_err(|e| Error::config(format!("failed to serialize config: {e}")))
     }
 
     /// Returns a copy of the config with every literal `token` value replaced
@@ -153,14 +213,14 @@ impl AppConfig {
                 .iter()
                 .find(|server| server.id.eq_ignore_ascii_case(id))
                 .ok_or_else(|| {
-                    Error::parse(format!("config does not define a DNS server named '{id}'"))
+                    Error::config(format!("config does not define a DNS server named '{id}'"))
                 });
         }
 
         match self.servers.as_slice() {
             [server] => Ok(server),
-            [] => Err(Error::parse("config file does not define any DNS servers")),
-            _ => Err(Error::parse(
+            [] => Err(Error::config("config file does not define any DNS servers")),
+            _ => Err(Error::config(
                 "config file defines multiple DNS servers; select one with --server or DNSYNC_SERVER",
             )),
         }
@@ -170,12 +230,12 @@ impl AppConfig {
         let mut ids = std::collections::HashSet::new();
         for server in &self.servers {
             if server.id.trim().is_empty() {
-                return Err(Error::parse(
+                return Err(Error::config(
                     "config contains a DNS server with an empty id",
                 ));
             }
             if !ids.insert(server.id.to_lowercase()) {
-                return Err(Error::parse(format!(
+                return Err(Error::config(format!(
                     "config contains duplicate DNS server id '{}'",
                     server.id
                 )));
@@ -188,7 +248,7 @@ impl AppConfig {
 
 pub fn init_config(path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
     let Some(path) = path.or_else(default_config_path) else {
-        return Err(Error::parse(
+        return Err(Error::config(
             "could not determine a default config path; pass --config <path>",
         ));
     };
@@ -202,7 +262,7 @@ pub fn init_config(path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
 /// is preserved; only the new `[[servers]]` block is appended.
 pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<PathBuf> {
     let Some(path) = path.or_else(default_config_path) else {
-        return Err(Error::parse(
+        return Err(Error::config(
             "could not determine a default config path; pass --config <path>",
         ));
     };
@@ -225,7 +285,7 @@ pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<Path
     };
 
     let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e| {
-        Error::parse(format!(
+        Error::config(format!(
             "could not parse config file '{}': {e}",
             path.display()
         ))
@@ -272,14 +332,12 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         tbl["org_id"] = value(v.as_str());
     }
 
-    let mut mcp = Table::new();
-    mcp["readonly"] = value(server.mcp.readonly);
+    tbl["readonly"] = value(server.mcp.readonly);
     let mut zones = Array::new();
     for zone in &server.mcp.allowed_zones {
         zones.push(zone.as_str());
     }
-    mcp["allowed_zones"] = value(zones);
-    tbl["mcp"] = Item::Table(mcp);
+    tbl["allowed_zones"] = value(zones);
 
     match doc.entry("servers") {
         toml_edit::Entry::Occupied(mut e) => {
@@ -297,7 +355,7 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
 
 fn write_default_config(path: &Path, force: bool) -> Result<()> {
     if path.exists() && !force {
-        return Err(Error::parse(format!(
+        return Err(Error::config(format!(
             "config file '{}' already exists; pass --force to overwrite it",
             path.display()
         )));
@@ -326,7 +384,7 @@ fn load_from_path(path: &Path) -> Result<AppConfig> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?;
     let config: AppConfig = toml::from_str(&contents).map_err(|e| {
-        Error::parse(format!(
+        Error::config(format!(
             "could not parse config file '{}': {e}",
             path.display()
         ))
@@ -386,7 +444,7 @@ fn check_config_permissions(path: &Path) -> Result<()> {
         .map_err(|e| Error::io(format!("reading metadata for '{}'", path.display()), e))?;
     let mode = meta.mode() & 0o777;
     if mode & 0o077 != 0 {
-        return Err(Error::parse(format!(
+        return Err(Error::config(format!(
             "config file '{}' has permissions {:04o} — group or world can read it.\n\
              API tokens must be owner-readable only. Fix with:\n\
              \n    chmod 600 {}",
@@ -443,7 +501,7 @@ impl DnsServerConfig {
 
         if let Some(ref env_name) = self.token_env {
             return env::var(env_name).map(ApiToken::new).map_err(|_| {
-                Error::parse(format!(
+                Error::config(format!(
                     "DNS server '{}' requires token env var '{env_name}' to be set",
                     self.id
                 ))
@@ -454,7 +512,7 @@ impl DnsServerConfig {
             .clone()
             .map(ApiToken::new)
             .ok_or_else(|| {
-                Error::parse(format!(
+                Error::config(format!(
                     "DNS server '{}' has no token configured; set token or token_env in config, or pass --token",
                     self.id
                 ))
