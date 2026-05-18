@@ -431,8 +431,11 @@ impl ZoneRead for PangolinClient {
                 .ok_or_else(|| {
                     Error::api(format!("zone '{zone_name}' not found in Pangolin domains"))
                 })?;
+            // When all_subdomains is set, skip the name filter so the caller can
+            // filter the full zone record set for the target domain + its subdomains.
+            let name_filter = if options.all_subdomains { None } else { Some(domain) };
             let zone_records =
-                self.fetch_zone_records(matching, Some(domain), options).await?;
+                self.fetch_zone_records(matching, name_filter, options).await?;
             Ok(ListRecordsResponse {
                 zones: vec![zone_records],
             })

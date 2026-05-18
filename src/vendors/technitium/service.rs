@@ -44,14 +44,21 @@ impl ZoneRead for TechnitiumClient {
         .await
     }
 
-    #[instrument(skip(self, _options), fields(vendor = "technitium", operation = "list_records"))]
+    #[instrument(skip(self, options), fields(vendor = "technitium", operation = "list_records"))]
     async fn list_records(
         &self,
         domain: &str,
         zone: Option<&str>,
-        _options: ListRecordsOptions,
+        options: ListRecordsOptions,
     ) -> Result<ListRecordsResponse> {
-        let mut params = vec![("domain", domain)];
+        // When fetching all subdomains we need every record in the zone, so query
+        // the zone apex instead of the specific domain and let the caller filter.
+        let query_domain = if options.all_subdomains {
+            zone.unwrap_or(domain)
+        } else {
+            domain
+        };
+        let mut params = vec![("domain", query_domain)];
         if let Some(z) = zone {
             params.push(("zone", z));
         }
