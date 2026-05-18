@@ -70,7 +70,7 @@ pub struct DnsServerConfig {
 
 /// Intermediate struct used only for TOML deserialization.
 ///
-/// Accepts `readonly` and `allowed_zones` directly on the server entry
+/// Accepts `mcp_readonly` and `mcp_allowed_zones` directly on the server entry
 /// (flat format) in addition to the nested `[servers.mcp]` table, then
 /// merges them into `McpPermissions` via the `From` impl.
 #[derive(Deserialize)]
@@ -93,15 +93,15 @@ struct DnsServerConfigRaw {
     mcp: McpPermissions,
     // Flat shorthands — merged into `mcp` on conversion.
     #[serde(default)]
-    readonly: bool,
+    mcp_readonly: bool,
     #[serde(default)]
-    allowed_zones: Vec<String>,
+    mcp_allowed_zones: Vec<String>,
 }
 
 impl From<DnsServerConfigRaw> for DnsServerConfig {
     fn from(raw: DnsServerConfigRaw) -> Self {
         let mut zones = raw.mcp.allowed_zones;
-        for z in raw.allowed_zones {
+        for z in raw.mcp_allowed_zones {
             if !zones.contains(&z) {
                 zones.push(z);
             }
@@ -115,7 +115,7 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             token_env: raw.token_env,
             org_id: raw.org_id,
             mcp: McpPermissions {
-                readonly: raw.mcp.readonly || raw.readonly,
+                readonly: raw.mcp.readonly || raw.mcp_readonly,
                 allowed_zones: zones,
             },
         }
@@ -332,12 +332,12 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         tbl["org_id"] = value(v.as_str());
     }
 
-    tbl["readonly"] = value(server.mcp.readonly);
+    tbl["mcp_readonly"] = value(server.mcp.readonly);
     let mut zones = Array::new();
     for zone in &server.mcp.allowed_zones {
         zones.push(zone.as_str());
     }
-    tbl["allowed_zones"] = value(zones);
+    tbl["mcp_allowed_zones"] = value(zones);
 
     match doc.entry("servers") {
         toml_edit::Entry::Occupied(mut e) => {

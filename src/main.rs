@@ -64,6 +64,37 @@ fn generate_completions(shell: clap_complete::Shell) {
     let fn_name = bin_name.replace('-', "_");
 
     let mut out = io::stdout();
+
+    // For zsh, patch the generated output so --server specs point at our
+    // dynamic helper instead of the default (_default) completer.
+    if shell == clap_complete::Shell::Zsh {
+        let mut buf: Vec<u8> = Vec::new();
+        generate(shell, &mut cmd, &bin_name, &mut buf);
+        let raw = String::from_utf8_lossy(&buf);
+        let patched: String = raw
+            .lines()
+            .map(|line| {
+                if line.contains("'*--server=") {
+                    line.replace(":_default'", &format!(":_{fn_name}_server_ids'"))
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let patched = if raw.ends_with('\n') { patched + "\n" } else { patched };
+        out.write_all(patched.as_bytes()).ok();
+        let helper = format!(
+            "\n# Dynamic --server completion from config\n\
+             _{fn_name}_server_ids() {{\n\
+             \tlocal -a ids=(\"${{(@f)$({bin_name} _servers 2>/dev/null)}}\")\n\
+             \t_describe 'server ID' ids\n\
+             }}\n"
+        );
+        out.write_all(helper.as_bytes()).ok();
+        return;
+    }
+
     generate(shell, &mut cmd, &bin_name, &mut out);
 
     let dynamic = match shell {
@@ -85,13 +116,6 @@ fn generate_completions(shell: clap_complete::Shell) {
              \t_{fn_name} \"$@\"\n\
              }}\n\
              complete -F __{fn_name}_complete {bin_name}\n"
-        ),
-        clap_complete::Shell::Zsh => format!(
-            "\n# Dynamic --server completion from config\n\
-             _{fn_name}_server_ids() {{\n\
-             \tlocal -a ids=(\"${{(@f)$({bin_name} _servers 2>/dev/null)}}\")\n\
-             \t_describe 'server ID' ids\n\
-             }}\n"
         ),
         _ => String::new(),
     };
@@ -247,6 +271,13 @@ async fn run(cli: Cli) -> i32 {
             *overwrite_zone,
         )
         .await;
+    }
+
+    if cli.servers.len() > 1 {
+        return render_error(Error::parse(
+            "multiple --server flags are only valid with `record list`; \
+             use a single --server for all other commands",
+        ));
     }
 
     let policy = match cli_policy(&cli, app_config.as_ref()) {
