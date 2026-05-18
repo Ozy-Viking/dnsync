@@ -51,7 +51,97 @@ async fn main() {
 }
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+fn generate_completions(shell: clap_complete::Shell) {
+    use clap::CommandFactory;
+    use clap_complete::generate;
+    use std::io::{self, Write};
+
+    let mut cmd = Cli::command();
+    let bin_name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| cmd.get_name().to_string());
+    let fn_name = bin_name.replace('-', "_");
+
+    let mut out = io::stdout();
+
+    // For zsh, patch the generated output so --server specs point at our
+    // dynamic helper instead of the default (_default) completer.
+    if shell == clap_complete::Shell::Zsh {
+        let mut buf: Vec<u8> = Vec::new();
+        generate(shell, &mut cmd, &bin_name, &mut buf);
+        let raw = String::from_utf8_lossy(&buf);
+        let patched: String = raw
+            .lines()
+            .map(|line| {
+                if line.contains("'*--server=") {
+                    line.replace(":_default'", &format!(":_{fn_name}_server_ids'"))
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let patched = if raw.ends_with('\n') { patched + "\n" } else { patched };
+        out.write_all(patched.as_bytes()).ok();
+        let helper = format!(
+            "\n# Dynamic --server completion from config\n\
+             _{fn_name}_server_ids() {{\n\
+             \tlocal -a ids=(\"${{(@f)$({bin_name} _servers 2>/dev/null)}}\")\n\
+             \t_describe 'server ID' ids\n\
+             }}\n"
+        );
+        out.write_all(helper.as_bytes()).ok();
+        return;
+    }
+
+    generate(shell, &mut cmd, &bin_name, &mut out);
+
+    let dynamic = match shell {
+        clap_complete::Shell::Fish => format!(
+            "\n# Dynamic --server completion from config\n\
+             complete -e -c {bin_name} -l server\n\
+             complete -c {bin_name} -l server -r -a '({bin_name} _servers 2>/dev/null)'\n"
+        ),
+        clap_complete::Shell::Bash => format!(
+            "\n# Dynamic --server completion from config\n\
+             __{fn_name}_complete() {{\n\
+             \tlocal cur prev\n\
+             \tcur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n\
+             \tprev=\"${{COMP_WORDS[COMP_CWORD-1]}}\"\n\
+             \tif [[ \"$prev\" == \"--server\" ]]; then\n\
+             \t\tmapfile -t COMPREPLY < <(compgen -W \"$({bin_name} _servers 2>/dev/null)\" -- \"$cur\")\n\
+             \t\treturn\n\
+             \tfi\n\
+             \t_{fn_name} \"$@\"\n\
+             }}\n\
+             complete -F __{fn_name}_complete {bin_name}\n"
+        ),
+        _ => String::new(),
+    };
+
+    if !dynamic.is_empty() {
+        out.write_all(dynamic.as_bytes()).ok();
+    }
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run(cli: Cli) -> i32 {
+    if let Command::Completions { shell } = cli.command {
+        generate_completions(shell);
+        return 0;
+    }
+
+    if let Command::ServerIds = cli.command {
+        let config = config::AppConfig::load_if_exists(cli.config).ok().flatten();
+        if let Some(cfg) = config {
+            for server in &cfg.servers {
+                println!("{}", server.id);
+            }
+        }
+        return 0;
+    }
+
     if let Command::Config(config_cmd) = cli.command {
         return match config_cmd {
             ConfigCmd::Init { force } => match config::init_config(cli.config, force) {
@@ -131,19 +221,26 @@ async fn run(cli: Cli) -> i32 {
         domain,
         zone,
         all_subdomains,
-        servers,
+        servers: subcmd_servers,
         use_local_ip,
         json,
     }) = &cli.command
     {
-        if cli.all || !servers.is_empty() {
+        // Accept --server before or after the subcommand, preferring the more
+        // specific (subcommand-level) flag when both are given.
+        let effective_servers: &[String] = if !subcmd_servers.is_empty() {
+            subcmd_servers
+        } else {
+            &cli.servers
+        };
+        if cli.all || !effective_servers.is_empty() {
             return run_record_list_across_servers(
                 &cli,
                 app_config.as_ref(),
                 domain,
                 zone.as_deref(),
                 *all_subdomains,
-                servers,
+                effective_servers,
                 *use_local_ip,
                 *json,
             )
@@ -176,6 +273,13 @@ async fn run(cli: Cli) -> i32 {
         .await;
     }
 
+    if cli.servers.len() > 1 {
+        return render_error(Error::parse(
+            "multiple --server flags are only valid with `record list`; \
+             use a single --server for all other commands",
+        ));
+    }
+
     let policy = match cli_policy(&cli, app_config.as_ref()) {
         Ok(p) => p,
         Err(e) => return render_error(e),
@@ -183,7 +287,7 @@ async fn run(cli: Cli) -> i32 {
 
     let server_config = app_config
         .as_ref()
-        .and_then(|c| c.selected_server(cli.server.as_deref()).ok());
+        .and_then(|c| c.selected_server(cli.servers.first().map(|s| s.as_str())).ok());
 
     let vendor = server_config
         .map(|s| s.vendor)
@@ -481,7 +585,7 @@ fn resolve_technitium_credentials(
         return Ok((base_url, token));
     };
 
-    let server = config.selected_server(cli.server.as_deref())?;
+    let server = config.selected_server(cli.servers.first().map(|s| s.as_str()))?;
     let base_url = server.resolved_base_url(cli.base_url.as_deref());
     let token = server.resolved_token(cli.token.as_deref())?;
     Ok((base_url, token))
@@ -495,7 +599,7 @@ fn resolve_pangolin_credentials(
     use std::env;
 
     let (base_url, token, org_id_opt) = if let Some(config) = config {
-        let server = config.selected_server(cli.server.as_deref())?;
+        let server = config.selected_server(cli.servers.first().map(|s| s.as_str()))?;
         let base_url = cli
             .base_url
             .clone()
@@ -574,7 +678,7 @@ fn resolve_cloudflare_credentials(
         return Ok((base_url, token));
     };
 
-    let server = config.selected_server(cli.server.as_deref())?;
+    let server = config.selected_server(cli.servers.first().map(|s| s.as_str()))?;
     let base_url = cli
         .base_url
         .clone()
@@ -730,7 +834,7 @@ async fn server_import_zone(
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 fn cli_policy(cli: &Cli, config: Option<&config::AppConfig>) -> Result<Policy, Error> {
     let mcp = config
-        .and_then(|c| c.selected_server(cli.server.as_deref()).ok())
+        .and_then(|c| c.selected_server(cli.servers.first().map(|s| s.as_str())).ok())
         .map(|s| &s.mcp);
 
     let readonly = cli.readonly || mcp.is_some_and(|p| p.readonly);
@@ -778,7 +882,7 @@ mod tests {
     fn cli(allow_zone: Vec<String>) -> Cli {
         Cli {
             config: None,
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: Some("token".to_string()),
@@ -806,7 +910,7 @@ mod tests {
     fn config_cli(path: std::path::PathBuf, force: bool) -> Cli {
         Cli {
             config: Some(path),
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: None,
@@ -870,7 +974,7 @@ mod tests {
 
         let cli = Cli {
             config: None,
-            server: Some("cloud".to_string()),
+            servers: vec!["cloud".to_string()],
             all: false,
             base_url: None,
             token: None,
@@ -892,7 +996,7 @@ mod tests {
     fn cloudflare_credentials_default_base_url_no_config() {
         let cli = Cli {
             config: None,
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: Some("cf-token".to_string()),
@@ -922,7 +1026,7 @@ mod tests {
 
         let cli = Cli {
             config: None,
-            server: Some("cf".to_string()),
+            servers: vec!["cf".to_string()],
             all: false,
             base_url: None,
             token: None,
@@ -952,7 +1056,7 @@ mod tests {
 
         let cli = Cli {
             config: None,
-            server: Some("cf".to_string()),
+            servers: vec!["cf".to_string()],
             all: false,
             base_url: None,
             token: Some("cli-token".to_string()),
@@ -971,7 +1075,7 @@ mod tests {
     fn cloudflare_credentials_error_when_no_token() {
         let cli = Cli {
             config: None,
-            server: None,
+            servers: vec![],
             all: false,
             base_url: None,
             token: None,

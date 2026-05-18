@@ -3,6 +3,7 @@ pub mod records;
 pub mod runner;
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 use std::path::PathBuf;
 
 // ─── Top-level CLI ───────────────────────────────────────────────────────────
@@ -18,9 +19,9 @@ pub struct Cli {
     #[arg(long, env = "DNSYNC_CONFIG")]
     pub config: Option<PathBuf>,
 
-    /// DNS server ID from the config file
-    #[arg(long, env = "DNSYNC_SERVER")]
-    pub server: Option<String>,
+    /// DNS server ID from the config file (repeatable for record list)
+    #[arg(long = "server", env = "DNSYNC_SERVER")]
+    pub servers: Vec<String>,
 
     /// Query all configured servers (record list only)
     #[arg(long)]
@@ -84,6 +85,18 @@ pub enum Command {
 
     /// Show server settings
     Settings,
+
+    /// Print a shell completion script to stdout.
+    ///
+    /// Redirect the output to a file in your shell's completions directory:
+    ///   dns completions fish > ~/.config/fish/completions/dns.fish
+    ///   dns completions bash > ~/.local/share/bash-completion/completions/dns
+    ///   dns completions zsh > ~/.zsh/completions/_dns
+    Completions { shell: Shell },
+
+    /// Print configured server IDs (used by shell completions)
+    #[command(name = "_servers", hide = true)]
+    ServerIds,
 }
 
 #[derive(Subcommand)]
