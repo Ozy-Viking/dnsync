@@ -69,6 +69,43 @@ impl TechnitiumClient {
         parse_response(resp).await
     }
 
+    /// GET that returns a plain-text body (e.g. zone file export).
+    pub async fn get_text(&self, path: &str, params: &[(&str, &str)]) -> Result<String> {
+        let url = format!("{}{}", self.base_url, path);
+        let span =
+            tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending GET (text)");
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(self.token.expose_for_auth())
+            .query(params)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "GET (text) failed");
+                Error::Network(e)
+            })?;
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
+        let status = resp.status();
+        if status.is_success() {
+            return resp.text().await.map_err(Error::Network);
+        }
+        let message = resp
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|b| {
+                b.get("errorMessage")
+                    .and_then(|m| m.as_str())
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+        Err(Error::Api { message })
+    }
+
     /// POST multipart/form-data with a zone file part.
     /// Query params carry the zone name and overwrite flags.
     pub async fn post_file(

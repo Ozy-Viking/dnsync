@@ -1,4 +1,4 @@
-use reqwest::{Client, Response};
+use reqwest::{Client, Response, multipart};
 use serde_json::Value;
 
 use crate::core::error::{Error, Result};
@@ -66,6 +66,64 @@ impl CloudflareClient {
         parse_response(resp).await
     }
 
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        file_name: String,
+        file_bytes: Vec<u8>,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let span =
+            tracing::debug_span!("http.post_multipart", path, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending POST (multipart)");
+
+        let file_part = multipart::Part::bytes(file_bytes)
+            .file_name(file_name)
+            .mime_str("text/plain")
+            .map_err(Error::Mime)?;
+
+        let form = multipart::Form::new().part("file", file_part);
+
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(self.token.expose_for_auth())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "POST (multipart) failed");
+                Error::Network(e)
+            })?;
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
+        parse_response(resp).await
+    }
+
+    pub async fn get_text(&self, path: &str, params: &[(&str, String)]) -> Result<String> {
+        let url = format!("{}{}", self.base_url, path);
+        let span =
+            tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
+        let _enter = span.enter();
+        tracing::debug!("sending GET (text)");
+
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(self.token.expose_for_auth())
+            .query(params)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "GET (text) failed");
+                Error::Network(e)
+            })?;
+        span.record("http.status", resp.status().as_u16());
+        tracing::debug!("received response");
+        parse_text_response(resp).await
+    }
+
     pub async fn delete(&self, path: &str) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let span = tracing::debug_span!("http.delete", path, http.status = tracing::field::Empty);
@@ -84,6 +142,30 @@ impl CloudflareClient {
         span.record("http.status", resp.status().as_u16());
         tracing::debug!("received response");
         parse_response(resp).await
+    }
+}
+
+async fn parse_text_response(resp: Response) -> Result<String> {
+    let status = resp.status();
+    if status.is_success() {
+        return resp.text().await.map_err(Error::Network);
+    }
+    let text = resp.text().await.unwrap_or_default();
+    let message = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|body| {
+            body.get("errors")
+                .and_then(|e| e.as_array())
+                .and_then(|a| a.first())
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or(text);
+    if status.as_u16() == 403 {
+        Err(Error::forbidden(message))
+    } else {
+        Err(Error::Api { message })
     }
 }
 

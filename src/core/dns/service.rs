@@ -134,17 +134,24 @@ pub trait ZoneImport {
     ) -> impl Future<Output = Result<Value>> + Send + 'a;
 }
 
+pub trait ZoneExport {
+    fn export_zone_file<'a>(
+        &'a self,
+        zone: &'a str,
+    ) -> impl Future<Output = Result<String>> + Send + 'a;
+}
+
 pub trait SettingsRead {
     fn get_settings(&self) -> impl Future<Output = Result<Value>> + Send + '_;
 }
 
 pub trait DnsRead:
-    DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead
+    DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport
 {
 }
 
 impl<T> DnsRead for T where
-    T: DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead
+    T: DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport
 {
 }
 

@@ -193,6 +193,29 @@ pub enum ZoneCmd {
         #[arg(long, default_value_t = false)]
         overwrite_soa_serial: bool,
     },
+    /// Export a zone as a BIND-format (RFC 1035) zone file
+    Export {
+        zone: String,
+        /// Write zone file to this path instead of stdout
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Copy a zone from one configured server to another
+    Transfer {
+        zone: String,
+        /// Source server ID (must be in config file)
+        #[arg(long)]
+        from: String,
+        /// Destination server ID (must be in config file)
+        #[arg(long)]
+        to: String,
+        /// Overwrite existing record sets in the destination for imported types (default: true)
+        #[arg(long, default_value_t = true)]
+        overwrite: bool,
+        /// Delete all existing records in the destination before importing (clean replace)
+        #[arg(long, default_value_t = false)]
+        overwrite_zone: bool,
+    },
 }
 
 // ─── Record subcommands ──────────────────────────────────────────────────────

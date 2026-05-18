@@ -8,7 +8,7 @@ fn main() {}
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use dnslib::{
-    cli::{self, RecordCmd},
+    cli::{self, RecordCmd, ZoneCmd},
     control_plane::{config, policy},
     core::{dns::service::DnsService, error, secret::ApiToken},
     mcp::server,
@@ -215,6 +215,31 @@ async fn run(cli: Cli) -> i32 {
             )
             .await;
         }
+    }
+
+    if let Command::Zone(ZoneCmd::Transfer {
+        zone,
+        from,
+        to,
+        overwrite,
+        overwrite_zone,
+    }) = &cli.command
+    {
+        if cli.token.is_some() || cli.base_url.is_some() {
+            return render_error(Error::parse(
+                "zone transfer does not accept --token/--base-url; \
+                 configure credentials per server via config file or environment variables",
+            ));
+        }
+        return run_zone_transfer(
+            app_config.as_ref(),
+            zone,
+            from,
+            to,
+            *overwrite,
+            *overwrite_zone,
+        )
+        .await;
     }
 
     let policy = match cli_policy(&cli, app_config.as_ref()) {
@@ -637,6 +662,135 @@ fn resolve_cloudflare_credentials(
         .map(ApiToken::new)?;
 
     Ok((base_url, token))
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+async fn run_zone_transfer(
+    app_config: Option<&config::AppConfig>,
+    zone: &str,
+    from_id: &str,
+    to_id: &str,
+    overwrite: bool,
+    overwrite_zone: bool,
+) -> i32 {
+    let Some(cfg) = app_config else {
+        return render_error(Error::parse(
+            "zone transfer requires a config file with --from and --to server entries",
+        ));
+    };
+
+    let from_server = match cfg.selected_server(Some(from_id)) {
+        Ok(s) => s,
+        Err(e) => return render_error(e),
+    };
+    let to_server = match cfg.selected_server(Some(to_id)) {
+        Ok(s) => s,
+        Err(e) => return render_error(e),
+    };
+
+    eprintln!("Exporting '{zone}' from '{from_id}' ({:?})…", from_server.vendor);
+    let zone_file = match server_export_zone(from_server, zone).await {
+        Ok(text) => text,
+        Err(e) => return render_error(e),
+    };
+
+    eprintln!(
+        "Importing {} bytes into '{to_id}' ({:?})…",
+        zone_file.len(),
+        to_server.vendor
+    );
+    let file_name = format!("{zone}.txt");
+    match server_import_zone(
+        to_server,
+        zone,
+        file_name,
+        zone_file.into_bytes(),
+        overwrite,
+        overwrite_zone,
+    )
+    .await
+    {
+        Ok(result) => {
+            if !result.is_null() {
+                match serde_json::to_string_pretty(&result) {
+                    Ok(pretty) => println!("{pretty}"),
+                    Err(e) => return render_error(Error::parse(format!("serialise error: {e}"))),
+                }
+            }
+            0
+        }
+        Err(e) => render_error(e),
+    }
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+async fn server_export_zone(
+    server: &config::DnsServerConfig,
+    zone: &str,
+) -> Result<String, Error> {
+    use dnslib::core::dns::service::ZoneExport;
+    match server.vendor {
+        #[cfg(feature = "technitium")]
+        config::VendorKind::Technitium => {
+            use dnslib::vendors::technitium::client::TechnitiumClient;
+            let token = server.resolved_token(None)?;
+            let client = TechnitiumClient::new(server.resolved_base_url(None), token)?;
+            client.export_zone_file(zone).await
+        }
+        #[cfg(feature = "cloudflare")]
+        config::VendorKind::Cloudflare => {
+            use dnslib::vendors::cloudflare::client::CloudflareClient;
+            let token = server.resolved_token(None)?;
+            let client = CloudflareClient::new(server.resolved_base_url(None), token)?;
+            client.export_zone_file(zone).await
+        }
+        #[cfg(feature = "pangolin")]
+        config::VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone export")),
+        #[allow(unreachable_patterns)]
+        _ => Err(Error::parse(format!(
+            "server '{}' has unsupported vendor in this build",
+            server.id
+        ))),
+    }
+}
+
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+async fn server_import_zone(
+    server: &config::DnsServerConfig,
+    zone: &str,
+    file_name: String,
+    file_bytes: Vec<u8>,
+    overwrite: bool,
+    overwrite_zone: bool,
+) -> Result<serde_json::Value, Error> {
+    use dnslib::core::dns::service::ZoneImport;
+    match server.vendor {
+        #[cfg(feature = "technitium")]
+        config::VendorKind::Technitium => {
+            use dnslib::vendors::technitium::client::TechnitiumClient;
+            let token = server.resolved_token(None)?;
+            let client = TechnitiumClient::new(server.resolved_base_url(None), token)?;
+            client
+                .import_zone_file(zone, file_name, file_bytes, overwrite, overwrite_zone, false)
+                .await
+        }
+        #[cfg(feature = "cloudflare")]
+        config::VendorKind::Cloudflare => {
+            use dnslib::vendors::cloudflare::client::CloudflareClient;
+            let token = server.resolved_token(None)?;
+            let client = CloudflareClient::new(server.resolved_base_url(None), token)?;
+            client
+                .import_zone_file(zone, file_name, file_bytes, overwrite, overwrite_zone, false)
+                .await
+        }
+        #[cfg(feature = "pangolin")]
+        config::VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone import")),
+        #[allow(unreachable_patterns)]
+        _ => Err(Error::parse(format!(
+            "server '{}' has unsupported vendor in this build",
+            server.id
+        ))),
+    }
 }
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
