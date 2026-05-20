@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     env,
     net::IpAddr,
     path::{Path, PathBuf},
@@ -93,10 +94,10 @@ struct DnsServerConfigRaw {
     #[serde(default)]
     mcp: McpPermissions,
     // Flat shorthands — merged into `mcp` on conversion.
-    /// New flat shorthand: `mcp_access = "read" | "write" | "delete"`.
+    /// New flat shorthand: `mcp_access = ["read", "write", "delete"]` (array of operations).
     #[serde(default)]
-    mcp_access: Option<PolicyRule>,
-    /// Deprecated flat shorthand kept for backward compatibility; prefer `mcp_access = "read"`.
+    mcp_access: Option<Vec<PolicyRule>>,
+    /// Deprecated flat shorthand kept for backward compatibility; prefer `mcp_access = ["read"]`.
     #[serde(default)]
     mcp_readonly: bool,
     #[serde(default)]
@@ -111,13 +112,29 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
                 zones.push(z);
             }
         }
-        // Flat shorthand resolution: mcp_access wins over deprecated mcp_readonly;
-        // take the most restrictive (minimum) of the flat shorthand and nested mcp.access.
+        // Flat shorthand resolution: mcp_access wins over deprecated mcp_readonly.
+        // Backward compat: mcp_readonly = true maps to [Read].
         let flat = raw
             .mcp_access
-            .or_else(|| raw.mcp_readonly.then_some(PolicyRule::Read));
-        let access = match flat {
-            Some(a) => a.min(raw.mcp.access),
+            .or_else(|| raw.mcp_readonly.then_some(vec![PolicyRule::Read]));
+        // Final access = intersection of flat set and configured mcp.access set,
+        // or mcp.access if no flat shorthand.
+        let access: Vec<PolicyRule> = match flat {
+            Some(flat_rules) => {
+                let flat_set: HashSet<PolicyRule> = flat_rules.into_iter().collect();
+                let config_set: HashSet<PolicyRule> = raw.mcp.access.into_iter().collect();
+                let mut intersection: Vec<PolicyRule> = flat_set
+                    .intersection(&config_set)
+                    .cloned()
+                    .collect();
+                // Sort for determinism: Read, Write, Delete order
+                intersection.sort_by_key(|r| match r {
+                    PolicyRule::Read => 0,
+                    PolicyRule::Write => 1,
+                    PolicyRule::Delete => 2,
+                });
+                intersection
+            }
             None => raw.mcp.access,
         };
 
@@ -137,20 +154,41 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+fn default_access() -> Vec<PolicyRule> {
+    vec![PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpPermissions {
-    /// Maximum permitted operation level (default: full access).
-    #[serde(default)]
-    pub access: PolicyRule,
+    /// Permitted operation classes (default: all three).
+    #[serde(default = "default_access")]
+    pub access: Vec<PolicyRule>,
 
     #[serde(default)]
     pub allowed_zones: Vec<String>,
 }
 
+impl Default for McpPermissions {
+    fn default() -> Self {
+        Self {
+            access: default_access(),
+            allowed_zones: Vec::new(),
+        }
+    }
+}
+
 impl McpPermissions {
     fn is_default(&self) -> bool {
-        self.access == PolicyRule::default() && self.allowed_zones.is_empty()
+        let access_set: HashSet<&PolicyRule> = self.access.iter().collect();
+        let all_three: HashSet<&PolicyRule> = [
+            &PolicyRule::Read,
+            &PolicyRule::Write,
+            &PolicyRule::Delete,
+        ]
+        .into_iter()
+        .collect();
+        access_set == all_three && self.allowed_zones.is_empty()
     }
 }
 
@@ -350,11 +388,15 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         tbl["org_id"] = value(v.as_str());
     }
 
-    tbl["mcp_access"] = value(match server.mcp.access {
-        PolicyRule::Read => "read",
-        PolicyRule::Write => "write",
-        PolicyRule::Delete => "delete",
-    });
+    let mut access_arr = Array::new();
+    for rule in &server.mcp.access {
+        access_arr.push(match rule {
+            PolicyRule::Read => "read",
+            PolicyRule::Write => "write",
+            PolicyRule::Delete => "delete",
+        });
+    }
+    tbl["mcp_access"] = value(access_arr);
     let mut zones = Array::new();
     for zone in &server.mcp.allowed_zones {
         zones.push(zone.as_str());
@@ -654,7 +696,7 @@ mod tests {
                 token = "home-token"
 
                 [servers.mcp]
-                access = "read"
+                access = ["read"]
                 allowed_zones = ["example.com", "internal.lan"]
 
                 [[servers]]
@@ -675,7 +717,7 @@ mod tests {
         assert_eq!(home.id, "home");
         assert_eq!(home.vendor, VendorKind::Technitium);
         assert_eq!(home.base_url.as_deref(), Some("http://home.local:5380"));
-        assert_eq!(home.mcp.access, PolicyRule::Read);
+        assert_eq!(home.mcp.access, vec![PolicyRule::Read]);
         assert_eq!(home.mcp.allowed_zones, ["example.com", "internal.lan"]);
     }
 
@@ -744,7 +786,11 @@ mod tests {
             Some("DNSYNC_TECHNITIUM_API_TOKEN")
         );
         assert!(server.token.is_none());
-        assert_eq!(server.mcp.access, PolicyRule::Delete);
+        {
+            let access_set: HashSet<&PolicyRule> = server.mcp.access.iter().collect();
+            let all_three: HashSet<&PolicyRule> = [&PolicyRule::Read, &PolicyRule::Write, &PolicyRule::Delete].into_iter().collect();
+            assert_eq!(access_set, all_three, "default access should have all three rules");
+        }
         assert!(server.mcp.allowed_zones.is_empty());
 
         // Verify the written file round-trips and uses token_env, not token
@@ -932,7 +978,11 @@ mod tests {
             Some("DNSYNC_TECHNITIUM_API_TOKEN")
         );
         assert!(server.token.is_none());
-        assert_eq!(server.mcp.access, PolicyRule::Delete);
+        {
+            let access_set: HashSet<&PolicyRule> = server.mcp.access.iter().collect();
+            let all_three: HashSet<&PolicyRule> = [&PolicyRule::Read, &PolicyRule::Write, &PolicyRule::Delete].into_iter().collect();
+            assert_eq!(access_set, all_three, "starter config access should have all three rules");
+        }
         assert!(server.mcp.allowed_zones.is_empty());
     }
 

@@ -1,4 +1,4 @@
-use inquire::{Select, Text};
+use inquire::{MultiSelect, Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
@@ -91,26 +91,19 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
             .value
     };
 
-    let access = {
+    let access: Vec<PolicyRule> = {
         let choices = vec![
-            AccessChoice {
-                rule: PolicyRule::Delete,
-                label: "delete (full access)",
-            },
-            AccessChoice {
-                rule: PolicyRule::Write,
-                label: "write  (no deletes)",
-            },
-            AccessChoice {
-                rule: PolicyRule::Read,
-                label: "read   (read-only)",
-            },
+            AccessChoice { rule: PolicyRule::Read,   label: "read   (list/export/stats/settings)" },
+            AccessChoice { rule: PolicyRule::Write,  label: "write  (create/update/import/flush)" },
+            AccessChoice { rule: PolicyRule::Delete, label: "delete (delete zones/records/cache)" },
         ];
-        Select::new("MCP access level:", choices)
-            .with_help_message("Maximum operation level permitted for MCP tools on this server")
+        let defaults: Vec<usize> = (0..choices.len()).collect();
+        let chosen = MultiSelect::new("MCP allowed operations:", choices)
+            .with_default(&defaults)
+            .with_help_message("Select which operations are permitted for MCP tools on this server")
             .prompt()
-            .map_err(wizard_err)?
-            .rule
+            .map_err(wizard_err)?;
+        chosen.into_iter().map(|c| c.rule).collect()
     };
 
     let mut allowed_zones: Vec<String> = Vec::new();

@@ -24,7 +24,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use cli::{Cli, Command, ConfigCmd};
 use error::Error;
-use policy::Policy;
+use policy::{Policy, PolicyRule};
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use server::DnsServer;
 
@@ -110,8 +110,18 @@ async fn run(cli: Cli) -> i32 {
                         },
                     }
                 } else {
-                    match cli::interactive::run_add_wizard() {
+                    let existing_ids: Vec<String> =
+                        config::AppConfig::load_if_exists(cli.config.clone())
+                            .ok()
+                            .flatten()
+                            .map(|c| c.servers.into_iter().map(|s| s.id).collect())
+                            .unwrap_or_default();
+                    match cli::interactive::run_add_wizard(&existing_ids) {
                         Ok(s) => s,
+                        Err(e) if e.to_string() == "cancelled" => {
+                            println!("bye felicia");
+                            return 0;
+                        }
                         Err(e) => {
                             eprintln!("Error: {e:?}");
                             return 1;
@@ -250,14 +260,14 @@ async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
 ) -> i32 {
     match cli.command {
         Command::Mcp => {
-            match policy.access {
-                policy::PolicyRule::Read => {
-                    tracing::info!("MCP server starting in read-only mode")
-                }
-                policy::PolicyRule::Write => {
-                    tracing::info!("MCP server starting in write mode (deletes disabled)")
-                }
-                policy::PolicyRule::Delete => {}
+            if !policy.allowed.contains(&PolicyRule::Read) {
+                tracing::info!("MCP server: read operations disabled");
+            }
+            if !policy.allowed.contains(&PolicyRule::Write) {
+                tracing::info!("MCP server: write operations disabled");
+            }
+            if !policy.allowed.contains(&PolicyRule::Delete) {
+                tracing::info!("MCP server: delete operations disabled");
             }
             if let Some(ref zones) = policy.allowed_zones {
                 tracing::info!("MCP server zone restriction: {}", zones.join(", "));
@@ -393,7 +403,7 @@ mod tests {
             all: false,
             base_url: None,
             token: Some("token".to_string()),
-            access: None,
+            access: vec![],
             allow_zone,
             command: Command::Mcp,
         }
@@ -421,7 +431,7 @@ mod tests {
             all: false,
             base_url: None,
             token: None,
-            access: None,
+            access: vec![],
             allow_zone: Vec::new(),
             command: Command::Config(ConfigCmd::Init { force }),
         }
