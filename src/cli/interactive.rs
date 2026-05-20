@@ -1,4 +1,4 @@
-use inquire::{MultiSelect, Select, Text};
+use inquire::{InquireError, MultiSelect, Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
@@ -108,18 +108,21 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
 
     let mut allowed_zones: Vec<String> = Vec::new();
     loop {
-        let help = if allowed_zones.is_empty() {
-            "Restrict zone-targeting tools to specific zones; subdomains are also permitted. Leave empty to skip.".to_string()
-        } else {
-            format!(
-                "Added: {} — enter another, or leave empty to finish",
-                allowed_zones.join(", ")
-            )
-        };
-        let zone = Text::new("Allowed zone:")
-            .with_help_message(&help)
+        if !allowed_zones.is_empty() {
+            println!("  Zones so far: {}", allowed_zones.join(", "));
+        }
+        let zone = match Text::new("Add allowed zone (leave empty to finish):")
+            .with_help_message("Subdomains of an allowed zone are also permitted")
             .prompt()
-            .map_err(wizard_err)?;
+        {
+            Ok(z) => z,
+            // Esc or Ctrl+C while adding zones = done, not an error
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                println!("  bye felicia");
+                break;
+            }
+            Err(e) => return Err(wizard_err(e)),
+        };
         if zone.is_empty() {
             break;
         }
