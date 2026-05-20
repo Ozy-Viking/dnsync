@@ -108,10 +108,16 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
 
     let mut allowed_zones: Vec<String> = Vec::new();
     loop {
-        let zone = Text::new("Allowed zone (leave empty to finish):")
-            .with_help_message(
-                "Restrict zone-targeting MCP tools to this zone; subdomains are also permitted",
+        let help = if allowed_zones.is_empty() {
+            "Restrict zone-targeting tools to specific zones; subdomains are also permitted. Leave empty to skip.".to_string()
+        } else {
+            format!(
+                "Added: {} — enter another, or leave empty to finish",
+                allowed_zones.join(", ")
             )
+        };
+        let zone = Text::new("Allowed zone:")
+            .with_help_message(&help)
             .prompt()
             .map_err(wizard_err)?;
         if zone.is_empty() {
