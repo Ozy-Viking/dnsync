@@ -373,8 +373,11 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     if let Some(ref v) = server.token_env {
         tbl["token_env"] = value(v.as_str());
     }
-    if let Some(ref v) = server.token {
-        tbl["token"] = value(v.as_str());
+    match server.token.as_deref() {
+        Some(t) => tbl["token"] = value(t),
+        // Write an empty placeholder so the field is visible in the config file.
+        None if server.token_env.is_none() => tbl["token"] = value(""),
+        None => {}
     }
     if let Some(ref v) = server.org_id {
         tbl["org_id"] = value(v.as_str());
@@ -565,6 +568,7 @@ impl DnsServerConfig {
             });
         }
 
+        // Treat an empty string the same as absent — it's an unfilled placeholder.
         self.token
             .as_deref()
             .filter(|t| !t.is_empty())
