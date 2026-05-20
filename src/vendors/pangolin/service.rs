@@ -361,6 +361,7 @@ impl PangolinClient {
             .collect();
 
         let zone_info = ZoneInfo {
+            id: Some(domain.domain_id.clone()),
             name: domain.base_domain.clone(),
             zone_type: format!("Pangolin/{}", domain.domain_type),
             disabled: domain.failed || !domain.verified,
@@ -408,7 +409,10 @@ impl ZoneRead for PangolinClient {
         .await
     }
 
-    #[instrument(skip(self, options), fields(vendor = "pangolin", operation = "list_records"))]
+    #[instrument(
+        skip(self, options),
+        fields(vendor = "pangolin", operation = "list_records")
+    )]
     async fn list_records(
         &self,
         domain: &str,
@@ -434,9 +438,14 @@ impl ZoneRead for PangolinClient {
                 })?;
             // When all_subdomains is set, skip the name filter so the caller can
             // filter the full zone record set for the target domain + its subdomains.
-            let name_filter = if options.all_subdomains { None } else { Some(domain) };
-            let zone_records =
-                self.fetch_zone_records(matching, name_filter, options).await?;
+            let name_filter = if options.all_subdomains {
+                None
+            } else {
+                Some(domain)
+            };
+            let zone_records = self
+                .fetch_zone_records(matching, name_filter, options)
+                .await?;
             Ok(ListRecordsResponse {
                 zones: vec![zone_records],
             })
@@ -444,9 +453,7 @@ impl ZoneRead for PangolinClient {
             // No zone specified — list records for every domain in the org.
             let mut all_zones = Vec::with_capacity(domains.len());
             for domain_entry in &domains {
-                let zone_records = self
-                    .fetch_zone_records(domain_entry, None, options)
-                    .await?;
+                let zone_records = self.fetch_zone_records(domain_entry, None, options).await?;
                 all_zones.push(zone_records);
             }
             Ok(ListRecordsResponse { zones: all_zones })
@@ -481,7 +488,10 @@ impl ZoneWrite for PangolinClient {
 // ─── RecordWrite (unsupported) ────────────────────────────────────────────────
 
 impl RecordWrite for PangolinClient {
-    #[instrument(skip(self, _record), fields(vendor = "pangolin", operation = "add_record"))]
+    #[instrument(
+        skip(self, _record),
+        fields(vendor = "pangolin", operation = "add_record")
+    )]
     async fn add_record(
         &self,
         _zone: &str,
@@ -492,7 +502,10 @@ impl RecordWrite for PangolinClient {
         Err(Error::unsupported("Pangolin", "record add"))
     }
 
-    #[instrument(skip(self, _type_params), fields(vendor = "pangolin", operation = "delete_record"))]
+    #[instrument(
+        skip(self, _type_params),
+        fields(vendor = "pangolin", operation = "delete_record")
+    )]
     async fn delete_record(
         &self,
         _zone: &str,
@@ -513,7 +526,10 @@ impl CacheRead for PangolinClient {
 }
 
 impl CacheWrite for PangolinClient {
-    #[instrument(skip(self), fields(vendor = "pangolin", operation = "delete_cache_zone"))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "pangolin", operation = "delete_cache_zone")
+    )]
     async fn delete_cache_zone(&self, _domain: &str) -> Result<Value> {
         Err(Error::unsupported("Pangolin", "cache"))
     }
@@ -572,7 +588,10 @@ impl AccessListWrite for PangolinClient {
 // ─── ZoneImport / ZoneExport (unsupported) ───────────────────────────────────
 
 impl ZoneImport for PangolinClient {
-    #[instrument(skip(self, _file_bytes), fields(vendor = "pangolin", operation = "import_zone_file"))]
+    #[instrument(
+        skip(self, _file_bytes),
+        fields(vendor = "pangolin", operation = "import_zone_file")
+    )]
     async fn import_zone_file(
         &self,
         _zone: &str,

@@ -122,6 +122,8 @@ pub struct ZoneRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ZoneInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub name: String,
     #[serde(rename = "type")]
     pub zone_type: String,
@@ -171,8 +173,13 @@ impl<'de> serde::Deserialize<'de> for ListRecordsResponse {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum Repr {
-            Multi { zones: Vec<ZoneRecords> },
-            Single { zone: ZoneInfo, records: Vec<ZoneRecord> },
+            Multi {
+                zones: Vec<ZoneRecords>,
+            },
+            Single {
+                zone: ZoneInfo,
+                records: Vec<ZoneRecord>,
+            },
         }
         match Repr::deserialize(d)? {
             Repr::Multi { zones } => Ok(Self { zones }),
@@ -196,13 +203,16 @@ impl ListRecordsResponse {
             .get("response")
             .ok_or_else(|| Error::parse("list_records response missing 'response' key"))?;
 
-        let zone: ZoneInfo = serde_json::from_value(
+        let mut zone: ZoneInfo = serde_json::from_value(
             response
                 .get("zone")
                 .ok_or_else(|| Error::parse("list_records response missing 'response.zone'"))?
                 .clone(),
         )
         .map_err(|e| Error::parse(format!("could not deserialize zone info: {e}")))?;
+        if zone.id.is_none() {
+            zone.id = Some(zone.name.clone());
+        }
 
         let raw_records = response
             .get("records")
@@ -424,8 +434,14 @@ mod tests {
 
         let records = &result.zones[0].records;
         assert_eq!(records.len(), 3);
-        assert!(matches!(records[0].parsed, Some(AnyRecordData::Writable(_))));
-        assert!(matches!(records[1].parsed, Some(AnyRecordData::ReadOnly(_))));
+        assert!(matches!(
+            records[0].parsed,
+            Some(AnyRecordData::Writable(_))
+        ));
+        assert!(matches!(
+            records[1].parsed,
+            Some(AnyRecordData::ReadOnly(_))
+        ));
         assert!(records[2].parsed.is_none());
     }
 
@@ -518,6 +534,7 @@ mod tests {
 
     fn make_zone(name: &str) -> ZoneInfo {
         ZoneInfo {
+            id: None,
             name: name.to_string(),
             zone_type: "Primary".to_string(),
             disabled: false,
@@ -530,7 +547,10 @@ mod tests {
         let resp = ListRecordsResponse::single(make_zone("example.com"), vec![]);
         let v = serde_json::to_value(&resp).unwrap();
         assert!(v.get("zone").is_some(), "should have top-level 'zone'");
-        assert!(v.get("records").is_some(), "should have top-level 'records'");
+        assert!(
+            v.get("records").is_some(),
+            "should have top-level 'records'"
+        );
         assert!(v.get("zones").is_none(), "should NOT have 'zones' wrapper");
         assert_eq!(v["zone"]["name"], "example.com");
     }
@@ -539,8 +559,14 @@ mod tests {
     fn multi_zone_serializes_with_zones_array() {
         let resp = ListRecordsResponse {
             zones: vec![
-                ZoneRecords { zone: make_zone("a.example.com"), records: vec![] },
-                ZoneRecords { zone: make_zone("b.example.com"), records: vec![] },
+                ZoneRecords {
+                    zone: make_zone("a.example.com"),
+                    records: vec![],
+                },
+                ZoneRecords {
+                    zone: make_zone("b.example.com"),
+                    records: vec![],
+                },
             ],
         };
         let v = serde_json::to_value(&resp).unwrap();
@@ -562,8 +588,14 @@ mod tests {
     fn multi_zone_round_trips_through_serde() {
         let original = ListRecordsResponse {
             zones: vec![
-                ZoneRecords { zone: make_zone("a.example.com"), records: vec![] },
-                ZoneRecords { zone: make_zone("b.example.com"), records: vec![] },
+                ZoneRecords {
+                    zone: make_zone("a.example.com"),
+                    records: vec![],
+                },
+                ZoneRecords {
+                    zone: make_zone("b.example.com"),
+                    records: vec![],
+                },
             ],
         };
         let json = serde_json::to_value(&original).unwrap();

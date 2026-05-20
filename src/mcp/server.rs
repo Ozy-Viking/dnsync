@@ -600,7 +600,10 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         Parameters(p): Parameters<StatsParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_get_stats", "MCP tool invoked");
-        tracing::debug!(stats_type = p.stats_type.as_deref().unwrap_or("LastDay"), "tool invoked");
+        tracing::debug!(
+            stats_type = p.stats_type.as_deref().unwrap_or("LastDay"),
+            "tool invoked"
+        );
         self.client
             .get_stats(p.stats_type.as_deref().unwrap_or("LastDay"))
             .await

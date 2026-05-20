@@ -34,11 +34,11 @@ src/
   core/secret.rs            ← ApiToken wrapper                (do not modify)
   control_plane/config.rs   ← VendorKind enum + DnsServerConfig  (YOU ADD HERE)
   vendors/mod.rs            ← feature-gated vendor modules       (YOU ADD HERE)
+  vendors/runtime.rs        ← cross-vendor runtime dispatch      (YOU ADD HERE)
   vendors/<yourvendor>/
     mod.rs                  ← module declarations  (YOU CREATE)
     client.rs               ← HTTP transport       (YOU CREATE)
     service.rs              ← trait implementations (YOU CREATE)
-  main.rs                   ← credential resolution + dispatch  (YOU ADD HERE)
 Cargo.toml                  ← feature flag                       (YOU ADD HERE)
 ```
 
@@ -83,7 +83,7 @@ The enum must support:
 
 - config deserialization (`serde(rename_all = "lowercase")`)
 - CLI selection (`clap::ValueEnum`)
-- runtime dispatch (match arms in `main.rs`)
+- runtime dispatch (match arms in `vendors/runtime.rs`)
 - case-insensitive user-facing naming
 - interactive setup wizard (see section 13)
 
@@ -157,8 +157,11 @@ Resolution order:
 
 ## 4. Credential Resolution
 
-Each vendor needs a `resolve_<vendor>_credentials` function in `main.rs`, gated with
-`#[cfg(feature = "newvendor")]`. Follow the existing Technitium or Pangolin pattern exactly.
+Each vendor needs credential construction in its own module, gated by that module's feature.
+For `newvendor`, put this in `src/vendors/newvendor/mod.rs`. Do not add vendor-specific
+credential resolution to `main.rs` or `src/vendors/runtime.rs`; the binary should only
+request a `VendorClient` from the vendor runtime, and the runtime should delegate
+construction to `vendors::<vendor>`.
 
 Resolution order for the token:
 
@@ -635,7 +638,8 @@ targets/sites/health → vendor metadata in data
 
 ## 10. Runtime Dispatch
 
-Add credential resolution and a dispatch branch in `main.rs`.
+Add credential resolution in `src/vendors/newvendor/mod.rs`, then add dispatch branches in
+`src/vendors/runtime.rs` that call those vendor-local constructors.
 
 Update every `#[cfg(any(feature = "technitium", feature = "pangolin"))]` guard to include
 the new feature:
@@ -651,23 +655,61 @@ Update the `compile_error!` guard:
 compile_error!("No DNS vendor feature is enabled...");
 ```
 
-Add a dispatch branch in `run()`:
+Add a dispatch branch in `VendorClient::from_selected_server()`:
 
 ```rust
 #[cfg(feature = "newvendor")]
-config::VendorKind::NewVendor => {
-    use dnslib::vendors::newvendor::client::NewVendorClient;
-    let (base_url, token) = match resolve_newvendor_credentials(&cli, app_config.as_ref()) {
-        Ok(v) => v,
-        Err(e) => return render_error(e),
-    };
-    let client = match NewVendorClient::new(base_url, token) {
-        Ok(c) => c,
-        Err(e) => return render_error(e),
-    };
-    run_with_client(cli, client, policy).await
+VendorKind::NewVendor => Ok(Self::NewVendor(
+    crate::vendors::newvendor::client_from_server(server, overrides)?,
+)),
+```
+
+Add a `VendorClient` enum variant:
+
+```rust
+#[cfg(feature = "newvendor")]
+NewVendor(crate::vendors::newvendor::client::NewVendorClient),
+```
+
+Add constructor helpers in `src/vendors/newvendor/mod.rs`:
+
+```rust
+#[cfg(feature = "newvendor")]
+pub fn client_from_server(
+    server: &DnsServerConfig,
+    overrides: ClientOverrides<'_>,
+) -> Result<client::NewVendorClient> {
+    let base_url = overrides
+        .base_url
+        .map(ToOwned::to_owned)
+        .or_else(|| std::env::var("DNSYNC_NEWVENDOR_BASE_URL").ok())
+        .or_else(|| server.base_url.clone())
+        .unwrap_or_else(|| config::NEWVENDOR_DEFAULT_BASE_URL.to_string());
+    let token = overrides
+        .token
+        .map(ToOwned::to_owned)
+        .or_else(|| std::env::var("DNSYNC_NEWVENDOR_API_TOKEN").ok())
+        .or_else(|| server.token_env.as_ref().and_then(|k| std::env::var(k).ok()))
+        .or_else(|| server.token.clone())
+        .ok_or_else(|| Error::parse("NewVendor API token is required"))
+        .map(ApiToken::new)?;
+    client::NewVendorClient::new(base_url, token)
 }
 ```
+
+Then call that helper from `VendorClient`:
+
+```rust
+#[cfg(feature = "newvendor")]
+VendorKind::NewVendor => Ok(Self::NewVendor(
+    crate::vendors::newvendor::client_from_server(server, overrides)?,
+)),
+```
+
+If the vendor supports zone import/export, also add explicit branches in
+`export_zone_for_server()` and `import_zone_for_server()`. Return
+`Error::unsupported("NewVendor", "zone export")` or `zone import` for unsupported operations
+before resolving credentials.
 
 ---
 
@@ -797,8 +839,8 @@ For read-only vendors, tests should prove write operations fail clearly and safe
 [ ] Add match arm in resolved_location()
 [ ] Add match arm in append_server_entry()
 [ ] Add vendor-specific env vars (DNSYNC_NEWVENDOR_API_TOKEN, DNSYNC_NEWVENDOR_BASE_URL)
-[ ] Add credential resolver function in main.rs (feature-gated)
-[ ] Update all cfg(any(...)) guards in main.rs
+[ ] Add vendor constructor/credential helper in vendors/newvendor/mod.rs (feature-gated)
+[ ] Update all cfg(any(...)) guards in main.rs and vendors/runtime.rs
 [ ] Update compile_error! guards in main.rs and lib.rs
 [ ] Add vendor module declaration in vendors/mod.rs (feature-gated)
 [ ] Create vendors/newvendor/mod.rs
@@ -810,7 +852,7 @@ For read-only vendors, tests should prove write operations fail clearly and safe
 [ ] Set VendorCapabilities correctly
 [ ] Normalize records by default (ZoneRecord with correct rData shape)
 [ ] Preserve vendor metadata in normalized output data field
-[ ] Add runtime dispatch branch in main.rs
+[ ] Add runtime dispatch branch and VendorClient enum variant in vendors/runtime.rs
 [ ] Update CLI help text
 [ ] Add VendorChoice entry in src/cli/interactive.rs run_add_wizard()
 [ ] Extend org_id prompt condition in interactive.rs if the vendor requires an org/account ID

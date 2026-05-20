@@ -16,7 +16,9 @@ pub fn record_content(record_type: &str, data: &serde_json::Value) -> String {
         "TXT" => str_field(data, "text"),
         "MX" => format!(
             "{} {}",
-            data.get("preference").and_then(|v| v.as_u64()).unwrap_or(10),
+            data.get("preference")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(10),
             str_field(data, "exchange"),
         ),
         "SRV" => format!(
@@ -54,14 +56,18 @@ pub fn record_content(record_type: &str, data: &serde_json::Value) -> String {
         ),
         "HTTPS" | "SVCB" => format!(
             "{} {}",
-            data.get("svcPriority").and_then(|v| v.as_u64()).unwrap_or(1),
+            data.get("svcPriority")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1),
             str_field(data, "svcTargetName"),
         ),
         "FWD" => str_field(data, "forwarder"),
         "NAPTR" => format!(
             "{} {} \"{}\" \"{}\" \"{}\" {}",
             data.get("naptrOrder").and_then(|v| v.as_u64()).unwrap_or(0),
-            data.get("naptrPreference").and_then(|v| v.as_u64()).unwrap_or(0),
+            data.get("naptrPreference")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
             str_field(data, "naptrFlags"),
             str_field(data, "naptrServices"),
             str_field(data, "naptrRegexp"),
@@ -151,11 +157,7 @@ pub fn print_records_table(response: &ListRecordsResponse) {
 
                 println!(
                     "{:<name_w$}  {:<type_w$}  {:>ttl_w$}  {}{}",
-                    record.name,
-                    record.record_type,
-                    record.ttl,
-                    content,
-                    disabled,
+                    record.name, record.record_type, record.ttl, content, disabled,
                 );
             }
         }
@@ -176,7 +178,10 @@ mod tests {
 
     #[test]
     fn a_record_content() {
-        assert_eq!(record_content("A", &json!({"ipAddress": "1.2.3.4"})), "1.2.3.4");
+        assert_eq!(
+            record_content("A", &json!({"ipAddress": "1.2.3.4"})),
+            "1.2.3.4"
+        );
     }
 
     #[test]
@@ -198,7 +203,10 @@ mod tests {
     #[test]
     fn mx_record_content_includes_preference() {
         assert_eq!(
-            record_content("MX", &json!({"preference": 10, "exchange": "mail.example.com"})),
+            record_content(
+                "MX",
+                &json!({"preference": 10, "exchange": "mail.example.com"})
+            ),
             "10 mail.example.com"
         );
     }
@@ -222,7 +230,10 @@ mod tests {
     #[test]
     fn ns_record_content() {
         assert_eq!(
-            record_content("NS", &json!({"nameServer": "ns1.example.com", "glue": null})),
+            record_content(
+                "NS",
+                &json!({"nameServer": "ns1.example.com", "glue": null})
+            ),
             "ns1.example.com"
         );
     }
@@ -241,7 +252,10 @@ mod tests {
     #[test]
     fn caa_record_content() {
         assert_eq!(
-            record_content("CAA", &json!({"flags": 0, "tag": "issue", "value": "letsencrypt.org"})),
+            record_content(
+                "CAA",
+                &json!({"flags": 0, "tag": "issue", "value": "letsencrypt.org"})
+            ),
             "0 issue \"letsencrypt.org\""
         );
     }

@@ -14,6 +14,13 @@
 
 use crate::core::error::{Error, Result};
 
+/// TODO: Implement this into Policy
+pub enum PolicyRule {
+    Read,
+    Write,
+    Delete,
+}
+
 /// Governs what the MCP server is permitted to do.
 #[derive(Debug, Clone, Default)]
 pub struct Policy {

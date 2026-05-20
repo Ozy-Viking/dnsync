@@ -282,8 +282,10 @@ fn normalize_rdata(record_type: &str, content: &str, cf_record: &Value) -> Value
             if let Some(data) = cf_record.get("data") {
                 let usage = data.get("usage").and_then(|u| u.as_u64()).unwrap_or(3);
                 let selector = data.get("selector").and_then(|s| s.as_u64()).unwrap_or(1);
-                let matching_type =
-                    data.get("matching_type").and_then(|m| m.as_u64()).unwrap_or(1);
+                let matching_type = data
+                    .get("matching_type")
+                    .and_then(|m| m.as_u64())
+                    .unwrap_or(1);
                 let certificate = data
                     .get("certificate")
                     .and_then(|c| c.as_str())
@@ -301,10 +303,11 @@ fn normalize_rdata(record_type: &str, content: &str, cf_record: &Value) -> Value
         "DS" => {
             if let Some(data) = cf_record.get("data") {
                 let key_tag = data.get("key_tag").and_then(|k| k.as_u64()).unwrap_or(0);
-                let algorithm =
-                    data.get("algorithm").and_then(|a| a.as_u64()).unwrap_or(13);
-                let digest_type =
-                    data.get("digest_type").and_then(|d| d.as_u64()).unwrap_or(2);
+                let algorithm = data.get("algorithm").and_then(|a| a.as_u64()).unwrap_or(13);
+                let digest_type = data
+                    .get("digest_type")
+                    .and_then(|d| d.as_u64())
+                    .unwrap_or(2);
                 let digest = data.get("digest").and_then(|d| d.as_str()).unwrap_or("");
                 serde_json::json!({
                     "keyTag": key_tag,
@@ -318,8 +321,7 @@ fn normalize_rdata(record_type: &str, content: &str, cf_record: &Value) -> Value
         }
         "HTTPS" | "SVCB" => {
             if let Some(data) = cf_record.get("data") {
-                let priority =
-                    data.get("priority").and_then(|p| p.as_u64()).unwrap_or(1);
+                let priority = data.get("priority").and_then(|p| p.as_u64()).unwrap_or(1);
                 let target = data.get("target").and_then(|t| t.as_str()).unwrap_or(".");
                 let params = data.get("value").and_then(|v| v.as_str());
                 serde_json::json!({
@@ -336,13 +338,17 @@ fn normalize_rdata(record_type: &str, content: &str, cf_record: &Value) -> Value
         "NAPTR" => {
             if let Some(data) = cf_record.get("data") {
                 let order = data.get("order").and_then(|o| o.as_u64()).unwrap_or(100);
-                let preference =
-                    data.get("preference").and_then(|p| p.as_u64()).unwrap_or(10);
+                let preference = data
+                    .get("preference")
+                    .and_then(|p| p.as_u64())
+                    .unwrap_or(10);
                 let flags = data.get("flags").and_then(|f| f.as_str()).unwrap_or("");
                 let services = data.get("service").and_then(|s| s.as_str()).unwrap_or("");
                 let regexp = data.get("regexp").and_then(|r| r.as_str()).unwrap_or("");
-                let replacement =
-                    data.get("replacement").and_then(|r| r.as_str()).unwrap_or(".");
+                let replacement = data
+                    .get("replacement")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or(".");
                 serde_json::json!({
                     "naptrOrder": order,
                     "naptrPreference": preference,
@@ -357,8 +363,7 @@ fn normalize_rdata(record_type: &str, content: &str, cf_record: &Value) -> Value
         }
         "URI" => {
             if let Some(data) = cf_record.get("data") {
-                let priority =
-                    data.get("priority").and_then(|p| p.as_u64()).unwrap_or(10);
+                let priority = data.get("priority").and_then(|p| p.as_u64()).unwrap_or(10);
                 let weight = data.get("weight").and_then(|w| w.as_u64()).unwrap_or(1);
                 let uri = data.get("content").and_then(|c| c.as_str()).unwrap_or("");
                 serde_json::json!({
@@ -431,7 +436,10 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             "name": name, "type": record_type,
             "content": target, "ttl": ttl, "proxied": false,
         }),
-        RecordData::Mx { preference, exchange } => serde_json::json!({
+        RecordData::Mx {
+            preference,
+            exchange,
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "content": exchange, "priority": preference, "ttl": ttl,
         }),
@@ -447,7 +455,12 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             "name": name, "type": record_type,
             "content": ptr_name, "ttl": ttl,
         }),
-        RecordData::Srv { priority, weight, port, target } => serde_json::json!({
+        RecordData::Srv {
+            priority,
+            weight,
+            port,
+            target,
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "data": { "priority": priority, "weight": weight, "port": port, "target": target },
             "ttl": ttl,
@@ -461,7 +474,11 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             "name": name, "type": record_type,
             "content": dname, "ttl": ttl,
         }),
-        RecordData::Sshfp { algorithm, fingerprint_type, fingerprint } => serde_json::json!({
+        RecordData::Sshfp {
+            algorithm,
+            fingerprint_type,
+            fingerprint,
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "data": {
                 "algorithm": sshfp_algorithm_to_num(algorithm),
@@ -470,7 +487,12 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             },
             "ttl": ttl,
         }),
-        RecordData::Tlsa { cert_usage, selector, matching_type, cert_association_data } => serde_json::json!({
+        RecordData::Tlsa {
+            cert_usage,
+            selector,
+            matching_type,
+            cert_association_data,
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "data": {
                 "usage": tlsa_cert_usage_to_num(cert_usage),
@@ -480,7 +502,12 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             },
             "ttl": ttl,
         }),
-        RecordData::Ds { key_tag, algorithm, digest_type, digest } => serde_json::json!({
+        RecordData::Ds {
+            key_tag,
+            algorithm,
+            digest_type,
+            digest,
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "data": {
                 "key_tag": key_tag,
@@ -490,8 +517,18 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             },
             "ttl": ttl,
         }),
-        RecordData::Https { svc_priority, svc_target_name, svc_params, .. }
-        | RecordData::Svcb { svc_priority, svc_target_name, svc_params, .. } => serde_json::json!({
+        RecordData::Https {
+            svc_priority,
+            svc_target_name,
+            svc_params,
+            ..
+        }
+        | RecordData::Svcb {
+            svc_priority,
+            svc_target_name,
+            svc_params,
+            ..
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "data": {
                 "priority": svc_priority,
@@ -500,7 +537,14 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             },
             "ttl": ttl,
         }),
-        RecordData::Naptr { order, preference, flags, services, regexp, replacement } => serde_json::json!({
+        RecordData::Naptr {
+            order,
+            preference,
+            flags,
+            services,
+            regexp,
+            replacement,
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "data": {
                 "order": order,
@@ -512,7 +556,11 @@ fn record_data_to_cloudflare_body(name: &str, ttl: u32, record: &RecordData) -> 
             },
             "ttl": ttl,
         }),
-        RecordData::Uri { priority, weight, uri } => serde_json::json!({
+        RecordData::Uri {
+            priority,
+            weight,
+            uri,
+        } => serde_json::json!({
             "name": name, "type": record_type,
             "data": { "priority": priority, "weight": weight, "content": uri },
             "ttl": ttl,
@@ -591,6 +639,7 @@ impl ZoneRead for CloudflareClient {
             .collect();
 
         let zone_info = ZoneInfo {
+            id: Some(zone_id),
             name: zone_name.to_string(),
             zone_type: "Primary".to_string(),
             disabled: false,
@@ -631,7 +680,10 @@ impl ZoneWrite for CloudflareClient {
 // ─── RecordWrite ──────────────────────────────────────────────────────────────
 
 impl RecordWrite for CloudflareClient {
-    #[instrument(skip(self, record), fields(vendor = "cloudflare", operation = "add_record"))]
+    #[instrument(
+        skip(self, record),
+        fields(vendor = "cloudflare", operation = "add_record")
+    )]
     async fn add_record<'a>(
         &'a self,
         zone: &'a str,
@@ -645,7 +697,10 @@ impl RecordWrite for CloudflareClient {
             .await
     }
 
-    #[instrument(skip(self, type_params), fields(vendor = "cloudflare", operation = "delete_record"))]
+    #[instrument(
+        skip(self, type_params),
+        fields(vendor = "cloudflare", operation = "delete_record")
+    )]
     async fn delete_record<'a>(
         &'a self,
         zone: &'a str,
@@ -673,10 +728,7 @@ impl RecordWrite for CloudflareClient {
         let data = self
             .get(
                 &format!("/zones/{zone_id}/dns_records"),
-                &[
-                    ("name", fqdn.clone()),
-                    ("type", record_type.to_string()),
-                ],
+                &[("name", fqdn.clone()), ("type", record_type.to_string())],
             )
             .await?;
 
@@ -751,7 +803,10 @@ impl AccessListWrite for CloudflareClient {
 }
 
 impl ZoneImport for CloudflareClient {
-    #[instrument(skip(self, file_bytes), fields(vendor = "cloudflare", operation = "import_zone_file"))]
+    #[instrument(
+        skip(self, file_bytes),
+        fields(vendor = "cloudflare", operation = "import_zone_file")
+    )]
     async fn import_zone_file<'a>(
         &'a self,
         zone: &'a str,
@@ -784,7 +839,10 @@ impl ZoneImport for CloudflareClient {
 }
 
 impl ZoneExport for CloudflareClient {
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "export_zone_file"))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "cloudflare", operation = "export_zone_file")
+    )]
     async fn export_zone_file<'a>(&'a self, zone: &'a str) -> Result<String> {
         let zone_id = self.resolve_zone_id(zone).await?;
         self.get_text(&format!("/zones/{zone_id}/dns_records/export"), &[])
@@ -839,37 +897,73 @@ mod tests {
     #[tokio::test]
     async fn enable_zone_is_unsupported() {
         let err = make_client().enable_zone("example.com").await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Cloudflare",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn disable_zone_is_unsupported() {
         let err = make_client().disable_zone("example.com").await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Cloudflare",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn list_cache_is_unsupported() {
         let err = make_client().list_cache("example.com").await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Cloudflare",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn flush_cache_is_unsupported() {
         let err = make_client().flush_cache().await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Cloudflare",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn get_stats_is_unsupported() {
         let err = make_client().get_stats("last7days").await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Cloudflare",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn list_blocked_is_unsupported() {
         let err = make_client().list_blocked().await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Cloudflare",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -896,7 +990,14 @@ mod tests {
     async fn zone_import_no_overwrite_warns_and_proceeds() {
         // overwrite=false emits a warning but still reaches the API (not an error)
         let err = make_client()
-            .import_zone_file("example.com", "zone.txt".into(), vec![], false, false, false)
+            .import_zone_file(
+                "example.com",
+                "zone.txt".into(),
+                vec![],
+                false,
+                false,
+                false,
+            )
             .await
             .unwrap_err();
         assert!(!matches!(err, Error::Unsupported { .. }));
@@ -1148,7 +1249,9 @@ mod tests {
 
     #[test]
     fn a_record_body() {
-        let record = RecordData::A { ip: "1.2.3.4".parse().unwrap() };
+        let record = RecordData::A {
+            ip: "1.2.3.4".parse().unwrap(),
+        };
         let body = record_data_to_cloudflare_body("www.example.com", 300, &record);
         assert_eq!(body["type"], "A");
         assert_eq!(body["content"], "1.2.3.4");
@@ -1170,7 +1273,9 @@ mod tests {
 
     #[test]
     fn aaaa_record_body() {
-        let record = RecordData::Aaaa { ip: "2001:db8::1".parse().unwrap() };
+        let record = RecordData::Aaaa {
+            ip: "2001:db8::1".parse().unwrap(),
+        };
         let body = record_data_to_cloudflare_body("www.example.com", 300, &record);
         assert_eq!(body["type"], "AAAA");
         assert_eq!(body["content"], "2001:db8::1");
@@ -1194,7 +1299,9 @@ mod tests {
 
     #[test]
     fn dname_record_body() {
-        let record = RecordData::Dname { dname: "other.example.com".into() };
+        let record = RecordData::Dname {
+            dname: "other.example.com".into(),
+        };
         let body = record_data_to_cloudflare_body("example.com", 300, &record);
         assert_eq!(body["type"], "DNAME");
         assert_eq!(body["content"], "other.example.com");

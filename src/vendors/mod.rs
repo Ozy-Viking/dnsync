@@ -2,6 +2,8 @@ use crate::control_plane::config::VendorKind;
 
 pub use crate::core::dns::service::{DnsRead, DnsService, DnsVendor, DnsWrite};
 
+pub mod runtime;
+
 #[cfg(feature = "technitium")]
 pub mod technitium;
 

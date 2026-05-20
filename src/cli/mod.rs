@@ -1,3 +1,4 @@
+pub mod completions;
 pub mod interactive;
 pub mod records;
 pub mod runner;
@@ -27,12 +28,12 @@ pub struct Cli {
     #[arg(long)]
     pub all: bool,
 
-    /// Technitium base URL (overrides TECHNITIUM_BASE_URL env)
-    #[arg(long, env = "TECHNITIUM_BASE_URL")]
+    /// API base URL override for the selected command only
+    #[arg(long)]
     pub base_url: Option<String>,
 
-    /// API token (overrides TECHNITIUM_API_TOKEN env)
-    #[arg(long, env = "TECHNITIUM_API_TOKEN")]
+    /// API token override for the selected command only
+    #[arg(long)]
     pub token: Option<String>,
 
     /// MCP only: reject all write operations
@@ -222,12 +223,12 @@ pub enum ZoneCmd {
 
 #[derive(Subcommand)]
 pub enum RecordCmd {
-    /// List all records for a domain
+    /// List DNS records, optionally filtered to a domain
     List {
-        /// Domain to look up — may be a bare label (e.g. `huly`) when --zone is given,
-        /// or a fully-qualified name (e.g. `huly.hankin.io`). Omitting --zone searches
-        /// across all zones.
-        domain: String,
+        /// Domain to look up. Omitting it lists records for all hosted zones.
+        /// A bare label (e.g. `huly`) can be combined with --zone, or searched
+        /// across all zones when --zone is omitted.
+        domain: Option<String>,
         /// Zone the domain belongs to.  When given, a bare domain label is automatically
         /// qualified: `huly` + `--zone hankin.io` → `huly.hankin.io`.
         #[arg(long)]
@@ -547,4 +548,32 @@ pub enum AllowedCmd {
     Add { domain: String },
     /// Remove a domain from the whitelist
     Delete { domain: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn technitium_env_vars_do_not_populate_global_overrides() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: this test serializes access to these process-wide env vars.
+        unsafe {
+            std::env::set_var("TECHNITIUM_BASE_URL", "http://technitium.local:5380");
+            std::env::set_var("TECHNITIUM_API_TOKEN", "technitium-token");
+        }
+
+        let cli = Cli::try_parse_from(["dns", "mcp"]).unwrap();
+
+        assert!(cli.base_url.is_none());
+        assert!(cli.token.is_none());
+
+        // SAFETY: this test serializes access to these process-wide env vars.
+        unsafe {
+            std::env::remove_var("TECHNITIUM_BASE_URL");
+            std::env::remove_var("TECHNITIUM_API_TOKEN");
+        }
+    }
 }

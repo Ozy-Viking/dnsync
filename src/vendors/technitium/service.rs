@@ -45,7 +45,10 @@ impl ZoneRead for TechnitiumClient {
         .await
     }
 
-    #[instrument(skip(self, options), fields(vendor = "technitium", operation = "list_records"))]
+    #[instrument(
+        skip(self, options),
+        fields(vendor = "technitium", operation = "list_records")
+    )]
     async fn list_records(
         &self,
         domain: &str,
@@ -62,6 +65,9 @@ impl ZoneRead for TechnitiumClient {
         let mut params = vec![("domain", query_domain)];
         if let Some(z) = zone {
             params.push(("zone", z));
+        }
+        if options.all_subdomains {
+            params.push(("listZone", "true"));
         }
         let raw = self.get("/api/zones/records/get", &params).await?;
         ListRecordsResponse::from_value(&raw)
@@ -92,7 +98,10 @@ impl ZoneWrite for TechnitiumClient {
 }
 
 impl RecordWrite for TechnitiumClient {
-    #[instrument(skip(self, record), fields(vendor = "technitium", operation = "add_record"))]
+    #[instrument(
+        skip(self, record),
+        fields(vendor = "technitium", operation = "add_record")
+    )]
     async fn add_record(
         &self,
         zone: &str,
@@ -111,7 +120,10 @@ impl RecordWrite for TechnitiumClient {
         self.post("/api/zones/records/add", &form).await
     }
 
-    #[instrument(skip(self, type_params), fields(vendor = "technitium", operation = "delete_record"))]
+    #[instrument(
+        skip(self, type_params),
+        fields(vendor = "technitium", operation = "delete_record")
+    )]
     async fn delete_record(
         &self,
         zone: &str,
@@ -134,7 +146,10 @@ impl CacheRead for TechnitiumClient {
 }
 
 impl CacheWrite for TechnitiumClient {
-    #[instrument(skip(self), fields(vendor = "technitium", operation = "delete_cache_zone"))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "technitium", operation = "delete_cache_zone")
+    )]
     async fn delete_cache_zone(&self, domain: &str) -> Result<Value> {
         self.post("/api/cache/delete", &[("domain", domain)]).await
     }
@@ -171,7 +186,10 @@ impl AccessListWrite for TechnitiumClient {
         self.post("/api/blocked/add", &[("domain", domain)]).await
     }
 
-    #[instrument(skip(self), fields(vendor = "technitium", operation = "delete_blocked"))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "technitium", operation = "delete_blocked")
+    )]
     async fn delete_blocked(&self, domain: &str) -> Result<Value> {
         self.post("/api/blocked/delete", &[("domain", domain)])
             .await
@@ -182,7 +200,10 @@ impl AccessListWrite for TechnitiumClient {
         self.post("/api/allowed/add", &[("domain", domain)]).await
     }
 
-    #[instrument(skip(self), fields(vendor = "technitium", operation = "delete_allowed"))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "technitium", operation = "delete_allowed")
+    )]
     async fn delete_allowed(&self, domain: &str) -> Result<Value> {
         self.post("/api/allowed/delete", &[("domain", domain)])
             .await
@@ -190,7 +211,10 @@ impl AccessListWrite for TechnitiumClient {
 }
 
 impl ZoneImport for TechnitiumClient {
-    #[instrument(skip(self, file_bytes), fields(vendor = "technitium", operation = "import_zone_file"))]
+    #[instrument(
+        skip(self, file_bytes),
+        fields(vendor = "technitium", operation = "import_zone_file")
+    )]
     async fn import_zone_file(
         &self,
         zone: &str,
@@ -226,7 +250,10 @@ impl ZoneImport for TechnitiumClient {
 }
 
 impl ZoneExport for TechnitiumClient {
-    #[instrument(skip(self), fields(vendor = "technitium", operation = "export_zone_file"))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "technitium", operation = "export_zone_file")
+    )]
     async fn export_zone_file<'a>(&'a self, zone: &'a str) -> Result<String> {
         self.get_text("/api/zones/export", &[("zone", zone)]).await
     }

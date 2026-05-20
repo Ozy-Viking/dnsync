@@ -1,8 +1,8 @@
 use inquire::{Confirm, Select, Text};
 
 use crate::control_plane::config::{
-    DnsServerConfig, McpPermissions, ServerLocation, VendorKind,
-    CLOUDFLARE_DEFAULT_BASE_URL, PANGOLIN_DEFAULT_BASE_URL, TECHNITIUM_DEFAULT_BASE_URL,
+    CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
+    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, VendorKind,
 };
 
 pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
@@ -13,9 +13,18 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
 
     let vendor = {
         let choices = vec![
-            VendorChoice { kind: VendorKind::Technitium, label: "technitium" },
-            VendorChoice { kind: VendorKind::Pangolin, label: "pangolin" },
-            VendorChoice { kind: VendorKind::Cloudflare, label: "cloudflare" },
+            VendorChoice {
+                kind: VendorKind::Technitium,
+                label: "technitium",
+            },
+            VendorChoice {
+                kind: VendorKind::Pangolin,
+                label: "pangolin",
+            },
+            VendorChoice {
+                kind: VendorKind::Cloudflare,
+                label: "cloudflare",
+            },
         ];
         Select::new("Vendor:", choices)
             .prompt()
@@ -59,12 +68,23 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
 
     let location = {
         let choices = vec![
-            LocationChoice { value: None, label: "auto-detect" },
-            LocationChoice { value: Some(ServerLocation::Local), label: "local" },
-            LocationChoice { value: Some(ServerLocation::External), label: "external" },
+            LocationChoice {
+                value: None,
+                label: "auto-detect",
+            },
+            LocationChoice {
+                value: Some(ServerLocation::Local),
+                label: "local",
+            },
+            LocationChoice {
+                value: Some(ServerLocation::External),
+                label: "external",
+            },
         ];
         Select::new("Location:", choices)
-            .with_help_message("auto-detect infers from the base URL (localhost/private IP → local)")
+            .with_help_message(
+                "auto-detect infers from the base URL (localhost/private IP → local)",
+            )
             .prompt()
             .map_err(wizard_err)?
             .value
@@ -79,7 +99,9 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
     let mut allowed_zones: Vec<String> = Vec::new();
     loop {
         let zone = Text::new("Allowed zone (leave empty to finish):")
-            .with_help_message("Restrict zone-targeting MCP tools to this zone; subdomains are also permitted")
+            .with_help_message(
+                "Restrict zone-targeting MCP tools to this zone; subdomains are also permitted",
+            )
             .prompt()
             .map_err(wizard_err)?;
         if zone.is_empty() {
@@ -96,15 +118,14 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
         token,
         token_env,
         org_id,
-        mcp: McpPermissions { readonly, allowed_zones },
+        mcp: McpPermissions {
+            readonly,
+            allowed_zones,
+        },
     })
 }
 
-fn optional_text(
-    label: &str,
-    help: &str,
-    default: Option<&str>,
-) -> miette::Result<Option<String>> {
+fn optional_text(label: &str, help: &str, default: Option<&str>) -> miette::Result<Option<String>> {
     let mut builder = Text::new(label).with_help_message(help);
     if let Some(d) = default {
         builder = builder.with_default(d);

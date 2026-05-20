@@ -1168,7 +1168,9 @@ mod tests {
     #[tokio::test]
     async fn localhost_url_is_local() {
         assert_eq!(
-            server_with_url("http://localhost:5380").resolved_location().await,
+            server_with_url("http://localhost:5380")
+                .resolved_location()
+                .await,
             ServerLocation::Local
         );
     }
@@ -1176,7 +1178,9 @@ mod tests {
     #[tokio::test]
     async fn loopback_ip_is_local() {
         assert_eq!(
-            server_with_url("http://127.0.0.1:5380").resolved_location().await,
+            server_with_url("http://127.0.0.1:5380")
+                .resolved_location()
+                .await,
             ServerLocation::Local
         );
     }
@@ -1184,11 +1188,15 @@ mod tests {
     #[tokio::test]
     async fn private_ip_is_local() {
         assert_eq!(
-            server_with_url("http://192.168.1.10:5380").resolved_location().await,
+            server_with_url("http://192.168.1.10:5380")
+                .resolved_location()
+                .await,
             ServerLocation::Local
         );
         assert_eq!(
-            server_with_url("http://10.0.0.1:8080").resolved_location().await,
+            server_with_url("http://10.0.0.1:8080")
+                .resolved_location()
+                .await,
             ServerLocation::Local
         );
     }
@@ -1196,7 +1204,9 @@ mod tests {
     #[tokio::test]
     async fn public_ip_is_external() {
         assert_eq!(
-            server_with_url("https://1.2.3.4:5380").resolved_location().await,
+            server_with_url("https://1.2.3.4:5380")
+                .resolved_location()
+                .await,
             ServerLocation::External
         );
     }
@@ -1204,7 +1214,9 @@ mod tests {
     #[tokio::test]
     async fn cloud_domain_is_external() {
         assert_eq!(
-            server_with_url("https://api.pangolin.net/v1").resolved_location().await,
+            server_with_url("https://api.pangolin.net/v1")
+                .resolved_location()
+                .await,
             ServerLocation::External
         );
     }

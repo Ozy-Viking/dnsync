@@ -21,7 +21,11 @@ impl CloudflareClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(Error::Network)?;
-        Ok(Self { http, base_url, token })
+        Ok(Self {
+            http,
+            base_url,
+            token,
+        })
     }
 
     pub async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value> {
@@ -73,8 +77,11 @@ impl CloudflareClient {
         file_bytes: Vec<u8>,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let span =
-            tracing::debug_span!("http.post_multipart", path, http.status = tracing::field::Empty);
+        let span = tracing::debug_span!(
+            "http.post_multipart",
+            path,
+            http.status = tracing::field::Empty
+        );
         let _enter = span.enter();
         tracing::debug!("sending POST (multipart)");
 
@@ -103,8 +110,7 @@ impl CloudflareClient {
 
     pub async fn get_text(&self, path: &str, params: &[(&str, String)]) -> Result<String> {
         let url = format!("{}{}", self.base_url, path);
-        let span =
-            tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
+        let span = tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
         let _enter = span.enter();
         tracing::debug!("sending GET (text)");
 
@@ -179,7 +185,10 @@ async fn parse_response(resp: Response) -> Result<Value> {
         }
     })?;
 
-    let success = body.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+    let success = body
+        .get("success")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
 
     if success {
         return Ok(body.get("result").cloned().unwrap_or(Value::Null));

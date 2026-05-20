@@ -72,8 +72,7 @@ impl TechnitiumClient {
     /// GET that returns a plain-text body (e.g. zone file export).
     pub async fn get_text(&self, path: &str, params: &[(&str, &str)]) -> Result<String> {
         let url = format!("{}{}", self.base_url, path);
-        let span =
-            tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
+        let span = tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
         let _enter = span.enter();
         tracing::debug!("sending GET (text)");
         let resp = self
@@ -116,8 +115,17 @@ impl TechnitiumClient {
         file_bytes: Vec<u8>,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let zone = params.iter().find(|(k, _)| *k == "zone").map(|(_, v)| *v).unwrap_or("");
-        let span = tracing::debug_span!("http.post_file", path, zone, http.status = tracing::field::Empty);
+        let zone = params
+            .iter()
+            .find(|(k, _)| *k == "zone")
+            .map(|(_, v)| *v)
+            .unwrap_or("");
+        let span = tracing::debug_span!(
+            "http.post_file",
+            path,
+            zone,
+            http.status = tracing::field::Empty
+        );
         let _enter = span.enter();
         tracing::debug!("sending POST (multipart)");
 
