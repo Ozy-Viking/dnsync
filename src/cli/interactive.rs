@@ -132,9 +132,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
             .prompt()
         {
             Ok(z) => z,
-            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
-                return Err(miette::miette!("cancelled"));
-            }
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => break,
             Err(e) => return Err(wizard_err(e)),
         };
         if zone.is_empty() {
