@@ -226,6 +226,21 @@ pub async fn query_records_across_servers(
 
 // ── Zone transfer ─────────────────────────────────────────────────────────────
 
+pub async fn server_export_zone(server: &DnsServerConfig, zone: &str) -> Result<String> {
+    VendorClient::export_zone_for_server(server, zone).await
+}
+
+pub async fn server_import_zone(
+    server: &DnsServerConfig,
+    zone: &str,
+    file_name: String,
+    file_bytes: Vec<u8>,
+    overwrite: bool,
+    overwrite_zone: bool,
+) -> Result<Value> {
+    VendorClient::import_zone_for_server(server, zone, file_name, file_bytes, overwrite, overwrite_zone).await
+}
+
 /// Export a zone from one server and import it into another. Returns the import
 /// result value (if non-null) that callers can display.
 pub async fn transfer_zone(
@@ -239,10 +254,10 @@ pub async fn transfer_zone(
     let from_server = cfg.selected_server(Some(from_id))?;
     let to_server = cfg.selected_server(Some(to_id))?;
 
-    let zone_file = VendorClient::export_zone_for_server(from_server, zone).await?;
+    let zone_file = server_export_zone(from_server, zone).await?;
 
     let file_name = format!("{zone}.txt");
-    let result = VendorClient::import_zone_for_server(
+    let result = server_import_zone(
         to_server,
         zone,
         file_name,
