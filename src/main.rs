@@ -92,7 +92,7 @@ async fn run(cli: Cli) -> i32 {
                 token_env,
                 token,
                 org_id,
-                readonly,
+                access,
                 allow_zone,
             } => {
                 let server = if id.is_none() {
@@ -113,7 +113,7 @@ async fn run(cli: Cli) -> i32 {
                         token_env,
                         org_id,
                         mcp: config::McpPermissions {
-                            readonly,
+                            access,
                             allowed_zones: allow_zone,
                         },
                     }
@@ -371,8 +371,14 @@ async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
 ) -> i32 {
     match cli.command {
         Command::Mcp => {
-            if policy.readonly {
-                tracing::info!("MCP server starting in read-only mode");
+            match policy.access {
+                policy::PolicyRule::Read => {
+                    tracing::info!("MCP server starting in read-only mode")
+                }
+                policy::PolicyRule::Write => {
+                    tracing::info!("MCP server starting in write mode (deletes disabled)")
+                }
+                policy::PolicyRule::Delete => {}
             }
             if let Some(ref zones) = policy.allowed_zones {
                 tracing::info!("MCP server zone restriction: {}", zones.join(", "));
@@ -505,9 +511,16 @@ fn cli_policy(cli: &Cli, config: Option<&config::AppConfig>) -> Result<Policy, E
         })
         .map(|s| &s.mcp);
 
-    let readonly = cli.readonly || mcp.is_some_and(|p| p.readonly);
+    // Take the most restrictive of CLI flag and server config; default to full access.
+    let config_access = mcp
+        .map(|p| p.access)
+        .unwrap_or(policy::PolicyRule::Delete);
+    let access = match cli.access {
+        Some(a) => a.min(config_access),
+        None => config_access,
+    };
     let allowed_zones = allowed_zones(cli, mcp)?;
-    Ok(Policy::new(readonly, allowed_zones))
+    Ok(Policy::new(access, allowed_zones))
 }
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
@@ -527,7 +540,7 @@ fn allowed_zones(
         return Ok(Some(cli.allow_zone.clone()));
     };
 
-    let configured_policy = Policy::new(false, Some(configured.clone()));
+    let configured_policy = Policy::new(policy::PolicyRule::Delete, Some(configured.clone()));
     for zone in &cli.allow_zone {
         configured_policy.check_zone(zone).map_err(|_| {
             Error::policy_violation(
@@ -554,7 +567,7 @@ mod tests {
             all: false,
             base_url: None,
             token: Some("token".to_string()),
-            readonly: false,
+            access: None,
             allow_zone,
             command: Command::Mcp,
         }
@@ -582,7 +595,7 @@ mod tests {
             all: false,
             base_url: None,
             token: None,
-            readonly: false,
+            access: None,
             allow_zone: Vec::new(),
             command: Command::Config(ConfigCmd::Init { force }),
         }

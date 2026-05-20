@@ -7,6 +7,7 @@ use std::{
 use hickory_resolver::Resolver;
 use serde::{Deserialize, Serialize};
 
+use crate::control_plane::policy::PolicyRule;
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
 
@@ -92,6 +93,10 @@ struct DnsServerConfigRaw {
     #[serde(default)]
     mcp: McpPermissions,
     // Flat shorthands — merged into `mcp` on conversion.
+    /// New flat shorthand: `mcp_access = "read" | "write" | "delete"`.
+    #[serde(default)]
+    mcp_access: Option<PolicyRule>,
+    /// Deprecated flat shorthand kept for backward compatibility; prefer `mcp_access = "read"`.
     #[serde(default)]
     mcp_readonly: bool,
     #[serde(default)]
@@ -106,6 +111,16 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
                 zones.push(z);
             }
         }
+        // Flat shorthand resolution: mcp_access wins over deprecated mcp_readonly;
+        // take the most restrictive (minimum) of the flat shorthand and nested mcp.access.
+        let flat = raw
+            .mcp_access
+            .or_else(|| raw.mcp_readonly.then_some(PolicyRule::Read));
+        let access = match flat {
+            Some(a) => a.min(raw.mcp.access),
+            None => raw.mcp.access,
+        };
+
         DnsServerConfig {
             id: raw.id,
             vendor: raw.vendor,
@@ -115,7 +130,7 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             token_env: raw.token_env,
             org_id: raw.org_id,
             mcp: McpPermissions {
-                readonly: raw.mcp.readonly || raw.mcp_readonly,
+                access,
                 allowed_zones: zones,
             },
         }
@@ -125,8 +140,9 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpPermissions {
+    /// Maximum permitted operation level (default: full access).
     #[serde(default)]
-    pub readonly: bool,
+    pub access: PolicyRule,
 
     #[serde(default)]
     pub allowed_zones: Vec<String>,
@@ -134,7 +150,7 @@ pub struct McpPermissions {
 
 impl McpPermissions {
     fn is_default(&self) -> bool {
-        !self.readonly && self.allowed_zones.is_empty()
+        self.access == PolicyRule::default() && self.allowed_zones.is_empty()
     }
 }
 
@@ -334,7 +350,11 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         tbl["org_id"] = value(v.as_str());
     }
 
-    tbl["mcp_readonly"] = value(server.mcp.readonly);
+    tbl["mcp_access"] = value(match server.mcp.access {
+        PolicyRule::Read => "read",
+        PolicyRule::Write => "write",
+        PolicyRule::Delete => "delete",
+    });
     let mut zones = Array::new();
     for zone in &server.mcp.allowed_zones {
         zones.push(zone.as_str());
@@ -634,7 +654,7 @@ mod tests {
                 token = "home-token"
 
                 [servers.mcp]
-                readonly = true
+                access = "read"
                 allowed_zones = ["example.com", "internal.lan"]
 
                 [[servers]]
@@ -655,7 +675,7 @@ mod tests {
         assert_eq!(home.id, "home");
         assert_eq!(home.vendor, VendorKind::Technitium);
         assert_eq!(home.base_url.as_deref(), Some("http://home.local:5380"));
-        assert!(home.mcp.readonly);
+        assert_eq!(home.mcp.access, PolicyRule::Read);
         assert_eq!(home.mcp.allowed_zones, ["example.com", "internal.lan"]);
     }
 
@@ -724,7 +744,7 @@ mod tests {
             Some("DNSYNC_TECHNITIUM_API_TOKEN")
         );
         assert!(server.token.is_none());
-        assert!(!server.mcp.readonly);
+        assert_eq!(server.mcp.access, PolicyRule::Delete);
         assert!(server.mcp.allowed_zones.is_empty());
 
         // Verify the written file round-trips and uses token_env, not token
@@ -912,7 +932,7 @@ mod tests {
             Some("DNSYNC_TECHNITIUM_API_TOKEN")
         );
         assert!(server.token.is_none());
-        assert!(!server.mcp.readonly);
+        assert_eq!(server.mcp.access, PolicyRule::Delete);
         assert!(server.mcp.allowed_zones.is_empty());
     }
 

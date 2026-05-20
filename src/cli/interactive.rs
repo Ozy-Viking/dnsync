@@ -1,9 +1,10 @@
-use inquire::{Confirm, Select, Text};
+use inquire::{Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
     ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, VendorKind,
 };
+use crate::control_plane::policy::PolicyRule;
 
 pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
     let id = Text::new("Server ID:")
@@ -90,11 +91,18 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
             .value
     };
 
-    let readonly = Confirm::new("Read-only?")
-        .with_default(false)
-        .with_help_message("Restrict MCP tools to read-only operations for this server")
-        .prompt()
-        .map_err(wizard_err)?;
+    let access = {
+        let choices = vec![
+            AccessChoice { rule: PolicyRule::Delete, label: "delete (full access)" },
+            AccessChoice { rule: PolicyRule::Write,  label: "write  (no deletes)" },
+            AccessChoice { rule: PolicyRule::Read,   label: "read   (read-only)" },
+        ];
+        Select::new("MCP access level:", choices)
+            .with_help_message("Maximum operation level permitted for MCP tools on this server")
+            .prompt()
+            .map_err(wizard_err)?
+            .rule
+    };
 
     let mut allowed_zones: Vec<String> = Vec::new();
     loop {
@@ -119,7 +127,7 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
         token_env,
         org_id,
         mcp: McpPermissions {
-            readonly,
+            access,
             allowed_zones,
         },
     })
@@ -157,6 +165,17 @@ struct LocationChoice {
 }
 
 impl std::fmt::Display for LocationChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label)
+    }
+}
+
+struct AccessChoice {
+    rule: PolicyRule,
+    label: &'static str,
+}
+
+impl std::fmt::Display for AccessChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.label)
     }
