@@ -1,1 +1,0 @@
-//! Zone MCP tools placeholder.

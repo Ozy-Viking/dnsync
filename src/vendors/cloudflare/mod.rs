@@ -1,9 +1,11 @@
 pub mod client;
 pub mod service;
 
+pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
+
 use std::env;
 
-use crate::control_plane::config::{self as app_config, DnsServerConfig};
+use crate::control_plane::config::DnsServerConfig;
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
 use crate::vendors::runtime::ClientOverrides;
@@ -17,7 +19,7 @@ pub fn client_from_server(
         .map(ToOwned::to_owned)
         .or_else(|| env::var("DNSYNC_CLOUDFLARE_BASE_URL").ok())
         .or_else(|| server.base_url.clone())
-        .unwrap_or_else(|| app_config::CLOUDFLARE_DEFAULT_BASE_URL.to_string());
+        .unwrap_or_else(|| CLOUDFLARE_DEFAULT_BASE_URL.to_string());
     let token = overrides
         .token
         .map(ToOwned::to_owned)
@@ -36,6 +38,7 @@ pub fn client_from_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control_plane::config::AppConfig;
     use crate::core::dns::service::DnsVendor;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -52,7 +55,7 @@ mod tests {
     fn client_uses_config_token() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_cloudflare_env();
-        let app_config: app_config::AppConfig = toml::from_str(
+        let app_config: AppConfig = toml::from_str(
             r#"
                 [[servers]]
                 id = "cf"
@@ -65,14 +68,14 @@ mod tests {
 
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
-        assert_eq!(client.kind(), app_config::VendorKind::Cloudflare);
+        assert_eq!(client.kind(), crate::vendors::VendorKind::Cloudflare);
     }
 
     #[test]
     fn cli_token_wins_over_config() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_cloudflare_env();
-        let app_config: app_config::AppConfig = toml::from_str(
+        let app_config: AppConfig = toml::from_str(
             r#"
                 [[servers]]
                 id = "cf"
@@ -92,14 +95,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(client.kind(), app_config::VendorKind::Cloudflare);
+        assert_eq!(client.kind(), crate::vendors::VendorKind::Cloudflare);
     }
 
     #[test]
     fn errors_without_token() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_cloudflare_env();
-        let app_config: app_config::AppConfig = toml::from_str(
+        let app_config: AppConfig = toml::from_str(
             r#"
                 [[servers]]
                 id = "cf"
@@ -123,7 +126,7 @@ mod tests {
             std::env::set_var("DNSYNC_CLOUDFLARE_BASE_URL", "https://cf.example/client/v4");
             std::env::set_var("DNSYNC_CLOUDFLARE_API_TOKEN", "cf-env-token");
         }
-        let app_config: app_config::AppConfig = toml::from_str(
+        let app_config: AppConfig = toml::from_str(
             r#"
                 [[servers]]
                 id = "cf"
@@ -136,7 +139,7 @@ mod tests {
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
         assert_eq!(client.base_url, "https://cf.example/client/v4");
-        assert_eq!(client.kind(), app_config::VendorKind::Cloudflare);
+        assert_eq!(client.kind(), crate::vendors::VendorKind::Cloudflare);
 
         // SAFETY: this test serializes access to these process-wide env vars.
         clear_cloudflare_env();

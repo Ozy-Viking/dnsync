@@ -9,20 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
-
-pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
-pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
-pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
-
-/// Supported DNS vendor backends.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
-#[serde(rename_all = "lowercase")]
-pub enum VendorKind {
-    #[default]
-    Technitium,
-    Pangolin,
-    Cloudflare,
-}
+use crate::vendors::{VendorKind, vendor_default_base_url};
 
 /// Whether the DNS server is on a local network or an external/cloud service.
 ///
@@ -145,7 +132,7 @@ impl AppConfig {
                 id: "default".to_string(),
                 vendor: VendorKind::Technitium,
                 location: None,
-                base_url: Some(TECHNITIUM_DEFAULT_BASE_URL.to_string()),
+                base_url: Some(vendor_default_base_url(VendorKind::Technitium).to_string()),
                 token: None,
                 token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
                 org_id: None,
@@ -473,11 +460,7 @@ impl DnsServerConfig {
         if let Some(loc) = self.location {
             return loc;
         }
-        let url = self.base_url.as_deref().unwrap_or(match self.vendor {
-            VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
-            VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
-            VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
-        });
+        let url = self.base_url.as_deref().unwrap_or_else(|| vendor_default_base_url(self.vendor));
         if url_is_local(url).await {
             ServerLocation::Local
         } else {
@@ -489,11 +472,7 @@ impl DnsServerConfig {
         override_url
             .map(ToOwned::to_owned)
             .or_else(|| self.base_url.clone())
-            .unwrap_or_else(|| match self.vendor {
-                VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
-                VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL.to_string(),
-                VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL.to_string(),
-            })
+            .unwrap_or_else(|| vendor_default_base_url(self.vendor).to_string())
     }
 
     pub fn resolved_token(&self, override_token: Option<&str>) -> Result<ApiToken> {
@@ -836,7 +815,7 @@ mod tests {
             mcp: McpPermissions::default(),
         };
 
-        assert_eq!(server.resolved_base_url(None), TECHNITIUM_DEFAULT_BASE_URL);
+        assert_eq!(server.resolved_base_url(None), vendor_default_base_url(VendorKind::Technitium));
     }
 
     #[test]
@@ -852,7 +831,7 @@ mod tests {
             mcp: McpPermissions::default(),
         };
 
-        assert_eq!(server.resolved_base_url(None), PANGOLIN_DEFAULT_BASE_URL);
+        assert_eq!(server.resolved_base_url(None), vendor_default_base_url(VendorKind::Pangolin));
     }
 
     #[test]

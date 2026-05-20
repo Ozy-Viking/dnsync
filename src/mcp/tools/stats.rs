@@ -1,1 +1,0 @@
-//! Stats MCP tools placeholder.

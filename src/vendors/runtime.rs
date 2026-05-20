@@ -1,6 +1,7 @@
 use serde_json::Value;
 
-use crate::control_plane::config::{self, DnsServerConfig, VendorKind};
+use crate::control_plane::config::{self, DnsServerConfig};
+use crate::vendors::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;

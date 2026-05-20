@@ -1,8 +1,11 @@
 use inquire::{Confirm, Select, Text};
 
-use crate::control_plane::config::{
-    CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
-    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, VendorKind,
+use crate::control_plane::config::{DnsServerConfig, McpPermissions, ServerLocation};
+use crate::vendors::{
+    VendorKind,
+    cloudflare::CLOUDFLARE_DEFAULT_BASE_URL,
+    pangolin::PANGOLIN_DEFAULT_BASE_URL,
+    technitium::TECHNITIUM_DEFAULT_BASE_URL,
 };
 
 pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {

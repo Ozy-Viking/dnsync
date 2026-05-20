@@ -1,185 +1,425 @@
+use miette::Report;
+use rmcp::ServiceExt;
 use serde_json::Value;
 
 use crate::{
-    cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd, records},
-    core::dns::responses::ListRecordsResponse,
-    core::dns::service::{DnsService, ListRecordsOptions, ZoneRead},
-    core::error::{Error, Result},
+    cli::{self, AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd, records},
+    control_plane::{
+        app,
+        config::{self as config, AppConfig, McpPermissions},
+        policy::Policy,
+    },
+    core::{
+        dns::service::{DnsService, ListRecordsOptions},
+        error::{Error, Result},
+    },
+    mcp::server::DnsServer,
+    vendors::runtime::{ClientOverrides, VendorClient},
 };
 
-/// Build the fully-qualified domain name from a possibly-relative label and an optional zone.
-///
-/// Examples:
-/// - `("huly", Some("hankin.io"))` → `"huly.hankin.io"`
-/// - `("huly.hankin.io", Some("hankin.io"))` → `"huly.hankin.io"` (already qualified)
-/// - `("@", Some("hankin.io"))` → `"hankin.io"` (zone apex)
-/// - `("huly.hankin.io", None)` → `"huly.hankin.io"` (passed through)
-pub fn resolve_fqdn(domain: &str, zone: Option<&str>) -> String {
-    let Some(zone) = zone else {
-        return domain.trim_end_matches('.').to_string();
-    };
-    let domain = domain.trim_end_matches('.');
-    let zone = zone.trim_end_matches('.');
-    if domain == "@" {
-        return zone.to_string();
-    }
-    let d_lower = domain.to_lowercase();
-    let z_lower = zone.to_lowercase();
-    if d_lower == z_lower || d_lower.ends_with(&format!(".{z_lower}")) {
-        domain.to_string()
-    } else {
-        format!("{domain}.{zone}")
-    }
-}
+// ─── Entry point ─────────────────────────────────────────────────────────────
 
-/// Strip the leftmost DNS label to get the likely parent zone name.
-/// Returns `None` for single-label names (e.g. `"hankin"`).
-pub fn infer_zone(fqdn: &str) -> Option<String> {
-    let fqdn = fqdn.trim_end_matches('.');
-    fqdn.find('.').map(|pos| fqdn[pos + 1..].to_string())
-}
+pub async fn execute(cli: cli::Cli) -> i32 {
+    if let Command::Completions { shell } = cli.command {
+        cli::completions::generate_completions(shell);
+        return 0;
+    }
 
-/// Extract zone/domain names from a `list_zones` response.
-/// Handles the three known vendor formats:
-/// - Technitium: `{"response": {"zones": [{"name": "..."}]}}`
-/// - Pangolin:   `{"domains": [{"baseDomain": "..."}]}`
-/// - Cloudflare: `[{"name": "..."}]`  (array at root after envelope unwrap)
-pub fn extract_zone_names(value: &Value) -> Vec<String> {
-    // Technitium
-    if let Some(arr) = value
-        .get("response")
-        .and_then(|r| r.get("zones"))
-        .and_then(|z| z.as_array())
-    {
-        let names: Vec<_> = arr
-            .iter()
-            .filter_map(|z| z.get("name").and_then(|n| n.as_str()).map(str::to_string))
-            .collect();
-        if !names.is_empty() {
-            return names;
+    if let Command::ServerIds = cli.command {
+        let config = config::AppConfig::load_if_exists(cli.config).ok().flatten();
+        if let Some(cfg) = config {
+            for server in &cfg.servers {
+                println!("{}", server.id);
+            }
         }
+        return 0;
     }
-    // Pangolin
-    if let Some(arr) = value.get("domains").and_then(|d| d.as_array()) {
-        let names: Vec<_> = arr
-            .iter()
-            .filter_map(|d| {
-                d.get("baseDomain")
-                    .and_then(|n| n.as_str())
-                    .map(str::to_string)
-            })
-            .collect();
-        if !names.is_empty() {
-            return names;
-        }
-    }
-    // Cloudflare (array at root)
-    if let Some(arr) = value.as_array() {
-        let names: Vec<_> = arr
-            .iter()
-            .filter_map(|z| z.get("name").and_then(|n| n.as_str()).map(str::to_string))
-            .collect();
-        if !names.is_empty() {
-            return names;
-        }
-    }
-    Vec::new()
-}
 
-/// Query every hosted zone for records whose DNS name equals `label`.
-/// When `all_subdomains` is true, records beneath `label` in each zone are also included.
-/// Zones where the label does not exist are silently skipped.
-pub async fn search_bare_label_in_zones<C: ZoneRead + Send + Sync>(
-    client: &C,
-    label: &str,
-    all_subdomains: bool,
-    options: ListRecordsOptions,
-) -> Result<ListRecordsResponse> {
-    let zones_value = client.list_zones(1, 1000).await?;
-    let zone_names = extract_zone_names(&zones_value);
-
-    let mut all_zone_records = Vec::new();
-    for zone_name in &zone_names {
-        let target_fqdn = format!("{label}.{zone_name}");
-        if all_subdomains {
-            let mut resp = match client
-                .list_records(zone_name, Some(zone_name.as_str()), options)
-                .await
-            {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            filter_records_by_domain(&mut resp, &target_fqdn, true);
-            all_zone_records.extend(resp.zones);
-        } else {
-            match client
-                .list_records(&target_fqdn, Some(zone_name.as_str()), options)
-                .await
-            {
-                Ok(mut resp) => {
-                    // Cloudflare ignores the domain argument and returns the full
-                    // zone record set, so filter to the exact target FQDN.
-                    filter_records_by_domain(&mut resp, &target_fqdn, false);
-                    all_zone_records.extend(resp.zones);
+    if let Command::Config(config_cmd) = cli.command {
+        return match config_cmd {
+            cli::ConfigCmd::Init { force } => match config::init_config(cli.config, force) {
+                Ok(path) => {
+                    println!("Wrote config file: {}", path.display());
+                    0
                 }
-                Err(_) => {} // label doesn't exist in this zone
+                Err(e) => render_error(e),
+            },
+
+            cli::ConfigCmd::Print => {
+                let toml = match config::AppConfig::load_if_exists(cli.config.clone()) {
+                    Ok(Some(cfg)) => cfg.redact().render_toml(),
+                    Ok(None) => config::AppConfig::render_starter_toml(),
+                    Err(e) => return render_error(e),
+                };
+                match toml {
+                    Ok(s) => {
+                        print!("{s}");
+                        0
+                    }
+                    Err(e) => render_error(e),
+                }
+            }
+
+            cli::ConfigCmd::Add {
+                id,
+                vendor,
+                location,
+                base_url,
+                token_env,
+                token,
+                org_id,
+                readonly,
+                allow_zone,
+            } => {
+                let server = if id.is_none() {
+                    match cli::interactive::run_add_wizard() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Error: {e:?}");
+                            return 1;
+                        }
+                    }
+                } else {
+                    config::DnsServerConfig {
+                        id: id.unwrap(),
+                        vendor,
+                        location,
+                        base_url,
+                        token,
+                        token_env,
+                        org_id,
+                        mcp: config::McpPermissions {
+                            readonly,
+                            allowed_zones: allow_zone,
+                        },
+                    }
+                };
+                match config::add_server(cli.config, server) {
+                    Ok(path) => {
+                        println!("Updated config file: {}", path.display());
+                        0
+                    }
+                    Err(e) => render_error(e),
+                }
+            }
+        };
+    }
+
+    let app_config = match config::AppConfig::load(cli.config.clone()) {
+        Ok(config) => config,
+        Err(e) => return render_error(e),
+    };
+
+    if let Command::Record(RecordCmd::List {
+        domain,
+        zone,
+        all_subdomains,
+        servers: subcmd_servers,
+        use_local_ip,
+        json,
+    }) = &cli.command
+    {
+        let effective_servers: &[String] = if !subcmd_servers.is_empty() {
+            subcmd_servers
+        } else {
+            &cli.servers
+        };
+        let bare_label_without_zone = zone.is_none()
+            && domain
+                .as_deref()
+                .is_some_and(|domain| !domain.contains('.'));
+        let default_all_servers = (domain.is_none() || bare_label_without_zone)
+            && effective_servers.is_empty()
+            && app_config.as_ref().is_some_and(|c| c.servers.len() > 1);
+        if cli.all || !effective_servers.is_empty() || default_all_servers {
+            return run_record_list_across_servers(
+                &cli,
+                app_config.as_ref(),
+                domain.as_deref(),
+                zone.as_deref(),
+                *all_subdomains,
+                effective_servers,
+                *use_local_ip,
+                *json,
+            )
+            .await;
+        }
+    }
+
+    if let Command::Zone(ZoneCmd::Transfer {
+        zone,
+        from,
+        to,
+        overwrite,
+        overwrite_zone,
+    }) = &cli.command
+    {
+        if cli.token.is_some() || cli.base_url.is_some() {
+            return render_error(Error::parse(
+                "zone transfer does not accept --token/--base-url; \
+                 configure credentials per server via config file or environment variables",
+            ));
+        }
+        return run_zone_transfer(app_config.as_ref(), zone, from, to, *overwrite, *overwrite_zone)
+            .await;
+    }
+
+    if cli.servers.len() > 1 {
+        return render_error(Error::parse(
+            "multiple --server flags are only valid with `record list`; \
+             use a single --server for all other commands",
+        ));
+    }
+
+    let policy = match cli_policy(&cli, app_config.as_ref()) {
+        Ok(p) => p,
+        Err(e) => return render_error(e),
+    };
+
+    let client = match VendorClient::from_cli_options(
+        app_config.as_ref(),
+        ClientOverrides {
+            selected_server: cli.servers.first().map(|s| s.as_str()),
+            base_url: cli.base_url.as_deref(),
+            token: cli.token.as_deref(),
+        },
+    ) {
+        Ok(client) => client,
+        Err(e) => return render_error(e),
+    };
+
+    run_with_client(cli, client, policy).await
+}
+
+pub fn render_error(e: Error) -> i32 {
+    let code = e.exit_code();
+    eprintln!("{:?}", Report::from(e));
+    code
+}
+
+// ─── Policy helpers ───────────────────────────────────────────────────────────
+
+pub fn cli_policy(cli: &cli::Cli, config: Option<&AppConfig>) -> Result<Policy> {
+    let mcp = config
+        .and_then(|c| {
+            c.selected_server(cli.servers.first().map(|s| s.as_str()))
+                .ok()
+        })
+        .map(|s| &s.mcp);
+
+    let readonly = cli.readonly || mcp.is_some_and(|p| p.readonly);
+    let allowed_zones = cli_allowed_zones(cli, mcp)?;
+    Ok(Policy::new(readonly, allowed_zones))
+}
+
+fn cli_allowed_zones(
+    cli: &cli::Cli,
+    mcp: Option<&McpPermissions>,
+) -> Result<Option<Vec<String>>> {
+    let configured = mcp.and_then(|permissions| {
+        (!permissions.allowed_zones.is_empty()).then_some(&permissions.allowed_zones)
+    });
+
+    if cli.allow_zone.is_empty() {
+        return Ok(configured.cloned());
+    }
+
+    let Some(configured) = configured else {
+        return Ok(Some(cli.allow_zone.clone()));
+    };
+
+    let configured_policy = Policy::new(false, Some(configured.clone()));
+    for zone in &cli.allow_zone {
+        configured_policy.check_zone(zone).map_err(|_| {
+            Error::policy_violation(
+                format!(
+                    "--allow-zone '{zone}' is outside this server's configured MCP allowed zones"
+                ),
+                "Remove the override or choose a zone already permitted by this server's config.",
+            )
+        })?;
+    }
+
+    Ok(Some(cli.allow_zone.clone()))
+}
+
+// ─── Client dispatch ──────────────────────────────────────────────────────────
+
+async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
+    cli: cli::Cli,
+    client: C,
+    policy: Policy,
+) -> i32 {
+    match cli.command {
+        Command::Mcp => {
+            if policy.readonly {
+                tracing::info!("MCP server starting in read-only mode");
+            }
+            if let Some(ref zones) = policy.allowed_zones {
+                tracing::info!("MCP server zone restriction: {}", zones.join(", "));
+            }
+            tracing::info!("Starting MCP server (stdio)");
+
+            let dns_server = DnsServer::new(client, policy);
+            let transport = (tokio::io::stdin(), tokio::io::stdout());
+            match dns_server.serve(transport).await {
+                Ok(service) => match service.waiting().await {
+                    Ok(_) => 0,
+                    Err(e) => {
+                        eprintln!("error: MCP transport error: {e}");
+                        1
+                    }
+                },
+                Err(e) => {
+                    eprintln!("error: failed to start MCP server: {e}");
+                    1
+                }
+            }
+        }
+        other => match run(&client, other).await {
+            Ok(_) => 0,
+            Err(e) => render_error(e),
+        },
+    }
+}
+
+// ─── Multi-server record list ─────────────────────────────────────────────────
+
+async fn run_record_list_across_servers(
+    cli: &cli::Cli,
+    app_config: Option<&AppConfig>,
+    domain: Option<&str>,
+    zone: Option<&str>,
+    all_subdomains: bool,
+    servers: &[String],
+    use_local_ip: bool,
+    json: bool,
+) -> i32 {
+    if cli.token.is_some() || cli.base_url.is_some() {
+        return render_error(Error::parse(
+            "cross-server record list does not accept --token/--base-url; configure credentials per server via config file or environment variables",
+        ));
+    }
+
+    let Some(cfg) = app_config else {
+        return render_error(Error::parse(
+            "--all/--server for record list requires a config file with server entries",
+        ));
+    };
+
+    let query_all_servers = cli.all || servers.is_empty();
+    let selected: Vec<&config::DnsServerConfig> = if query_all_servers {
+        cfg.servers.iter().collect()
+    } else {
+        match app::select_servers(cfg, servers) {
+            Ok(s) => s,
+            Err(e) => return render_error(e),
+        }
+    };
+
+    if selected.is_empty() {
+        return render_error(Error::parse(
+            "--all requested, but no servers are configured; add at least one server in the config file",
+        ));
+    }
+
+    let options = ListRecordsOptions {
+        use_local_ip,
+        all_subdomains,
+    };
+
+    let results =
+        app::query_records_across_servers(&selected, domain, zone, all_subdomains, options).await;
+
+    let mut json_zones = Vec::new();
+    let mut printed_servers = 0usize;
+
+    for (server_id, vendor_kind, result) in results {
+        let server = cfg.servers.iter().find(|s| s.id == server_id).unwrap();
+        match result {
+            Ok(response) => {
+                if json {
+                    for mut zone_records in response.zones {
+                        if zone_records.zone.id.is_none() {
+                            zone_records.zone.id = Some(zone_records.zone.name.clone());
+                        }
+                        json_zones.push(serde_json::json!({
+                            "serverName": server.id,
+                            "serverId": server.id,
+                            "vendor": format!("{:?}", vendor_kind),
+                            "zone": zone_records.zone,
+                            "records": zone_records.records,
+                        }));
+                    }
+                } else if !response.zones.is_empty() {
+                    if printed_servers > 0 {
+                        println!();
+                    }
+                    println!("=== Server: {} ({:?}) ===", server.id, server.vendor);
+                    records::print_records_table(&response);
+                    printed_servers += 1;
+                }
+            }
+            Err(e) => return render_error(e),
+        }
+    }
+
+    if json {
+        match serde_json::to_string_pretty(&json_zones) {
+            Ok(pretty) => println!("{pretty}"),
+            Err(e) => {
+                return render_error(Error::parse(format!(
+                    "could not serialise record list response: {e}"
+                )));
             }
         }
     }
-    Ok(ListRecordsResponse {
-        zones: all_zone_records,
-    })
+
+    0
 }
 
-/// Query every hosted zone and return its complete record set.
-pub async fn list_records_for_all_zones<C: ZoneRead + Send + Sync>(
-    client: &C,
-    options: ListRecordsOptions,
-) -> Result<ListRecordsResponse> {
-    let zones_value = client.list_zones(1, 1000).await?;
-    let zone_names = extract_zone_names(&zones_value);
+// ─── Zone transfer ────────────────────────────────────────────────────────────
 
-    let mut all_zone_records = Vec::new();
-    for zone_name in &zone_names {
-        let resp = client
-            .list_records(zone_name, Some(zone_name.as_str()), options)
-            .await?;
-        all_zone_records.extend(resp.zones);
-    }
+async fn run_zone_transfer(
+    app_config: Option<&AppConfig>,
+    zone: &str,
+    from_id: &str,
+    to_id: &str,
+    overwrite: bool,
+    overwrite_zone: bool,
+) -> i32 {
+    let Some(cfg) = app_config else {
+        return render_error(Error::parse(
+            "zone transfer requires a config file with --from and --to server entries",
+        ));
+    };
 
-    Ok(ListRecordsResponse {
-        zones: all_zone_records,
-    })
-}
+    let from_vendor = match cfg.selected_server(Some(from_id)) {
+        Ok(s) => s.vendor,
+        Err(e) => return render_error(e),
+    };
+    let to_vendor = match cfg.selected_server(Some(to_id)) {
+        Ok(s) => s.vendor,
+        Err(e) => return render_error(e),
+    };
 
-/// Retain only records whose FQDN matches `target_fqdn` (or, when `all_subdomains`
-/// is true, any record at or under `target_fqdn`). Zones that become empty are dropped.
-pub fn filter_records_by_domain(
-    response: &mut ListRecordsResponse,
-    target_fqdn: &str,
-    all_subdomains: bool,
-) {
-    let target = target_fqdn.trim_end_matches('.').to_lowercase();
-    for zone_records in &mut response.zones {
-        let zone = zone_records.zone.name.to_lowercase();
-        zone_records.records.retain(|r| {
-            let record_name = r.name.trim_end_matches('.').to_lowercase();
-            let record_fqdn = if record_name == "@" {
-                zone.clone()
-            } else if record_name == zone || record_name.ends_with(&format!(".{zone}")) {
-                record_name
-            } else {
-                format!("{record_name}.{zone}")
-            };
-            if all_subdomains {
-                record_fqdn == target || record_fqdn.ends_with(&format!(".{target}"))
-            } else {
-                record_fqdn == target
+    eprintln!("Exporting '{zone}' from '{from_id}' ({from_vendor:?})…");
+    eprintln!("Importing into '{to_id}' ({to_vendor:?})…");
+
+    match app::transfer_zone(cfg, zone, from_id, to_id, overwrite, overwrite_zone).await {
+        Ok(Some(result)) => match serde_json::to_string_pretty(&result) {
+            Ok(pretty) => {
+                println!("{pretty}");
+                0
             }
-        });
+            Err(e) => render_error(Error::parse(format!("serialise error: {e}"))),
+        },
+        Ok(None) => 0,
+        Err(e) => render_error(e),
     }
-    response.zones.retain(|z| !z.records.is_empty());
 }
+
+// ─── Command dispatch ─────────────────────────────────────────────────────────
 
 #[tracing::instrument(skip(client, command), fields(command = tracing::field::Empty))]
 pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
@@ -222,8 +462,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
     };
     tracing::Span::current().record("command", cmd_name);
     tracing::info!(command = cmd_name, "running CLI command");
-    // Record list has its own output format logic — handle it before the
-    // generic JSON path.
+
     if let Command::Record(RecordCmd::List {
         domain,
         zone,
@@ -233,6 +472,8 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         servers: _,
     }) = command
     {
+        use crate::core::dns::util::{infer_zone, resolve_fqdn};
+
         let options = ListRecordsOptions {
             use_local_ip,
             all_subdomains,
@@ -243,17 +484,10 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             let is_bare_label = zone.is_none() && !effective_fqdn.contains('.');
 
             if is_bare_label {
-                // No zone given and no dots — search every hosted zone for this label.
-                search_bare_label_in_zones(client, &effective_fqdn, all_subdomains, options).await?
+                app::search_bare_label_in_zones(client, &effective_fqdn, all_subdomains, options)
+                    .await?
             } else {
-                // For --all-subdomains we need every record in the zone, so we query
-                // the zone apex and let filter_records_by_domain narrow the results.
                 let (query_domain, query_zone) = if all_subdomains {
-                    // Use the zone from --zone if given, otherwise try to infer it by
-                    // stripping the leftmost label.  If inference would produce a TLD
-                    // (no dot in the result), the effective_fqdn IS the zone apex, so
-                    // use it directly — e.g. `example.com --all-subdomains` stays as
-                    // `example.com`, not the bogus `com`.
                     let zone_name = zone
                         .clone()
                         .or_else(|| infer_zone(&effective_fqdn).filter(|z| z.contains('.')))
@@ -268,12 +502,12 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
                     .await?;
 
                 if all_subdomains {
-                    filter_records_by_domain(&mut resp, &effective_fqdn, true);
+                    app::filter_records_by_domain(&mut resp, &effective_fqdn, true);
                 }
                 resp
             }
         } else {
-            list_records_for_all_zones(client, options).await?
+            app::list_records_for_all_zones(client, options).await?
         };
 
         if json {
@@ -297,8 +531,8 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
     }
 
     let result = match command {
-        Command::Mcp => unreachable!("handled in main"),
-        Command::Config(_) => unreachable!("handled in main"),
+        Command::Mcp => unreachable!("handled in execute"),
+        Command::Config(_) => unreachable!("handled in execute"),
         Command::Record(RecordCmd::List { .. }) => unreachable!("handled above"),
 
         Command::Zone(cmd) => match cmd {
@@ -308,7 +542,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             ZoneCmd::Enable { zone } => client.enable_zone(&zone).await?,
             ZoneCmd::Disable { zone } => client.disable_zone(&zone).await?,
             ZoneCmd::Export { .. } => unreachable!("handled above"),
-            ZoneCmd::Transfer { .. } => unreachable!("handled in main"),
+            ZoneCmd::Transfer { .. } => unreachable!("handled in execute"),
             ZoneCmd::Import {
                 zone,
                 file,
@@ -379,7 +613,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         Command::Settings => client.get_settings().await?,
 
         Command::Completions { .. } | Command::ServerIds => {
-            unreachable!("handled in main")
+            unreachable!("handled in execute")
         }
     };
 
@@ -399,8 +633,11 @@ fn print_result(value: &Value) -> Result<()> {
 mod tests {
     use super::*;
     use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord, ZoneRecords};
+    use crate::core::dns::service::ZoneRead;
     use serde_json::{Value, json};
     use std::sync::Mutex;
+    use crate::control_plane::app::{extract_zone_names, filter_records_by_domain, list_records_for_all_zones};
+    use crate::core::dns::util::{infer_zone, resolve_fqdn};
 
     fn make_zone(name: &str) -> ZoneInfo {
         ZoneInfo {
@@ -472,7 +709,6 @@ mod tests {
 
     #[test]
     fn infer_zone_tld_falls_back_to_apex_for_all_subdomains() {
-        // example.com → infer_zone gives "com" (no dot) → should not be used as zone
         let z = infer_zone("example.com");
         let filtered = z.filter(|z| z.contains('.'));
         assert!(filtered.is_none(), "TLD result should be filtered out");

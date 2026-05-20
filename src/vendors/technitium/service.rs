@@ -3,7 +3,7 @@
 use serde_json::Value;
 use tracing::instrument;
 
-use crate::control_plane::config::VendorKind;
+use crate::vendors::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;

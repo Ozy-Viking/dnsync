@@ -1,13 +1,14 @@
 pub mod api;
 pub mod client;
-pub mod config;
 pub mod mapping;
 pub mod responses;
 pub mod service;
 
+pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
+
 use std::env;
 
-use crate::control_plane::config::{self as app_config, DnsServerConfig};
+use crate::control_plane::config::DnsServerConfig;
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
 use crate::vendors::runtime::ClientOverrides;
@@ -20,7 +21,7 @@ pub fn client_from_cli_without_config(
         .map(ToOwned::to_owned)
         .or_else(|| env::var("DNSYNC_TECHNITIUM_BASE_URL").ok())
         .or_else(|| env::var("TECHNITIUM_BASE_URL").ok())
-        .unwrap_or_else(|| app_config::TECHNITIUM_DEFAULT_BASE_URL.to_string());
+        .unwrap_or_else(|| TECHNITIUM_DEFAULT_BASE_URL.to_string());
     let token = overrides
         .token
         .map(ToOwned::to_owned)
@@ -45,7 +46,7 @@ pub fn client_from_server(
         .or_else(|| env::var("DNSYNC_TECHNITIUM_BASE_URL").ok())
         .or_else(|| env::var("TECHNITIUM_BASE_URL").ok())
         .or_else(|| server.base_url.clone())
-        .unwrap_or_else(|| app_config::TECHNITIUM_DEFAULT_BASE_URL.to_string());
+        .unwrap_or_else(|| TECHNITIUM_DEFAULT_BASE_URL.to_string());
     let token = overrides
         .token
         .map(ToOwned::to_owned)

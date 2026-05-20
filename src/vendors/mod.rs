@@ -1,5 +1,3 @@
-use crate::control_plane::config::VendorKind;
-
 pub use crate::core::dns::service::{DnsRead, DnsService, DnsVendor, DnsWrite};
 
 pub mod runtime;
@@ -12,6 +10,30 @@ pub mod pangolin;
 
 #[cfg(feature = "cloudflare")]
 pub mod cloudflare;
+
+/// Identifies which DNS vendor backend a server entry uses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum VendorKind {
+    #[default]
+    Technitium,
+    Pangolin,
+    Cloudflare,
+}
+
+/// Returns the default base URL for a vendor backend.
+pub fn vendor_default_base_url(vendor: VendorKind) -> &'static str {
+    match vendor {
+        #[cfg(feature = "technitium")]
+        VendorKind::Technitium => technitium::TECHNITIUM_DEFAULT_BASE_URL,
+        #[cfg(feature = "pangolin")]
+        VendorKind::Pangolin => pangolin::PANGOLIN_DEFAULT_BASE_URL,
+        #[cfg(feature = "cloudflare")]
+        VendorKind::Cloudflare => cloudflare::CLOUDFLARE_DEFAULT_BASE_URL,
+        #[allow(unreachable_patterns)]
+        _ => "",
+    }
+}
 
 pub struct DnsClient<Vendor> {
     vendor_id: VendorKind,

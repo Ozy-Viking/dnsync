@@ -122,7 +122,7 @@ pub enum ConfigCmd {
 
         /// DNS vendor backend
         #[arg(long, default_value = "technitium")]
-        vendor: crate::control_plane::config::VendorKind,
+        vendor: crate::vendors::VendorKind,
 
         /// Base URL of the DNS server API
         #[arg(long)]

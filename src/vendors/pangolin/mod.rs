@@ -1,9 +1,11 @@
 pub mod client;
 pub mod service;
 
+pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
+
 use std::env;
 
-use crate::control_plane::config::{self as app_config, DnsServerConfig};
+use crate::control_plane::config::DnsServerConfig;
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
 use crate::vendors::runtime::ClientOverrides;
@@ -17,7 +19,7 @@ pub fn client_from_server(
         .map(ToOwned::to_owned)
         .or_else(|| env::var("DNSYNC_PANGOLIN_BASE_URL").ok())
         .or_else(|| server.base_url.clone())
-        .unwrap_or_else(|| app_config::PANGOLIN_DEFAULT_BASE_URL.to_string());
+        .unwrap_or_else(|| PANGOLIN_DEFAULT_BASE_URL.to_string());
     let token = overrides
         .token
         .map(ToOwned::to_owned)
@@ -42,6 +44,7 @@ pub fn client_from_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control_plane::config::AppConfig;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -58,7 +61,7 @@ mod tests {
     fn client_uses_default_base_url_from_config() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_pangolin_env();
-        let app_config: app_config::AppConfig = toml::from_str(
+        let app_config: AppConfig = toml::from_str(
             r#"
                 [[servers]]
                 id = "cloud"
@@ -72,7 +75,7 @@ mod tests {
 
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
-        assert_eq!(client.base_url, app_config::PANGOLIN_DEFAULT_BASE_URL);
+        assert_eq!(client.base_url, PANGOLIN_DEFAULT_BASE_URL);
         assert_eq!(client.org_id, "org_123");
     }
 
@@ -86,7 +89,7 @@ mod tests {
             std::env::set_var("DNSYNC_PANGOLIN_API_TOKEN", "pangolin-env-token");
             std::env::set_var("DNSYNC_PANGOLIN_ORG_ID", "env-org");
         }
-        let app_config: app_config::AppConfig = toml::from_str(
+        let app_config: AppConfig = toml::from_str(
             r#"
                 [[servers]]
                 id = "cloud"
