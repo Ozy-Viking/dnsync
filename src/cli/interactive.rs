@@ -1,4 +1,5 @@
 use inquire::{InquireError, MultiSelect, Select, Text};
+use inquire::validator::Validation;
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
@@ -6,9 +7,19 @@ use crate::control_plane::config::{
 };
 use crate::control_plane::policy::PolicyRule;
 
-pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
+pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig> {
+    let existing: Vec<String> = existing_ids.iter().map(|s| s.to_lowercase()).collect();
     let id = Text::new("Server ID:")
         .with_help_message("Unique identifier for this server entry")
+        .with_validator(move |input: &str| {
+            if existing.iter().any(|id| id == &input.to_lowercase()) {
+                Ok(Validation::Invalid(
+                    format!("a server with id '{input}' already exists").into(),
+                ))
+            } else {
+                Ok(Validation::Valid)
+            }
+        })
         .prompt()
         .map_err(wizard_err)?;
 
@@ -108,18 +119,13 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
 
     let mut allowed_zones: Vec<String> = Vec::new();
     loop {
-        if !allowed_zones.is_empty() {
-            println!("  Zones so far: {}", allowed_zones.join(", "));
-        }
         let zone = match Text::new("Add allowed zone (leave empty to finish):")
             .with_help_message("Subdomains of an allowed zone are also permitted")
             .prompt()
         {
             Ok(z) => z,
-            // Esc or Ctrl+C while adding zones = done, not an error
             Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
-                println!("  bye felicia");
-                break;
+                return Err(miette::miette!("cancelled"));
             }
             Err(e) => return Err(wizard_err(e)),
         };
