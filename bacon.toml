@@ -58,9 +58,20 @@ command = [
     "cargo",
     "nextest",
     "run",
-    "--hide-progress-bar",
+    "--workspace",
+    "--all-targets",
+    "--show-progress",
+    "none",
+    "--status-level",
+    "fail",
+    "--final-status-level",
+    "fail",
     "--failure-output",
     "final",
+    "--success-output",
+    "never",
+    "--no-input-handler",
+    "--no-output-indent",
 ]
 need_stdout = true
 analyzer = "nextest"
@@ -134,4 +145,4 @@ c = "job:clippy-all" # comment this to have 'c' run clippy on only the default t
 auto = true
 exporter = "locations"
 path = ".bacon-locations"
-line_format = "{item-idx}|:|{kind}|:|{job}|:|{path}|:|{line}|:|{column}|:|{message}"
+line_format = "idx={item-idx}|:|kind={kind}|:|job={job}|:|file={path}|:|line={line}|:|col={column}|:|message={message}|:|context={context}"

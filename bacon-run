@@ -24,120 +24,48 @@ Equivalent base commands:
   --nextest    bacon nextest    ≈ cargo nextest run
   --next       alias for --nextest
 
-Diagnostics files:
+Diagnostics files (bacon overwrites on each run, so each mode gets its own):
   --check      writes .bacon-check-locations
   --pedantic   writes .bacon-pedantic-locations
   --test       writes .bacon-testing-locations
   --nextest    writes .bacon-testing-locations
   --next       writes .bacon-testing-locations
 
-Check / pedantic file format:
-  idx=<item index>|:|kind=<warning/error>|:|job=<bacon job>|:|file=<source path>|:|line=<line>|:|col=<column>|:|message=<short diagnostic>|:|context=<full compiler or clippy context>
-
-Check / pedantic fields:
-  idx=       Bacon item index. Do not assume this is globally unique.
-  kind=      Diagnostic kind, usually warning or error.
-  job=       Bacon job name, for example check or pedantic.
-  file=      Source file path.
-  line=      Source line number.
-  col=       Source column number.
-  message=   Short diagnostic message.
-  context=   Full compiler/Clippy span, notes, help text, and suggested fixes.
-
-Nextest / test file format:
-  idx=<item index>|:|kind=<test>|:|job=<bacon job>|:|loc=<source path:line:column>|:|line=<line>|:|col=<column>|:|message=<short diagnostic>|:|context=<test failure context>
-
-Nextest / test fields:
-  idx=       Bacon item index. Do not assume this is globally unique.
-  kind=      Usually test.
-  job=       Bacon job name, usually nextest or test.
-  loc=       Test failure location. May include file, line, and column together.
-  line=      May be empty for nextest failures.
-  col=       May be present even when line is empty.
-  message=   May be empty for nextest failures.
-  context=   Assertion failure, left/right values, panic text, or other failure output.
-
-Notes:
-  --test and --nextest both use bacon-testing.toml.
-  --nextest is preferred over --test.
-  --all-headless starts check, pedantic, and nextest in the background and waits.
-  Each diagnostics line is split by the delimiter: |:|
+Each diagnostics line is split by the delimiter: |:|
 USAGE
 }
 
-need_file() {
-    local file="$1"
+# Only the path differs per mode; format and other export settings come from bacon.toml.
+CHECK_PATH='[exports.locations]
+path = ".bacon-check-locations"'
 
-    if [[ ! -f "$file" ]]; then
-        echo "Missing required Bacon config overlay: $file" >&2
-        exit 1
-    fi
-}
+PEDANTIC_PATH='[exports.locations]
+path = ".bacon-pedantic-locations"'
 
-run_check() {
-    need_file "$repo_root/bacon-check.toml"
-    BACON_CONFIG="$repo_root/bacon-check.toml" exec bacon check
-}
+TESTING_PATH='[exports.locations]
+path = ".bacon-testing-locations"'
 
-run_pedantic() {
-    need_file "$repo_root/bacon-pedantic.toml"
-    BACON_CONFIG="$repo_root/bacon-pedantic.toml" exec bacon pedantic
-}
-
-run_test() {
-    need_file "$repo_root/bacon-testing.toml"
-    BACON_CONFIG="$repo_root/bacon-testing.toml" exec bacon test
-}
-
-run_nextest() {
-    need_file "$repo_root/bacon-testing.toml"
-    BACON_CONFIG="$repo_root/bacon-testing.toml" exec bacon nextest
-}
-
-run_all_headless() {
-    need_file "$repo_root/bacon-check.toml"
-    need_file "$repo_root/bacon-pedantic.toml"
-    need_file "$repo_root/bacon-testing.toml"
-
+case "${1:-}" in
+--check) exec bacon check --config-toml "$CHECK_PATH" ;;
+--pedantic) exec bacon pedantic --config-toml "$PEDANTIC_PATH" ;;
+--test) exec bacon test --config-toml "$TESTING_PATH" ;;
+--nextest) exec bacon nextest --config-toml "$TESTING_PATH" ;;
+--next) exec bacon nextest --config-toml "$TESTING_PATH" ;;
+--all-headless)
     echo "Starting Bacon watchers in headless mode..."
     echo "Press Ctrl-C to stop all watchers."
 
-    BACON_CONFIG="$repo_root/bacon-check.toml" bacon --headless -j check &
-    check_pid="$!"
-
-    BACON_CONFIG="$repo_root/bacon-pedantic.toml" bacon --headless -j pedantic &
-    pedantic_pid="$!"
-
-    BACON_CONFIG="$repo_root/bacon-testing.toml" bacon --headless -j nextest &
-    testing_pid="$!"
+    bacon --headless -j check --config-toml "$CHECK_PATH" &
+    bacon --headless -j pedantic --config-toml "$PEDANTIC_PATH" &
+    bacon --headless -j nextest --config-toml "$TESTING_PATH" &
 
     cleanup() {
         echo
         echo "Stopping Bacon watchers..."
-        kill "$check_pid" "$pedantic_pid" "$testing_pid" 2>/dev/null || true
-        wait "$check_pid" "$pedantic_pid" "$testing_pid" 2>/dev/null || true
+        kill 0 2>/dev/null || true
     }
-
     trap cleanup INT TERM EXIT
-
-    wait "$check_pid" "$pedantic_pid" "$testing_pid"
-}
-
-case "${1:-}" in
---check)
-    run_check
-    ;;
---pedantic)
-    run_pedantic
-    ;;
---test)
-    run_test
-    ;;
---nextest)
-    run_nextest
-    ;;
---all-headless)
-    run_all_headless
+    wait
     ;;
 -h | --help | "")
     usage
