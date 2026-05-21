@@ -97,11 +97,12 @@ async fn run(cli: Cli) -> i32 {
                 allow_zone,
             } => {
                 let server = if id.is_none() {
-                    let existing_ids: Vec<String> = config::AppConfig::load_if_exists(cli.config.clone())
-                        .ok()
-                        .flatten()
-                        .map(|c| c.servers.into_iter().map(|s| s.id).collect())
-                        .unwrap_or_default();
+                    let existing_ids: Vec<String> =
+                        config::AppConfig::load_if_exists(cli.config.clone())
+                            .ok()
+                            .flatten()
+                            .map(|c| c.servers.into_iter().map(|s| s.id).collect())
+                            .unwrap_or_default();
                     match cli::interactive::run_add_wizard(&existing_ids) {
                         Ok(s) => s,
                         Err(e) if e.to_string() == "cancelled" => {
@@ -115,7 +116,7 @@ async fn run(cli: Cli) -> i32 {
                     }
                 } else {
                     config::DnsServerConfig {
-                        id,
+                        id: id.unwrap_or_default(),
                         vendor,
                         location,
                         base_url,
@@ -127,14 +128,6 @@ async fn run(cli: Cli) -> i32 {
                             access,
                             allowed_zones: allow_zone,
                         },
-                    }
-                } else {
-                    match cli::interactive::run_add_wizard() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("Error: {e:?}");
-                            return 1;
-                        }
                     }
                 };
                 match config::add_server(cli.config, server) {
