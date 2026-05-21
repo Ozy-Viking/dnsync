@@ -2,7 +2,7 @@ use inquire::{Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
-    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, VendorKind,
+    PIHOLE_DEFAULT_BASE_URL, ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, VendorKind,
 };
 use crate::control_plane::policy::PolicyRule;
 
@@ -26,6 +26,10 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
                 kind: VendorKind::Cloudflare,
                 label: "cloudflare",
             },
+            VendorChoice {
+                kind: VendorKind::Pihole,
+                label: "pihole",
+            },
         ];
         Select::new("Vendor:", choices)
             .prompt()
@@ -37,6 +41,7 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
         VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
         VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
         VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
+        VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
     };
 
     let base_url = optional_text(

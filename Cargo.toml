@@ -13,10 +13,11 @@ name = "dnslib"
 path = "src/lib.rs"
 
 [features]
-default = ["technitium", "pangolin", "cloudflare"]
+default = ["technitium", "pangolin", "cloudflare", "pihole"]
 technitium = []
 pangolin = []
 cloudflare = []
+pihole = []
 
 [dependencies]
 rmcp = { version = "1.7", features = ["server", "transport-io"] }

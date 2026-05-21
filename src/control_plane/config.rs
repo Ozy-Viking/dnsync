@@ -14,6 +14,7 @@ use crate::core::secret::ApiToken;
 pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
 pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
 pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
+pub const PIHOLE_DEFAULT_BASE_URL: &str = "http://pi.hole";
 
 /// Supported DNS vendor backends.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -23,6 +24,7 @@ pub enum VendorKind {
     Technitium,
     Pangolin,
     Cloudflare,
+    Pihole,
 }
 
 /// Whether the DNS server is on a local network or an external/cloud service.
@@ -336,6 +338,7 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         VendorKind::Technitium => "technitium",
         VendorKind::Pangolin => "pangolin",
         VendorKind::Cloudflare => "cloudflare",
+        VendorKind::Pihole => "pihole",
     });
     if let Some(loc) = server.location {
         tbl["location"] = value(match loc {
@@ -506,6 +509,7 @@ impl DnsServerConfig {
             VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
             VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
             VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
+            VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
         });
         if url_is_local(url).await {
             ServerLocation::Local
@@ -523,6 +527,7 @@ impl DnsServerConfig {
                 VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
                 VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL.to_string(),
                 VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL.to_string(),
+                VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL.to_string(),
             })
     }
 

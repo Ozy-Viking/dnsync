@@ -13,6 +13,9 @@ pub mod pangolin;
 #[cfg(feature = "cloudflare")]
 pub mod cloudflare;
 
+#[cfg(feature = "pihole")]
+pub mod pihole;
+
 pub struct DnsClient<Vendor> {
     vendor_id: VendorKind,
     vendor_client: Vendor,

@@ -25,6 +25,8 @@ pub enum VendorClient {
     Pangolin(crate::vendors::pangolin::client::PangolinClient),
     #[cfg(feature = "cloudflare")]
     Cloudflare(crate::vendors::cloudflare::client::CloudflareClient),
+    #[cfg(feature = "pihole")]
+    Pihole(crate::vendors::pihole::client::PiholeClient),
 }
 
 impl VendorClient {
@@ -53,6 +55,10 @@ impl VendorClient {
             #[cfg(feature = "cloudflare")]
             VendorKind::Cloudflare => Ok(Self::Cloudflare(
                 crate::vendors::cloudflare::client_from_server(server, ClientOverrides::default())?,
+            )),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Ok(Self::Pihole(
+                crate::vendors::pihole::client_from_server(server, ClientOverrides::default())?,
             )),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
@@ -85,6 +91,8 @@ impl VendorClient {
             }
             #[cfg(feature = "pangolin")]
             VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone export")),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Err(Error::unsupported("Pi-hole", "zone export")),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -141,6 +149,8 @@ impl VendorClient {
             }
             #[cfg(feature = "pangolin")]
             VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone import")),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Err(Error::unsupported("Pi-hole", "zone import")),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -165,6 +175,10 @@ impl VendorClient {
             #[cfg(feature = "cloudflare")]
             VendorKind::Cloudflare => Ok(Self::Cloudflare(
                 crate::vendors::cloudflare::client_from_server(server, overrides)?,
+            )),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Ok(Self::Pihole(
+                crate::vendors::pihole::client_from_server(server, overrides)?,
             )),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
@@ -198,6 +212,8 @@ macro_rules! delegate_vendor {
             Self::Pangolin($client) => $body,
             #[cfg(feature = "cloudflare")]
             Self::Cloudflare($client) => $body,
+            #[cfg(feature = "pihole")]
+            Self::Pihole($client) => $body,
         }
     };
 }
