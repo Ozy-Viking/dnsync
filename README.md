@@ -1,8 +1,10 @@
 # dnsync
 
-A Rust CLI + MCP server for syncing DNS servers.
+A Rust CLI + MCP server for managing DNS servers.
 
 Use it interactively from the terminal, or run it as an MCP server so Claude can manage your DNS.
+
+**Supported vendors:** Technitium · Pangolin · Cloudflare
 
 ## Build
 
@@ -29,10 +31,9 @@ Use `--config /path/to/config.toml` or `DNSYNC_CONFIG=/path/to/config.toml` to
 load a custom config file. When a config contains multiple DNS servers, select
 one with `--server <id>` or `DNSYNC_SERVER=<id>`.
 
-Set `DNSYNC_TECHNITIUM_API_TOKEN` in the environment, pass `--token`, or edit
-the config to use a different `token_env`. `--token` and `--base-url` are
-explicit command-line overrides only; vendor-specific environment variables are
-resolved by the selected vendor backend.
+`--token` and `--base-url` are explicit CLI overrides. Without them, credentials
+are resolved from vendor-specific environment variables and the selected server's
+config entry (see the resolution chain below).
 
 To preview the starter config without writing any files:
 
@@ -49,15 +50,31 @@ dns --config ./dnsync.toml config init
 dns config init --force   # overwrite an existing file
 ```
 
+To add a server entry interactively:
+
+```bash
+dns config add           # interactive wizard
+```
+
+Or non-interactively with flags:
+
+```bash
+dns config add --id home --vendor technitium --base-url-env HOME_DNS_URL --token-env HOME_DNS_TOKEN
+dns config add --id cf   --vendor cloudflare  --token-env CLOUDFLARE_API_TOKEN
+dns config add --id pg   --vendor pangolin    --org-id my-org --token-env PANGOLIN_API_TOKEN
+```
+
+### Example config
+
 ```toml
 [[servers]]
 id = "home"
 vendor = "technitium"
-base_url = "http://192.168.1.10:5380"
+base_url = "http://192.168.1.10:5380"   # or use base_url_env to read from an env var
 token_env = "DNSYNC_HOME_API_TOKEN"
 
 [servers.mcp]
-readonly = true
+access = "read"
 allowed_zones = ["example.com", "internal.lan"]
 
 [[servers]]
@@ -67,15 +84,32 @@ base_url = "http://192.168.1.20:5380"
 token_env = "DNSYNC_LAB_API_TOKEN"
 
 [servers.mcp]
-readonly = false
+access = "delete"
 allowed_zones = ["lab.example.com"]
+
+[[servers]]
+id = "cf"
+vendor = "cloudflare"
+token_env = "CLOUDFLARE_API_TOKEN"
+
+[[servers]]
+id = "pg"
+vendor = "pangolin"
+org_id = "my-org"
+token_env = "PANGOLIN_API_TOKEN"
 ```
 
-MCP permissions are applied per selected server. `readonly = true` blocks all
-mutating MCP tools for that server, and `allowed_zones` restricts zone-targeting
-MCP tools to the listed zones and their subdomains. `--allow-zone` /
-`DNS_ALLOWED_ZONES` can further narrow configured zones for a launch, but cannot
-broaden a server's configured allow-list.
+Vendor defaults when no `base_url` is set:
+- `technitium` → `http://localhost:5380`
+- `pangolin` → `https://api.pangolin.net/v1`
+- `cloudflare` → `https://api.cloudflare.com/client/v4`
+
+MCP permissions are applied per selected server. `access` controls the maximum
+permitted operation level (`read` = read-only, `write` = no deletes, `delete` =
+full access), and `allowed_zones` restricts zone-targeting MCP tools to the
+listed zones and their subdomains. `--allow-zone` / `DNS_ALLOWED_ZONES` can
+further narrow configured zones for a launch, but cannot broaden a server's
+configured allow-list.
 
 Flags and environment variables override config values:
 
@@ -83,17 +117,24 @@ Flags and environment variables override config values:
 |---|---|---|
 | `--config` | `DNSYNC_CONFIG` | release: `$XDG_CONFIG_HOME/dnsync/config.toml`; debug: `./.config/dnsync/config.toml` |
 | `--server` | `DNSYNC_SERVER` | only server in config |
-| `--base-url` | vendor-specific, for example `DNSYNC_TECHNITIUM_BASE_URL` | config `base_url`, then vendor default |
-| `--token` | vendor-specific, for example `DNSYNC_TECHNITIUM_API_TOKEN` | vendor env var → config `token_env` → env lookup, then `token` |
-| `--readonly` | `DNS_READONLY` | config `readonly` |
+| `--base-url` | — | vendor env var → config `base_url_env` → `base_url` → vendor default |
+| `--token` | — | vendor env var → config `token_env` → `token` |
+| `--access` | `DNS_ACCESS` | config `access` |
 | `--allow-zone` | `DNS_ALLOWED_ZONES` | config `allowed_zones` |
 
-Token resolution per server: `--token` → vendor-specific API token env var →
-`token_env` (env var named in config) → `token` (literal in config). Technitium
-also accepts legacy `TECHNITIUM_API_TOKEN` / `TECHNITIUM_BASE_URL` aliases inside
-the Technitium backend only.
+Credential resolution chain (highest priority first):
 
-For `vendor = "pangolin"`, the base URL defaults to `https://api.pangolin.net/v1` when no `--base-url`, `DNSYNC_PANGOLIN_BASE_URL`, or config `base_url` is set.
+| Step | Base URL | Token |
+|---|---|---|
+| 1 | `--base-url` flag | `--token` flag |
+| 2 | vendor env var (`DNSYNC_TECHNITIUM_BASE_URL`, `DNSYNC_PANGOLIN_BASE_URL`, `DNSYNC_CLOUDFLARE_BASE_URL`) | vendor env var (`DNSYNC_TECHNITIUM_API_TOKEN`, `DNSYNC_PANGOLIN_API_TOKEN`, `DNSYNC_CLOUDFLARE_API_TOKEN`) |
+| 3 | config `base_url_env` → env lookup | config `token_env` → env lookup |
+| 4 | config `base_url` literal | config `token` literal |
+| 5 | vendor default URL | — |
+
+Technitium also accepts legacy `TECHNITIUM_BASE_URL` / `TECHNITIUM_API_TOKEN` at step 2 (checked after `DNSYNC_TECHNITIUM_*`).
+
+Pangolin additionally requires `org_id` — resolved from `DNSYNC_PANGOLIN_ORG_ID` then config `org_id`.
 
 ---
 
@@ -103,15 +144,26 @@ For `vendor = "pangolin"`, the base URL defaults to `https://api.pangolin.net/v1
 dns [OPTIONS] <COMMAND>
 
 Commands:
-  config    Manage the config file (init, print)
-  mcp       Start as MCP stdio server
-  zone      Manage DNS zones
-  record    Manage DNS records
-  cache     Manage the DNS cache
-  stats     View server statistics
-  blocked   Manage blocked domains
-  allowed   Manage allowed (whitelist) domains
-  settings  Show server settings
+  config      Manage the config file (init, print, add)
+  mcp         Start as MCP stdio server
+  zone        Manage DNS zones
+  record      Manage DNS records
+  cache       Manage the DNS cache
+  stats       View server statistics
+  blocked     Manage blocked domains
+  allowed     Manage allowed (whitelist) domains
+  settings    Show server settings
+  completions Print a shell completion script to stdout
+```
+
+### Config
+
+```bash
+dns config init               # write the starter config file
+dns config init --force       # overwrite an existing file
+dns config print              # show current config (tokens redacted)
+dns config add                # interactive wizard — add a server entry
+dns config add --id home --vendor technitium --base-url http://192.168.1.10:5380 --token-env MY_TOKEN
 ```
 
 ### Zones
@@ -124,26 +176,67 @@ dns zone create internal.lan --type Forwarder
 dns zone enable example.com
 dns zone disable example.com
 dns zone delete example.com
+dns zone import example.com ./example.com.zone
+dns zone import example.com ./example.com.zone --overwrite-zone   # delete all records first
+dns zone export example.com                                       # prints BIND zone file to stdout
+dns zone export example.com --output ./example.com.zone          # write to file
+dns zone transfer example.com --from home --to lab               # copy zone between configured servers
 ```
 
 ### Records
+
+`record list` accepts an optional domain argument. Without a domain it lists all
+records across all configured servers. Supply `--zone` to qualify a bare label
+(e.g. `huly` + `--zone hankin.io` → `huly.hankin.io`); without `--zone`, the
+domain is matched against all zones.
 
 ```bash
 dns record list                         # all records from all configured servers
 dns record list --json                  # JSON array with serverName, zone, and records
 dns record list example.com
-dns record list example.com --use-local-ip
-dns record add --zone example.com --domain www.example.com --type A --value 93.184.216.34
-dns record add --zone example.com --domain example.com --type MX --value mail.example.com
-dns record add --zone example.com --domain example.com --type TXT --value "v=spf1 ~all"
-dns record delete --zone example.com --domain www.example.com --type A --value 93.184.216.34
+dns record list example.com --zone example.com
+dns record list www --zone example.com
+dns record list example.com --all-subdomains   # include all subdomain records
+dns record list example.com --json             # raw JSON output
+dns record list example.com --use-local-ip     # prefer private/local IP for A/AAAA
+dns --all record list example.com              # query all configured servers
+dns --server home --server lab record list example.com  # query specific servers
 ```
 
-For Pangolin servers, `record list` reads Pangolin's real DNS records from
-`/org/{orgId}/domain/{domainId}/dns-records` and normalizes them into the same
-record shape used by other vendors. `--use-local-ip` optionally resolves A/AAAA
-record names with Hickory and prefers a private/local address when one is
-visible; without the flag, provider API values are preserved exactly.
+`record add` and `record delete` take the record type as a subcommand with
+type-specific positional arguments:
+
+```bash
+# Add records
+dns record add --zone example.com --domain www.example.com a 93.184.216.34
+dns record add --zone example.com --domain example.com    aaaa 2001:db8::1
+dns record add --zone example.com --domain example.com    mx mail.example.com --preference 10
+dns record add --zone example.com --domain example.com    txt "v=spf1 ~all"
+dns record add --zone example.com --domain example.com    cname alias.example.com
+dns record add --zone example.com --domain example.com    ns ns1.example.com
+dns record add --zone example.com --domain _dmarc.example.com txt "v=DMARC1; p=none"
+dns record add --zone example.com --domain example.com    caa letsencrypt.org --tag issue
+dns record add --zone example.com --domain _sip._tcp.example.com srv sip.example.com --port 5060 --priority 10 --weight 20
+dns record add --zone example.com --domain example.com    sshfp RSA SHA256 abcdef...
+dns record add --zone example.com --domain example.com    tlsa DANE-EE SPKI SHA2-256 abcdef...
+dns record add --zone example.com --ttl 300 --domain example.com txt "short-lived"
+
+# Delete specific record
+dns record delete --zone example.com --domain www.example.com a 93.184.216.34
+
+# Delete all records of a type for a domain
+dns record delete --zone example.com --domain www.example.com a
+```
+
+Supported record types for `add` and `delete`: `a`, `aaaa`, `aname`, `app`,
+`caa`, `cname`, `dname`, `ds`, `fwd`, `https`, `mx`, `naptr`, `ns`, `ptr`,
+`sshfp`, `srv`, `svcb`, `tlsa`, `txt`, `uri`, `unknown`.
+
+For Pangolin servers, `record list` reads records from Pangolin's DNS API and
+normalizes them into the same shape used by other vendors. `--use-local-ip`
+optionally resolves A/AAAA record names with Hickory and prefers a
+private/local address when one is visible; without the flag, provider API
+values are preserved exactly.
 
 ### Cache
 
@@ -157,9 +250,12 @@ dns cache flush
 ### Stats
 
 ```bash
-dns stats
+dns stats                       # defaults to LastDay
 dns stats --type LastHour
+dns stats --type LastDay
 dns stats --type LastWeek
+dns stats --type LastMonth
+dns stats --type LastYear
 ```
 
 ### Blocked / Allowed
@@ -171,24 +267,50 @@ dns blocked delete doubleclick.net
 
 dns allowed list
 dns allowed add myapp.internal
+dns allowed delete myapp.internal
+```
+
+### Shell completions
+
+```bash
+dns completions fish > ~/.config/fish/completions/dns.fish
+dns completions bash > ~/.local/share/bash-completion/completions/dns
+dns completions zsh  > ~/.zsh/completions/_dns
 ```
 
 ---
 
 ## MCP Server
 
-### Claude
+### Claude Desktop
+
+Use a config file with a named server entry — credentials are resolved via `token_env` and `base_url` in the config:
 
 ```json
 {
   "mcpServers": {
-    "technitium-dns": {
+    "dnsync": {
       "command": "/path/to/dns",
       "args": ["mcp"],
       "env": {
-        "TECHNITIUM_BASE_URL": "http://192.168.1.10:5380",
-        "TECHNITIUM_API_TOKEN": "your-token-here"
+        "DNSYNC_CONFIG": "/home/user/.config/dnsync/config.toml",
+        "DNSYNC_SERVER": "home",
+        "MY_DNS_TOKEN": "your-token-here"
       }
+    }
+  }
+}
+```
+
+Where the config entry for `home` sets `token_env = "MY_DNS_TOKEN"`. For a one-off setup without a config file, pass credentials as flags:
+
+```json
+{
+  "mcpServers": {
+    "dnsync": {
+      "command": "/path/to/dns",
+      "args": ["mcp", "--base-url", "http://192.168.1.10:5380", "--token", "your-token-here"],
+      "env": {}
     }
   }
 }

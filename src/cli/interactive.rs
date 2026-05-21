@@ -132,6 +132,7 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
         vendor,
         location,
         base_url,
+        base_url_env: None,
         token,
         token_env,
         org_id,
