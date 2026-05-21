@@ -1,0 +1,72 @@
+#:schema https://dystroy.org/bacon/.bacon.schema.json
+
+# Bacon overlay config.
+# Use with:
+#   bacon <job> --config-toml "$(cat bacon-testing.toml)"
+#
+# This only overrides the locations export path so multiple Bacon
+# processes do not overwrite each other's diagnostics.
+
+[exports.locations]
+auto = true
+exporter = "locations"
+path = ".bacon-testing-locations"
+line_format = "idx={item-idx}|:|kind={kind}|:|job={job}|:|loc={path}|:|line={line}|:|col={column}|:|message={message}|:|context={context}"
+
+# [jobs.nextest]
+# command = [
+#     "cargo",
+#     "nextest",
+#     "run",
+#     "--hide-progress-bar",
+#     "--failure-output",
+#     "final",
+#     "--no-output-indent",
+# ]
+# need_stdout = true
+# analyzer = "nextest"
+
+# This job lets you run
+# - all tests: bacon test
+# - a specific test: bacon test -- config::test_default_files
+# - the tests of a package: bacon test -- -- -p config
+[jobs.test]
+command = ["cargo", "test"]
+need_stdout = true
+#
+# [jobs.nextest]
+# command = [
+#     "cargo",
+#     "nextest",
+#     "run",
+#     "--hide-progress-bar",
+#     "--failure-output",
+#     "final",
+#     "--no-output-indent",
+#
+# ]
+# need_stdout = true
+# analyzer = "nextest"
+
+[jobs.nextest]
+command = [
+    "cargo",
+    "nextest",
+    "run",
+    "--workspace",
+    "--all-targets",
+    "--show-progress",
+    "none",
+    "--status-level",
+    "fail",
+    "--final-status-level",
+    "fail",
+    "--failure-output",
+    "final",
+    "--success-output",
+    "never",
+    "--no-input-handler",
+    "--no-output-indent",
+]
+need_stdout = true
+analyzer = "nextest"

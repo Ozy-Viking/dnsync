@@ -4,3 +4,8 @@
 /.config/dnsync
 /.claude
 .bacon-locations
+/bacon-ls.log
+/.bacon-check-locations
+/.bacon-pedantic-locations
+/.bacon-testing-locations
+/add-bacon-location-overlays.sh

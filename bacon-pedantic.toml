@@ -1,0 +1,20 @@
+#:schema https://dystroy.org/bacon/.bacon.schema.json
+
+# Bacon overlay config.
+# Use with:
+#   bacon <job> --config-toml "$(cat bacon-pedantic.toml)"
+#
+# This only overrides the locations export path so multiple Bacon
+# processes do not overwrite each other's diagnostics.
+
+# Run clippy in pedantic mode
+# The 'dismiss' feature may come handy
+[jobs.pedantic]
+command = ["cargo", "clippy", "--", "-W", "clippy::pedantic"]
+need_stdout = false
+
+[exports.locations]
+auto = true
+exporter = "locations"
+path = ".bacon-pedantic-locations"
+line_format = "idx={item-idx}|:|kind={kind}|:|job={job}|:|file={path}|:|line={line}|:|col={column}|:|message={message}|:|context={context}"
