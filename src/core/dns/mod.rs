@@ -1,5 +1,9 @@
+pub mod access_lists;
+pub mod cache;
 pub mod capabilities;
 pub mod records;
 pub mod responses;
 pub mod service;
+pub mod settings;
+pub mod stats;
 pub mod zones;

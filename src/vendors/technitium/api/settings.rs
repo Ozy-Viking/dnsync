@@ -1,1 +1,0 @@
-//! Technitium settings endpoint placeholder.

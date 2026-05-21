@@ -1,6 +1,385 @@
 //! CLI display for DNS records.
 
+use clap::builder::PossibleValue;
+use clap::ValueEnum;
+
+use crate::cli::{CliDeleteSelector, CliRecordType};
 use crate::core::dns::responses::ListRecordsResponse;
+use crate::core::dns::records::{
+    DigestType, DsAlgorithm, FwdProtocol, RecordData, SshfpAlgorithm, SshfpFingerprintType,
+    TlsaCertUsage, TlsaMatchingType, TlsaSelector,
+};
+
+macro_rules! impl_value_enum {
+    ($ty:ty, [$($variant:expr),+ $(,)?]) => {
+        impl ValueEnum for $ty {
+            fn value_variants<'a>() -> &'a [Self]
+            where
+                Self: 'a,
+            {
+                &[$($variant),+]
+            }
+
+            fn to_possible_value(&self) -> Option<PossibleValue> {
+                Some(PossibleValue::new(self.as_str()))
+            }
+        }
+    };
+}
+
+impl_value_enum!(DsAlgorithm, [
+    DsAlgorithm::Rsamd5,
+    DsAlgorithm::Dsa,
+    DsAlgorithm::Rsasha1,
+    DsAlgorithm::DsaNsec3Sha1,
+    DsAlgorithm::Rsasha1Nsec3Sha1,
+    DsAlgorithm::Rsasha256,
+    DsAlgorithm::Rsasha512,
+    DsAlgorithm::EccGost,
+    DsAlgorithm::Ecdsap256sha256,
+    DsAlgorithm::Ecdsap384sha384,
+    DsAlgorithm::Ed25519,
+    DsAlgorithm::Ed448,
+]);
+
+impl_value_enum!(DigestType, [
+    DigestType::Sha1,
+    DigestType::Sha256,
+    DigestType::GostR341194,
+    DigestType::Sha384,
+]);
+
+impl_value_enum!(SshfpAlgorithm, [
+    SshfpAlgorithm::Rsa,
+    SshfpAlgorithm::Dsa,
+    SshfpAlgorithm::Ecdsa,
+    SshfpAlgorithm::Ed25519,
+    SshfpAlgorithm::Ed448,
+]);
+
+impl_value_enum!(SshfpFingerprintType, [
+    SshfpFingerprintType::Sha1,
+    SshfpFingerprintType::Sha256,
+]);
+
+impl_value_enum!(TlsaCertUsage, [
+    TlsaCertUsage::PkixTa,
+    TlsaCertUsage::PkixEe,
+    TlsaCertUsage::DaneTa,
+    TlsaCertUsage::DaneEe,
+]);
+
+impl_value_enum!(TlsaSelector, [TlsaSelector::Cert, TlsaSelector::Spki]);
+
+impl_value_enum!(TlsaMatchingType, [
+    TlsaMatchingType::Full,
+    TlsaMatchingType::Sha2_256,
+    TlsaMatchingType::Sha2_512,
+]);
+
+impl_value_enum!(FwdProtocol, [
+    FwdProtocol::Udp,
+    FwdProtocol::Tcp,
+    FwdProtocol::Tls,
+    FwdProtocol::Https,
+    FwdProtocol::Quic,
+]);
+
+impl CliDeleteSelector {
+    /// Returns the Technitium API `type` string and any optional identifying params.
+    /// Fields with `None` values are omitted — Technitium will delete all records
+    /// of that type for the domain when the identifying value is absent.
+    pub fn to_api_params(&self) -> Vec<(&'static str, String)> {
+        let mut p = vec![("type", self.type_name().into())];
+        match self {
+            Self::A { ip } => {
+                if let Some(v) = ip {
+                    p.push(("ipAddress", v.to_string()));
+                }
+            }
+            Self::Aaaa { ip } => {
+                if let Some(v) = ip {
+                    p.push(("ipAddress", v.to_string()));
+                }
+            }
+            Self::Aname { aname } => {
+                if let Some(v) = aname {
+                    p.push(("aname", v.clone()));
+                }
+            }
+            Self::App {
+                app_name,
+                class_path,
+            } => {
+                if let Some(v) = app_name {
+                    p.push(("appName", v.clone()));
+                }
+                if let Some(v) = class_path {
+                    p.push(("classPath", v.clone()));
+                }
+            }
+            Self::Caa { value } => {
+                if let Some(v) = value {
+                    p.push(("value", v.clone()));
+                }
+            }
+            Self::Cname { target } => {
+                if let Some(v) = target {
+                    p.push(("cname", v.clone()));
+                }
+            }
+            Self::Dname { dname } => {
+                if let Some(v) = dname {
+                    p.push(("dname", v.clone()));
+                }
+            }
+            Self::Ds { key_tag } => {
+                if let Some(v) = key_tag {
+                    p.push(("keyTag", v.to_string()));
+                }
+            }
+            Self::Fwd { forwarder } => {
+                if let Some(v) = forwarder {
+                    p.push(("forwarder", v.clone()));
+                }
+            }
+            Self::Https { svc_target_name } | Self::Svcb { svc_target_name } => {
+                if let Some(v) = svc_target_name {
+                    p.push(("svcTargetName", v.clone()));
+                }
+            }
+            Self::Mx { exchange } => {
+                if let Some(v) = exchange {
+                    p.push(("exchange", v.clone()));
+                }
+            }
+            Self::Naptr { replacement } => {
+                if let Some(v) = replacement {
+                    p.push(("naptrReplacement", v.clone()));
+                }
+            }
+            Self::Ns { nameserver } => {
+                if let Some(v) = nameserver {
+                    p.push(("nameServer", v.clone()));
+                }
+            }
+            Self::Ptr { name } => {
+                if let Some(v) = name {
+                    p.push(("ptrName", v.clone()));
+                }
+            }
+            Self::Sshfp { fingerprint } => {
+                if let Some(v) = fingerprint {
+                    p.push(("sshfpFingerprint", v.clone()));
+                }
+            }
+            Self::Srv {
+                target,
+                port,
+                priority,
+                weight,
+            } => {
+                if let Some(v) = target {
+                    p.push(("target", v.clone()));
+                }
+                if let Some(v) = port {
+                    p.push(("port", v.to_string()));
+                }
+                if let Some(v) = priority {
+                    p.push(("priority", v.to_string()));
+                }
+                if let Some(v) = weight {
+                    p.push(("weight", v.to_string()));
+                }
+            }
+            Self::Tlsa {
+                cert_association_data,
+            } => {
+                if let Some(v) = cert_association_data {
+                    p.push(("tlsaCertificateAssociationData", v.clone()));
+                }
+            }
+            Self::Txt { text } => {
+                if let Some(v) = text {
+                    p.push(("text", v.clone()));
+                }
+            }
+            Self::Uri { uri } => {
+                if let Some(v) = uri {
+                    p.push(("uri", v.clone()));
+                }
+            }
+            Self::Unknown { rdata } => {
+                if let Some(v) = rdata {
+                    p.push(("rdata", v.clone()));
+                }
+            }
+        }
+        p
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::A { .. } => "A",
+            Self::Aaaa { .. } => "AAAA",
+            Self::Aname { .. } => "ANAME",
+            Self::App { .. } => "APP",
+            Self::Caa { .. } => "CAA",
+            Self::Cname { .. } => "CNAME",
+            Self::Dname { .. } => "DNAME",
+            Self::Ds { .. } => "DS",
+            Self::Fwd { .. } => "FWD",
+            Self::Https { .. } => "HTTPS",
+            Self::Mx { .. } => "MX",
+            Self::Naptr { .. } => "NAPTR",
+            Self::Ns { .. } => "NS",
+            Self::Ptr { .. } => "PTR",
+            Self::Sshfp { .. } => "SSHFP",
+            Self::Srv { .. } => "SRV",
+            Self::Svcb { .. } => "SVCB",
+            Self::Tlsa { .. } => "TLSA",
+            Self::Txt { .. } => "TXT",
+            Self::Uri { .. } => "URI",
+            Self::Unknown { .. } => "UNKNOWN",
+        }
+    }
+}
+
+impl From<CliRecordType> for RecordData {
+    fn from(r: CliRecordType) -> Self {
+        match r {
+            CliRecordType::A { ip } => Self::A { ip },
+            CliRecordType::Aaaa { ip } => Self::Aaaa { ip },
+            CliRecordType::Aname { aname } => Self::Aname { aname },
+            CliRecordType::App {
+                app_name,
+                class_path,
+                record_data,
+            } => Self::App {
+                app_name,
+                class_path,
+                record_data,
+            },
+            CliRecordType::Caa { flags, tag, value } => Self::Caa { flags, tag, value },
+            CliRecordType::Cname { target } => Self::Cname { target },
+            CliRecordType::Dname { dname } => Self::Dname { dname },
+            CliRecordType::Ds {
+                key_tag,
+                algorithm,
+                digest_type,
+                digest,
+            } => Self::Ds {
+                key_tag,
+                algorithm,
+                digest_type,
+                digest,
+            },
+            CliRecordType::Fwd {
+                forwarder,
+                protocol,
+                priority,
+                dnssec_validation,
+            } => Self::Fwd {
+                forwarder,
+                protocol,
+                priority,
+                dnssec_validation,
+            },
+            CliRecordType::Https {
+                svc_priority,
+                svc_target_name,
+                svc_params,
+                auto_ipv4_hint,
+                auto_ipv6_hint,
+            } => Self::Https {
+                svc_priority,
+                svc_target_name,
+                svc_params,
+                auto_ipv4_hint,
+                auto_ipv6_hint,
+            },
+            CliRecordType::Mx {
+                exchange,
+                preference,
+            } => Self::Mx {
+                exchange,
+                preference,
+            },
+            CliRecordType::Naptr {
+                order,
+                preference,
+                flags,
+                services,
+                regexp,
+                replacement,
+            } => Self::Naptr {
+                order,
+                preference,
+                flags,
+                services,
+                regexp,
+                replacement,
+            },
+            CliRecordType::Ns { nameserver, glue } => Self::Ns { nameserver, glue },
+            CliRecordType::Ptr { name } => Self::Ptr { name },
+            CliRecordType::Sshfp {
+                algorithm,
+                fingerprint_type,
+                fingerprint,
+            } => Self::Sshfp {
+                algorithm,
+                fingerprint_type,
+                fingerprint,
+            },
+            CliRecordType::Srv {
+                priority,
+                weight,
+                port,
+                target,
+            } => Self::Srv {
+                priority,
+                weight,
+                port,
+                target,
+            },
+            CliRecordType::Svcb {
+                svc_priority,
+                svc_target_name,
+                svc_params,
+                auto_ipv4_hint,
+                auto_ipv6_hint,
+            } => Self::Svcb {
+                svc_priority,
+                svc_target_name,
+                svc_params,
+                auto_ipv4_hint,
+                auto_ipv6_hint,
+            },
+            CliRecordType::Tlsa {
+                cert_usage,
+                selector,
+                matching_type,
+                cert_association_data,
+            } => Self::Tlsa {
+                cert_usage,
+                selector,
+                matching_type,
+                cert_association_data,
+            },
+            CliRecordType::Txt { text, split_text } => Self::Txt { text, split_text },
+            CliRecordType::Uri {
+                priority,
+                weight,
+                uri,
+            } => Self::Uri {
+                priority,
+                weight,
+                uri,
+            },
+            CliRecordType::Unknown { rdata } => Self::Unknown { rdata },
+        }
+    }
+}
 
 // ─── Content extraction ───────────────────────────────────────────────────────
 
@@ -174,7 +553,109 @@ pub fn print_records_table(response: &ListRecordsResponse) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::{CliDeleteSelector, CliRecordType};
+    use crate::core::dns::records::RecordData;
+    use rstest::{fixture, rstest};
     use serde_json::json;
+
+    #[fixture]
+    fn a_record_type() -> CliRecordType {
+        CliRecordType::A {
+            ip: "1.2.3.4".parse().unwrap(),
+        }
+    }
+
+    #[fixture]
+    fn aaaa_record_type() -> CliRecordType {
+        CliRecordType::Aaaa {
+            ip: "2001:db8::1".parse().unwrap(),
+        }
+    }
+
+    #[fixture]
+    fn mx_record_type() -> CliRecordType {
+        CliRecordType::Mx {
+            exchange: "mail.example.com".into(),
+            preference: 10,
+        }
+    }
+
+    #[fixture]
+    fn txt_record_type() -> CliRecordType {
+        CliRecordType::Txt {
+            text: "v=spf1 ~all".into(),
+            split_text: false,
+        }
+    }
+
+    #[rstest]
+    fn cli_record_type_a_maps_to_core_record(a_record_type: CliRecordType) {
+        match RecordData::from(a_record_type) {
+            RecordData::A { ip } => assert_eq!(ip.to_string(), "1.2.3.4"),
+            other => panic!("expected A record, got {other:?}"),
+        }
+    }
+
+    #[rstest]
+    fn cli_record_type_aaaa_maps_to_core_record(aaaa_record_type: CliRecordType) {
+        match RecordData::from(aaaa_record_type) {
+            RecordData::Aaaa { ip } => assert_eq!(ip.to_string(), "2001:db8::1"),
+            other => panic!("expected AAAA record, got {other:?}"),
+        }
+    }
+
+    #[rstest]
+    fn cli_record_type_mx_maps_to_core_record(mx_record_type: CliRecordType) {
+        match RecordData::from(mx_record_type) {
+            RecordData::Mx { exchange, preference } => {
+                assert_eq!(exchange, "mail.example.com");
+                assert_eq!(preference, 10);
+            }
+            other => panic!("expected MX record, got {other:?}"),
+        }
+    }
+
+    #[rstest]
+    fn cli_record_type_txt_maps_to_core_record(txt_record_type: CliRecordType) {
+        match RecordData::from(txt_record_type) {
+            RecordData::Txt { text, split_text } => {
+                assert_eq!(text, "v=spf1 ~all");
+                assert!(!split_text);
+            }
+            other => panic!("expected TXT record, got {other:?}"),
+        }
+    }
+
+    #[rstest]
+    #[case::a_none(CliDeleteSelector::A { ip: None }, vec![("type", "A")])]
+    #[case::a_some(
+        CliDeleteSelector::A { ip: Some("1.2.3.4".parse().unwrap()) },
+        vec![("type", "A"), ("ipAddress", "1.2.3.4")]
+    )]
+    #[case::aaaa_some(
+        CliDeleteSelector::Aaaa { ip: Some("2001:db8::1".parse().unwrap()) },
+        vec![("type", "AAAA"), ("ipAddress", "2001:db8::1")]
+    )]
+    #[case::mx_some(
+        CliDeleteSelector::Mx { exchange: Some("mail.example.com".into()) },
+        vec![("type", "MX"), ("exchange", "mail.example.com")]
+    )]
+    #[case::txt_some(
+        CliDeleteSelector::Txt { text: Some("v=spf1 ~all".into()) },
+        vec![("type", "TXT"), ("text", "v=spf1 ~all")]
+    )]
+    fn cli_delete_selector_to_api_params_matches_expected(
+        #[case] selector: CliDeleteSelector,
+        #[case] expected: Vec<(&'static str, &'static str)>,
+    ) {
+        let actual = selector.to_api_params();
+        let expected: Vec<(&str, String)> = expected
+            .into_iter()
+            .map(|(key, value)| (key, value.to_string()))
+            .collect();
+
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn a_record_content() {

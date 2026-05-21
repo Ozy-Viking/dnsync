@@ -16,6 +16,8 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
+use crate::cli::Cli;
+use crate::control_plane::config::{AppConfig, McpPermissions};
 use crate::core::error::{Error, Result};
 
 /// Classifies the maximum operation level the MCP server is permitted to perform.
@@ -53,80 +55,54 @@ pub struct Policy {
 }
 
 impl Policy {
-    /// Construct a new policy from its constituent parts.
     pub fn new(access: PolicyRule, allowed_zones: Option<Vec<String>>) -> Self {
         Self {
             access,
-            allowed_zones: allowed_zones
-                .map(|zones| zones.into_iter().map(|z| z.to_lowercase()).collect()),
+            allowed_zones,
         }
     }
 
-    /// Assert that the active policy permits `rule`.
-    /// Call at the start of every tool handler with the appropriate `PolicyRule` variant.
     pub fn check(&self, rule: PolicyRule) -> Result<()> {
-        if rule <= self.access {
+        if self.access >= rule {
             return Ok(());
         }
-        match rule {
-            PolicyRule::Read => Ok(()),
-            PolicyRule::Write => {
-                tracing::warn!("write rejected: access level is {:?}", self.access);
-                Err(Error::policy_violation(
-                    "this MCP server is configured in read-only mode",
-                    "Update this server's MCP permissions or set --access=write to enable writes.",
-                ))
-            }
-            PolicyRule::Delete => {
-                tracing::warn!("delete rejected: access level is {:?}", self.access);
-                Err(Error::policy_violation(
-                    format!(
-                        "this MCP server does not permit delete operations (access: {:?})",
-                        self.access
-                    ),
-                    "Update this server's MCP permissions or set --access=delete to enable deletes.",
-                ))
-            }
-        }
+
+        let message = if self.access == PolicyRule::Read {
+            "read-only policy blocks write and delete operations".to_string()
+        } else {
+            format!("operation requires {rule:?} access, but policy is {:?}", self.access)
+        };
+        Err(Error::policy_violation(
+            message,
+            "Use a less restrictive policy or choose a read-only operation.",
+        ))
     }
 
-    /// Assert that the active policy permits write operations.
-    /// Shorthand for `check(PolicyRule::Write)`.
     pub fn check_write(&self) -> Result<()> {
         self.check(PolicyRule::Write)
     }
 
-    /// Assert that the active policy permits delete operations.
-    /// Shorthand for `check(PolicyRule::Delete)`.
     pub fn check_delete(&self) -> Result<()> {
         self.check(PolicyRule::Delete)
     }
 
-    /// Assert that the active policy permits access to `zone`.
-    /// Call at the start of every tool handler that targets a specific zone.
     pub fn check_zone(&self, zone: &str) -> Result<()> {
-        let Some(ref allowed) = self.allowed_zones else {
-            return Ok(()); // unrestricted
+        let Some(allowed_zones) = &self.allowed_zones else {
+            return Ok(());
         };
 
-        let zone_lower = zone.to_lowercase();
+        let zone = zone.trim_end_matches('.').to_lowercase();
+        let allowed = allowed_zones.iter().any(|allowed| {
+            let allowed = allowed.trim_end_matches('.').to_lowercase();
+            zone == allowed || zone.ends_with(&format!(".{allowed}"))
+        });
 
-        // Allow exact match or suffix match (e.g. allow-list "example.com"
-        // also permits "sub.example.com").
-        let permitted = allowed
-            .iter()
-            .any(|a| zone_lower == *a || zone_lower.ends_with(&format!(".{a}")));
-
-        if permitted {
+        if allowed {
             Ok(())
         } else {
-            tracing::warn!(zone, "write rejected: zone not in allow-list");
-            let list = allowed.join(", ");
             Err(Error::policy_violation(
-                format!("zone '{zone}' is not in the allowed-zones list"),
-                format!(
-                    "Allowed zones: {list}. Update this server's MCP permissions or pass --allow-zone to expand the list."
-                ),
+                format!("zone '{zone}' is outside the configured allowed zones"),
+                "Choose a zone permitted by this server's policy.",
             ))
         }
     }
@@ -163,6 +139,58 @@ impl Policy {
         } else {
             format!("\n\n{}", parts.join("\n"))
         }
+    }
+}
+
+impl Policy {
+    /// Build a `Policy` from CLI options and config.
+    pub fn from_cli_and_config(cli: &Cli, config: Option<&AppConfig>) -> Result<Self> {
+        let mcp = config
+            .and_then(|c| {
+                c.selected_server(cli.servers.first().map(|s| s.as_str()))
+                    .ok()
+            })
+            .map(|s| &s.mcp);
+
+        let config_access = mcp.map(|p| p.access).unwrap_or(PolicyRule::Delete);
+        let access = match cli.access {
+            Some(a) => a.min(config_access),
+            None => config_access,
+        };
+        let allowed_zones = Self::allowed_zones_from_cli_and_mcp(cli, mcp)?;
+        Ok(Self::new(access, allowed_zones))
+    }
+
+    /// Build allowed zones from CLI and MCP config.
+    pub fn allowed_zones_from_cli_and_mcp(
+        cli: &Cli,
+        mcp: Option<&McpPermissions>,
+    ) -> Result<Option<Vec<String>>> {
+        let configured = mcp.and_then(|permissions| {
+            (!permissions.allowed_zones.is_empty()).then_some(&permissions.allowed_zones)
+        });
+
+        if cli.allow_zone.is_empty() {
+            return Ok(configured.cloned());
+        }
+
+        let Some(configured) = configured else {
+            return Ok(Some(cli.allow_zone.clone()));
+        };
+
+        let configured_policy = Self::new(PolicyRule::Delete, Some(configured.clone()));
+        for zone in &cli.allow_zone {
+            configured_policy.check_zone(zone).map_err(|_| {
+                Error::policy_violation(
+                    format!(
+                        "--allow-zone '{zone}' is outside this server's configured MCP allowed zones"
+                    ),
+                    "Remove the override or choose a zone already permitted by this server's config.",
+                )
+            })?;
+        }
+
+        Ok(Some(cli.allow_zone.clone()))
     }
 }
 

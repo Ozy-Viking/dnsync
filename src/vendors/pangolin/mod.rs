@@ -1,4 +1,6 @@
 pub mod client;
+pub mod mapping;
+pub mod responses;
 pub mod service;
 
 use std::env;

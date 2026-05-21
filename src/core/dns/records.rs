@@ -1,12 +1,65 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use clap::ValueEnum;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::core::{
+    dns::{
+        responses::ListRecordsResponse,
+        service::{ListRecordsOptions, RecordWrite, ZoneRead},
+    },
+    error::Result,
+};
+
+pub mod query;
+
+/// List DNS records through a vendor-neutral zone reader.
+///
+/// # Errors
+///
+/// Returns any error reported by the selected DNS backend.
+pub async fn list_records<C: ZoneRead + ?Sized>(
+    client: &C,
+    domain: &str,
+    zone: Option<&str>,
+    options: ListRecordsOptions,
+) -> Result<ListRecordsResponse> {
+    client.list_records(domain, zone, options).await
+}
+
+/// Create a DNS record through a vendor-neutral record writer.
+///
+/// # Errors
+///
+/// Returns any error reported by the selected DNS backend.
+pub async fn create_record<C: RecordWrite + ?Sized>(
+    client: &C,
+    zone: &str,
+    domain: &str,
+    ttl: u32,
+    record: &RecordData,
+) -> Result<Value> {
+    client.add_record(zone, domain, ttl, record).await
+}
+
+/// Delete DNS records through a vendor-neutral record writer.
+///
+/// # Errors
+///
+/// Returns any error reported by the selected DNS backend.
+pub async fn delete_record<'a, C: RecordWrite + ?Sized>(
+    client: &'a C,
+    zone: &'a str,
+    domain: &'a str,
+    type_params: &'a [(&'a str, String)],
+) -> Result<Value> {
+    client.delete_record(zone, domain, type_params).await
+}
 
 // ─── Supporting enums ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum DsAlgorithm {
     #[serde(rename = "RSAMD5")]
     Rsamd5,
@@ -53,7 +106,7 @@ impl DsAlgorithm {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum DigestType {
     #[serde(rename = "SHA1")]
     Sha1,
@@ -76,7 +129,7 @@ impl DigestType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum SshfpAlgorithm {
     #[serde(rename = "RSA")]
     Rsa,
@@ -102,7 +155,7 @@ impl SshfpAlgorithm {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum SshfpFingerprintType {
     #[serde(rename = "SHA1")]
     Sha1,
@@ -119,7 +172,7 @@ impl SshfpFingerprintType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum TlsaCertUsage {
     #[serde(rename = "PKIX-TA")]
     PkixTa,
@@ -142,7 +195,7 @@ impl TlsaCertUsage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum TlsaSelector {
     #[serde(rename = "Cert")]
     Cert,
@@ -159,7 +212,7 @@ impl TlsaSelector {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum TlsaMatchingType {
     #[serde(rename = "Full")]
     Full,
@@ -179,7 +232,7 @@ impl TlsaMatchingType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum FwdProtocol {
     Udp,
     Tcp,
@@ -544,308 +597,6 @@ impl RecordData {
             Self::Unknown { rdata } => p.push(("rdata", rdata.clone())),
         }
         p
-    }
-}
-
-// ─── CLI delete selector → API params ────────────────────────────────────────
-
-use crate::cli::CliDeleteSelector;
-
-impl CliDeleteSelector {
-    /// Returns the Technitium API `type` string and any optional identifying params.
-    /// Fields with `None` values are omitted — Technitium will delete all records
-    /// of that type for the domain when the identifying value is absent.
-    pub fn to_api_params(&self) -> Vec<(&'static str, String)> {
-        let mut p = vec![("type", self.type_name().into())];
-        match self {
-            Self::A { ip } => {
-                if let Some(v) = ip {
-                    p.push(("ipAddress", v.to_string()));
-                }
-            }
-            Self::Aaaa { ip } => {
-                if let Some(v) = ip {
-                    p.push(("ipAddress", v.to_string()));
-                }
-            }
-            Self::Aname { aname } => {
-                if let Some(v) = aname {
-                    p.push(("aname", v.clone()));
-                }
-            }
-            Self::App {
-                app_name,
-                class_path,
-            } => {
-                if let Some(v) = app_name {
-                    p.push(("appName", v.clone()));
-                }
-                if let Some(v) = class_path {
-                    p.push(("classPath", v.clone()));
-                }
-            }
-            Self::Caa { value } => {
-                if let Some(v) = value {
-                    p.push(("value", v.clone()));
-                }
-            }
-            Self::Cname { target } => {
-                if let Some(v) = target {
-                    p.push(("cname", v.clone()));
-                }
-            }
-            Self::Dname { dname } => {
-                if let Some(v) = dname {
-                    p.push(("dname", v.clone()));
-                }
-            }
-            Self::Ds { key_tag } => {
-                if let Some(v) = key_tag {
-                    p.push(("keyTag", v.to_string()));
-                }
-            }
-            Self::Fwd { forwarder } => {
-                if let Some(v) = forwarder {
-                    p.push(("forwarder", v.clone()));
-                }
-            }
-            Self::Https { svc_target_name } | Self::Svcb { svc_target_name } => {
-                if let Some(v) = svc_target_name {
-                    p.push(("svcTargetName", v.clone()));
-                }
-            }
-            Self::Mx { exchange } => {
-                if let Some(v) = exchange {
-                    p.push(("exchange", v.clone()));
-                }
-            }
-            Self::Naptr { replacement } => {
-                if let Some(v) = replacement {
-                    p.push(("naptrReplacement", v.clone()));
-                }
-            }
-            Self::Ns { nameserver } => {
-                if let Some(v) = nameserver {
-                    p.push(("nameServer", v.clone()));
-                }
-            }
-            Self::Ptr { name } => {
-                if let Some(v) = name {
-                    p.push(("ptrName", v.clone()));
-                }
-            }
-            Self::Sshfp { fingerprint } => {
-                if let Some(v) = fingerprint {
-                    p.push(("sshfpFingerprint", v.clone()));
-                }
-            }
-            Self::Srv {
-                target,
-                port,
-                priority,
-                weight,
-            } => {
-                if let Some(v) = target {
-                    p.push(("target", v.clone()));
-                }
-                if let Some(v) = port {
-                    p.push(("port", v.to_string()));
-                }
-                if let Some(v) = priority {
-                    p.push(("priority", v.to_string()));
-                }
-                if let Some(v) = weight {
-                    p.push(("weight", v.to_string()));
-                }
-            }
-            Self::Tlsa {
-                cert_association_data,
-            } => {
-                if let Some(v) = cert_association_data {
-                    p.push(("tlsaCertificateAssociationData", v.clone()));
-                }
-            }
-            Self::Txt { text } => {
-                if let Some(v) = text {
-                    p.push(("text", v.clone()));
-                }
-            }
-            Self::Uri { uri } => {
-                if let Some(v) = uri {
-                    p.push(("uri", v.clone()));
-                }
-            }
-            Self::Unknown { rdata } => {
-                if let Some(v) = rdata {
-                    p.push(("rdata", v.clone()));
-                }
-            }
-        }
-        p
-    }
-
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Self::A { .. } => "A",
-            Self::Aaaa { .. } => "AAAA",
-            Self::Aname { .. } => "ANAME",
-            Self::App { .. } => "APP",
-            Self::Caa { .. } => "CAA",
-            Self::Cname { .. } => "CNAME",
-            Self::Dname { .. } => "DNAME",
-            Self::Ds { .. } => "DS",
-            Self::Fwd { .. } => "FWD",
-            Self::Https { .. } => "HTTPS",
-            Self::Mx { .. } => "MX",
-            Self::Naptr { .. } => "NAPTR",
-            Self::Ns { .. } => "NS",
-            Self::Ptr { .. } => "PTR",
-            Self::Sshfp { .. } => "SSHFP",
-            Self::Srv { .. } => "SRV",
-            Self::Svcb { .. } => "SVCB",
-            Self::Tlsa { .. } => "TLSA",
-            Self::Txt { .. } => "TXT",
-            Self::Uri { .. } => "URI",
-            Self::Unknown { .. } => "UNKNOWN",
-        }
-    }
-}
-
-use crate::cli::CliRecordType;
-
-impl From<CliRecordType> for RecordData {
-    fn from(r: CliRecordType) -> Self {
-        match r {
-            CliRecordType::A { ip } => Self::A { ip },
-            CliRecordType::Aaaa { ip } => Self::Aaaa { ip },
-            CliRecordType::Aname { aname } => Self::Aname { aname },
-            CliRecordType::App {
-                app_name,
-                class_path,
-                record_data,
-            } => Self::App {
-                app_name,
-                class_path,
-                record_data,
-            },
-            CliRecordType::Caa { flags, tag, value } => Self::Caa { flags, tag, value },
-            CliRecordType::Cname { target } => Self::Cname { target },
-            CliRecordType::Dname { dname } => Self::Dname { dname },
-            CliRecordType::Ds {
-                key_tag,
-                algorithm,
-                digest_type,
-                digest,
-            } => Self::Ds {
-                key_tag,
-                algorithm,
-                digest_type,
-                digest,
-            },
-            CliRecordType::Fwd {
-                forwarder,
-                protocol,
-                priority,
-                dnssec_validation,
-            } => Self::Fwd {
-                forwarder,
-                protocol,
-                priority,
-                dnssec_validation,
-            },
-            CliRecordType::Https {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            } => Self::Https {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            },
-            CliRecordType::Mx {
-                exchange,
-                preference,
-            } => Self::Mx {
-                exchange,
-                preference,
-            },
-            CliRecordType::Naptr {
-                order,
-                preference,
-                flags,
-                services,
-                regexp,
-                replacement,
-            } => Self::Naptr {
-                order,
-                preference,
-                flags,
-                services,
-                regexp,
-                replacement,
-            },
-            CliRecordType::Ns { nameserver, glue } => Self::Ns { nameserver, glue },
-            CliRecordType::Ptr { name } => Self::Ptr { name },
-            CliRecordType::Sshfp {
-                algorithm,
-                fingerprint_type,
-                fingerprint,
-            } => Self::Sshfp {
-                algorithm,
-                fingerprint_type,
-                fingerprint,
-            },
-            CliRecordType::Srv {
-                priority,
-                weight,
-                port,
-                target,
-            } => Self::Srv {
-                priority,
-                weight,
-                port,
-                target,
-            },
-            CliRecordType::Svcb {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            } => Self::Svcb {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            },
-            CliRecordType::Tlsa {
-                cert_usage,
-                selector,
-                matching_type,
-                cert_association_data,
-            } => Self::Tlsa {
-                cert_usage,
-                selector,
-                matching_type,
-                cert_association_data,
-            },
-            CliRecordType::Txt { text, split_text } => Self::Txt { text, split_text },
-            CliRecordType::Uri {
-                priority,
-                weight,
-                uri,
-            } => Self::Uri {
-                priority,
-                weight,
-                uri,
-            },
-            CliRecordType::Unknown { rdata } => Self::Unknown { rdata },
-        }
     }
 }
 

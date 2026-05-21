@@ -4,13 +4,15 @@ use rmcp::{
     model::*,
     tool, tool_handler, tool_router,
 };
-use schemars::JsonSchema;
-use serde::Deserialize;
 
-use crate::control_plane::policy::Policy;
-use crate::core::dns::records::RecordData;
-use crate::core::dns::service::{DnsService, ListRecordsOptions};
-use crate::core::error::Error;
+use crate::{
+    control_plane::policy::Policy,
+    core::dns::service::DnsService,
+    mcp::{
+        params::*,
+        tools::{access_lists, cache as cache_tools, records as record_tools, settings as settings_tools, stats as stats_tools, zones as zone_tools},
+    },
+};
 
 // ─── Server state ─────────────────────────────────────────────────────────────
 
@@ -20,327 +22,6 @@ pub struct DnsServer<C> {
     policy: Policy,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
-}
-
-// ─── Parameter types ─────────────────────────────────────────────────────────
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ZoneParams {
-    /// The zone name, e.g. "example.com"
-    pub zone: String,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ListZonesParams {
-    /// Page number for pagination (default: 1)
-    pub page_number: Option<u32>,
-    /// Zones per page (default: 50)
-    pub zones_per_page: Option<u32>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct CreateZoneParams {
-    /// Zone name, e.g. "example.com"
-    pub zone: String,
-    /// Zone type: Primary, Secondary, Stub, Forwarder
-    pub zone_type: String,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ListRecordsParams {
-    /// Domain to list records for
-    pub domain: String,
-    /// Zone name (if different from domain)
-    pub zone: Option<String>,
-    /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
-    #[serde(default, rename = "useLocalIp", alias = "use_local_ip")]
-    pub use_local_ip: Option<bool>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct AddRecordParams {
-    pub zone: String,
-    pub domain: String,
-    /// TTL in seconds (default: 3600)
-    pub ttl: Option<u32>,
-    /// Typed record data, e.g. {"type":"A","ip":"1.2.3.4"} or
-    /// {"type":"MX","exchange":"mail.example.com","preference":10}
-    pub record: RecordData,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct DeleteRecordParams {
-    pub zone: String,
-    pub domain: String,
-    /// Which record(s) to delete. Only the `type` field is required.
-    /// Omitting value fields deletes ALL records of that type for the domain.
-    /// e.g. `{"type":"A"}` deletes all A records; `{"type":"A","ipAddress":"1.2.3.4"}` deletes one.
-    pub record: RecordDeleteData,
-}
-
-/// Typed record selector for deletion. All value fields are optional.
-#[derive(Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "UPPERCASE")]
-pub enum RecordDeleteData {
-    A {
-        #[serde(rename = "ipAddress")]
-        ip: Option<std::net::Ipv4Addr>,
-    },
-    Aaaa {
-        #[serde(rename = "ipAddress")]
-        ip: Option<std::net::Ipv6Addr>,
-    },
-    Aname {
-        aname: Option<String>,
-    },
-    App {
-        #[serde(rename = "appName")]
-        app_name: Option<String>,
-    },
-    Caa {
-        value: Option<String>,
-    },
-    Cname {
-        #[serde(rename = "cname")]
-        target: Option<String>,
-    },
-    Dname {
-        dname: Option<String>,
-    },
-    Ds {
-        #[serde(rename = "keyTag")]
-        key_tag: Option<u16>,
-    },
-    Fwd {
-        forwarder: Option<String>,
-    },
-    Https {
-        #[serde(rename = "svcTargetName")]
-        svc_target_name: Option<String>,
-    },
-    Mx {
-        exchange: Option<String>,
-    },
-    Naptr {
-        #[serde(rename = "naptrReplacement")]
-        replacement: Option<String>,
-    },
-    Ns {
-        #[serde(rename = "nameServer")]
-        nameserver: Option<String>,
-    },
-    Ptr {
-        #[serde(rename = "ptrName")]
-        name: Option<String>,
-    },
-    Sshfp {
-        #[serde(rename = "sshfpFingerprint")]
-        fingerprint: Option<String>,
-    },
-    Srv {
-        target: Option<String>,
-        port: Option<u16>,
-        priority: Option<u16>,
-        weight: Option<u16>,
-    },
-    Svcb {
-        #[serde(rename = "svcTargetName")]
-        svc_target_name: Option<String>,
-    },
-    Tlsa {
-        #[serde(rename = "tlsaCertificateAssociationData")]
-        cert_association_data: Option<String>,
-    },
-    Txt {
-        text: Option<String>,
-    },
-    Uri {
-        uri: Option<String>,
-    },
-    Unknown {
-        rdata: Option<String>,
-    },
-}
-
-impl RecordDeleteData {
-    pub fn to_api_params(&self) -> Vec<(&'static str, String)> {
-        let type_name = match self {
-            Self::A { .. } => "A",
-            Self::Aaaa { .. } => "AAAA",
-            Self::Aname { .. } => "ANAME",
-            Self::App { .. } => "APP",
-            Self::Caa { .. } => "CAA",
-            Self::Cname { .. } => "CNAME",
-            Self::Dname { .. } => "DNAME",
-            Self::Ds { .. } => "DS",
-            Self::Fwd { .. } => "FWD",
-            Self::Https { .. } => "HTTPS",
-            Self::Mx { .. } => "MX",
-            Self::Naptr { .. } => "NAPTR",
-            Self::Ns { .. } => "NS",
-            Self::Ptr { .. } => "PTR",
-            Self::Sshfp { .. } => "SSHFP",
-            Self::Srv { .. } => "SRV",
-            Self::Svcb { .. } => "SVCB",
-            Self::Tlsa { .. } => "TLSA",
-            Self::Txt { .. } => "TXT",
-            Self::Uri { .. } => "URI",
-            Self::Unknown { .. } => "UNKNOWN",
-        };
-        let mut p = vec![("type", type_name.into())];
-        match self {
-            Self::A { ip } => {
-                if let Some(v) = ip {
-                    p.push(("ipAddress", v.to_string()));
-                }
-            }
-            Self::Aaaa { ip } => {
-                if let Some(v) = ip {
-                    p.push(("ipAddress", v.to_string()));
-                }
-            }
-            Self::Aname { aname } => {
-                if let Some(v) = aname {
-                    p.push(("aname", v.clone()));
-                }
-            }
-            Self::App { app_name } => {
-                if let Some(v) = app_name {
-                    p.push(("appName", v.clone()));
-                }
-            }
-            Self::Caa { value } => {
-                if let Some(v) = value {
-                    p.push(("value", v.clone()));
-                }
-            }
-            Self::Cname { target } => {
-                if let Some(v) = target {
-                    p.push(("cname", v.clone()));
-                }
-            }
-            Self::Dname { dname } => {
-                if let Some(v) = dname {
-                    p.push(("dname", v.clone()));
-                }
-            }
-            Self::Ds { key_tag } => {
-                if let Some(v) = key_tag {
-                    p.push(("keyTag", v.to_string()));
-                }
-            }
-            Self::Fwd { forwarder } => {
-                if let Some(v) = forwarder {
-                    p.push(("forwarder", v.clone()));
-                }
-            }
-            Self::Https { svc_target_name } | Self::Svcb { svc_target_name } => {
-                if let Some(v) = svc_target_name {
-                    p.push(("svcTargetName", v.clone()));
-                }
-            }
-            Self::Mx { exchange } => {
-                if let Some(v) = exchange {
-                    p.push(("exchange", v.clone()));
-                }
-            }
-            Self::Naptr { replacement } => {
-                if let Some(v) = replacement {
-                    p.push(("naptrReplacement", v.clone()));
-                }
-            }
-            Self::Ns { nameserver } => {
-                if let Some(v) = nameserver {
-                    p.push(("nameServer", v.clone()));
-                }
-            }
-            Self::Ptr { name } => {
-                if let Some(v) = name {
-                    p.push(("ptrName", v.clone()));
-                }
-            }
-            Self::Sshfp { fingerprint } => {
-                if let Some(v) = fingerprint {
-                    p.push(("sshfpFingerprint", v.clone()));
-                }
-            }
-            Self::Srv {
-                target,
-                port,
-                priority,
-                weight,
-            } => {
-                if let Some(v) = target {
-                    p.push(("target", v.clone()));
-                }
-                if let Some(v) = port {
-                    p.push(("port", v.to_string()));
-                }
-                if let Some(v) = priority {
-                    p.push(("priority", v.to_string()));
-                }
-                if let Some(v) = weight {
-                    p.push(("weight", v.to_string()));
-                }
-            }
-            Self::Tlsa {
-                cert_association_data,
-            } => {
-                if let Some(v) = cert_association_data {
-                    p.push(("tlsaCertificateAssociationData", v.clone()));
-                }
-            }
-            Self::Txt { text } => {
-                if let Some(v) = text {
-                    p.push(("text", v.clone()));
-                }
-            }
-            Self::Uri { uri } => {
-                if let Some(v) = uri {
-                    p.push(("uri", v.clone()));
-                }
-            }
-            Self::Unknown { rdata } => {
-                if let Some(v) = rdata {
-                    p.push(("rdata", v.clone()));
-                }
-            }
-        }
-        p
-    }
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct DomainParams {
-    pub domain: String,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct StatsParams {
-    /// LastHour, LastDay, LastWeek, LastMonth, LastYear (default: LastDay)
-    pub stats_type: Option<String>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ExportZoneFileParams {
-    /// Zone name to export, e.g. "example.com"
-    pub zone: String,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ImportZoneFileParams {
-    /// Zone name the file will be imported into (must already exist)
-    pub zone: String,
-    /// Full RFC 1035 zone file content as a string
-    pub content: String,
-    /// Filename shown in API logs (default: zone.txt)
-    pub file_name: Option<String>,
-    /// Overwrite existing record sets for imported types (default: true)
-    pub overwrite: Option<bool>,
-    /// Delete all existing records before importing — clean replace (default: false)
-    pub overwrite_zone: Option<bool>,
-    /// Use the SOA serial from the file instead of auto-incrementing (default: false)
-    pub overwrite_soa_serial: Option<bool>,
 }
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
@@ -363,11 +44,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         Parameters(p): Parameters<ListZonesParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_zones", "MCP tool invoked");
-        self.client
-            .list_zones(p.page_number.unwrap_or(1), p.zones_per_page.unwrap_or(50))
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        zone_tools::handle_list_zones(&self.client, p).await
     }
 
     #[tool(description = "Create a new DNS zone. Types: Primary, Secondary, Stub, Forwarder.")]
@@ -377,13 +54,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_create_zone", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        self.client
-            .create_zone(&p.zone, &p.zone_type)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        zone_tools::handle_create_zone(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Delete a DNS zone. This is destructive and cannot be undone.")]
@@ -393,13 +64,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_delete_zone", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        self.client
-            .delete_zone(&p.zone)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        zone_tools::handle_delete_zone(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Enable a previously disabled DNS zone.")]
@@ -409,13 +74,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_enable_zone", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        self.client
-            .enable_zone(&p.zone)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        zone_tools::handle_enable_zone(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Disable a DNS zone so it stops responding to queries.")]
@@ -425,13 +84,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_disable_zone", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        self.client
-            .disable_zone(&p.zone)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        zone_tools::handle_disable_zone(&self.client, &self.policy, p).await
     }
 
     #[tool(
@@ -445,21 +98,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_import_zone_file", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        let file_name = p.file_name.unwrap_or_else(|| format!("{}.txt", p.zone));
-        self.client
-            .import_zone_file(
-                &p.zone,
-                file_name,
-                p.content.into_bytes(),
-                p.overwrite.unwrap_or(true),
-                p.overwrite_zone.unwrap_or(false),
-                p.overwrite_soa_serial.unwrap_or(false),
-            )
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        zone_tools::handle_import_zone_file(&self.client, &self.policy, p).await
     }
 
     #[tool(
@@ -472,12 +111,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_export_zone_file", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, "tool invoked");
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        self.client
-            .export_zone_file(&p.zone)
-            .await
-            .map(text_result)
-            .map_err(mcp_err)
+        zone_tools::handle_export_zone_file(&self.client, &self.policy, p).await
     }
 
     // ── Records ───────────────────────────────────────────────────────────
@@ -491,22 +125,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_records", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, zone = ?p.zone, "tool invoked");
-        self.policy
-            .check_zone(p.zone.as_deref().unwrap_or(&p.domain))
-            .map_err(mcp_err)?;
-        self.client
-            .list_records(
-                &p.domain,
-                p.zone.as_deref(),
-                ListRecordsOptions {
-                    use_local_ip: p.use_local_ip.unwrap_or(false),
-                    all_subdomains: false,
-                },
-            )
-            .await
-            .and_then(|r| serde_json::to_value(&r).map_err(|e| Error::parse(e.to_string())))
-            .map(json_result)
-            .map_err(mcp_err)
+        record_tools::handle_list_records(&self.client, &self.policy, p).await
     }
 
     #[tool(
@@ -518,17 +137,11 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_add_record", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, domain = %p.domain, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        self.client
-            .add_record(&p.zone, &p.domain, p.ttl.unwrap_or(3600), &p.record)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        record_tools::handle_add_record(&self.client, &self.policy, p).await
     }
 
     #[tool(
-        description = "Delete DNS record(s). Only `type` is required — omitting value fields \
+        description = "Delete DNS record(s). Only `type` is required \u{2014} omitting value fields \
         deletes ALL records of that type for the domain. \
         e.g. {\"type\":\"A\"} deletes all A records; {\"type\":\"A\",\"ipAddress\":\"1.2.3.4\"} deletes one specific record."
     )]
@@ -538,14 +151,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_delete_record", "MCP tool invoked");
         tracing::debug!(zone = %p.zone, domain = %p.domain, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.policy.check_zone(&p.zone).map_err(mcp_err)?;
-        let type_params = p.record.to_api_params();
-        self.client
-            .delete_record(&p.zone, &p.domain, &type_params)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        record_tools::handle_delete_record(&self.client, &self.policy, p).await
     }
 
     // ── Cache ─────────────────────────────────────────────────────────────
@@ -557,11 +163,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_cache", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, "tool invoked");
-        self.client
-            .list_cache(&p.domain)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        cache_tools::handle_list_cache(&self.client, p).await
     }
 
     #[tool(description = "Evict a specific domain from the DNS cache.")]
@@ -571,23 +173,13 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_delete_cache_zone", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.client
-            .delete_cache_zone(&p.domain)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        cache_tools::handle_delete_cache_zone(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Flush the entire DNS cache, forcing all records to be resolved fresh.")]
     async fn dns_flush_cache(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_flush_cache", "MCP tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.client
-            .flush_cache()
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        cache_tools::handle_flush_cache(&self.client, &self.policy).await
     }
 
     // ── Stats ─────────────────────────────────────────────────────────────
@@ -604,11 +196,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
             stats_type = p.stats_type.as_deref().unwrap_or("LastDay"),
             "tool invoked"
         );
-        self.client
-            .get_stats(p.stats_type.as_deref().unwrap_or("LastDay"))
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        stats_tools::handle_get_stats(&self.client, p).await
     }
 
     // ── Blocked ───────────────────────────────────────────────────────────
@@ -616,11 +204,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     #[tool(description = "List all manually blocked domains.")]
     async fn dns_list_blocked_zones(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_blocked_zones", "MCP tool invoked");
-        self.client
-            .list_blocked()
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        access_lists::handle_list_blocked(&self.client).await
     }
 
     #[tool(description = "Block a domain, causing the DNS server to refuse to resolve it.")]
@@ -630,12 +214,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_add_blocked_zone", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.client
-            .add_blocked(&p.domain)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        access_lists::handle_add_blocked(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Unblock a domain.")]
@@ -645,12 +224,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_delete_blocked_zone", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.client
-            .delete_blocked(&p.domain)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        access_lists::handle_delete_blocked(&self.client, &self.policy, p).await
     }
 
     // ── Allowed ───────────────────────────────────────────────────────────
@@ -658,11 +232,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     #[tool(description = "List all whitelisted domains.")]
     async fn dns_list_allowed_zones(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_allowed_zones", "MCP tool invoked");
-        self.client
-            .list_allowed()
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        access_lists::handle_list_allowed(&self.client).await
     }
 
     #[tool(description = "Whitelist a domain, allowing it even if it appears on a block list.")]
@@ -672,12 +242,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_add_allowed_zone", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.client
-            .add_allowed(&p.domain)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        access_lists::handle_add_allowed(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Remove a domain from the whitelist.")]
@@ -687,12 +252,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_delete_allowed_zone", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, "tool invoked");
-        self.policy.check_write().map_err(mcp_err)?;
-        self.client
-            .delete_allowed(&p.domain)
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        access_lists::handle_delete_allowed(&self.client, &self.policy, p).await
     }
 
     // ── Settings ──────────────────────────────────────────────────────────
@@ -700,11 +260,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     #[tool(description = "Get the current Technitium DNS server configuration.")]
     async fn dns_get_settings(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_get_settings", "MCP tool invoked");
-        self.client
-            .get_settings()
-            .await
-            .map(json_result)
-            .map_err(mcp_err)
+        settings_tools::handle_get_settings(&self.client).await
     }
 }
 
@@ -728,28 +284,4 @@ impl<C: DnsService + Clone + Send + Sync + 'static> ServerHandler for DnsServer<
 
         info
     }
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-fn mcp_err(e: Error) -> McpError {
-    use miette::Diagnostic;
-    let mut msg = e.to_string();
-    if let Some(code) = e.code() {
-        msg = format!("[{code}] {msg}");
-    }
-    if let Some(help) = e.help() {
-        msg = format!("{msg}\n\nhelp: {help}");
-    }
-    McpError::internal_error(msg, None)
-}
-
-fn json_result(value: serde_json::Value) -> CallToolResult {
-    CallToolResult::success(vec![Content::text(
-        serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
-    )])
-}
-
-fn text_result(s: String) -> CallToolResult {
-    CallToolResult::success(vec![Content::text(s)])
 }

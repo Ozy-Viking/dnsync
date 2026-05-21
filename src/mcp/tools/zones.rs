@@ -1,1 +1,100 @@
-//! Zone MCP tools placeholder.
+use rmcp::{ErrorData as McpError, model::*};
+
+use crate::{
+    core::dns::zones,
+    mcp::{helpers::{json_result, mcp_err, text_result}, params::*},
+    control_plane::policy::Policy,
+    core::dns::service::DnsService,
+};
+
+pub async fn handle_list_zones<C: DnsService + Send + Sync>(
+    client: &C,
+    p: ListZonesParams,
+) -> Result<CallToolResult, McpError> {
+    zones::list_zones(client, p.page_number.unwrap_or(1), p.zones_per_page.unwrap_or(50))
+        .await
+        .map(json_result)
+        .map_err(mcp_err)
+}
+
+pub async fn handle_create_zone<C: DnsService + Send + Sync>(
+    client: &C,
+    policy: &Policy,
+    p: CreateZoneParams,
+) -> Result<CallToolResult, McpError> {
+    policy.check_write().map_err(mcp_err)?;
+    policy.check_zone(&p.zone).map_err(mcp_err)?;
+    zones::create_zone(client, &p.zone, &p.zone_type)
+        .await
+        .map(json_result)
+        .map_err(mcp_err)
+}
+
+pub async fn handle_delete_zone<C: DnsService + Send + Sync>(
+    client: &C,
+    policy: &Policy,
+    p: ZoneParams,
+) -> Result<CallToolResult, McpError> {
+    policy.check_write().map_err(mcp_err)?;
+    policy.check_zone(&p.zone).map_err(mcp_err)?;
+    zones::delete_zone(client, &p.zone)
+        .await
+        .map(json_result)
+        .map_err(mcp_err)
+}
+
+pub async fn handle_enable_zone<C: DnsService + Send + Sync>(
+    client: &C,
+    policy: &Policy,
+    p: ZoneParams,
+) -> Result<CallToolResult, McpError> {
+    policy.check_write().map_err(mcp_err)?;
+    policy.check_zone(&p.zone).map_err(mcp_err)?;
+    zones::enable_zone(client, &p.zone)
+        .await
+        .map(json_result)
+        .map_err(mcp_err)
+}
+
+pub async fn handle_disable_zone<C: DnsService + Send + Sync>(
+    client: &C,
+    policy: &Policy,
+    p: ZoneParams,
+) -> Result<CallToolResult, McpError> {
+    policy.check_write().map_err(mcp_err)?;
+    policy.check_zone(&p.zone).map_err(mcp_err)?;
+    zones::disable_zone(client, &p.zone)
+        .await
+        .map(json_result)
+        .map_err(mcp_err)
+}
+
+pub async fn handle_import_zone_file<C: DnsService + Send + Sync>(
+    client: &C,
+    policy: &Policy,
+    p: ImportZoneFileParams,
+) -> Result<CallToolResult, McpError> {
+    policy.check_write().map_err(mcp_err)?;
+    policy.check_zone(&p.zone).map_err(mcp_err)?;
+    let file_name = p.file_name.unwrap_or_else(|| format!("{}.txt", p.zone));
+    zones::import_zone_file(
+        client, &p.zone, file_name, p.content.into_bytes(),
+        p.overwrite.unwrap_or(true), p.overwrite_zone.unwrap_or(false),
+        p.overwrite_soa_serial.unwrap_or(false),
+    )
+    .await
+    .map(json_result)
+    .map_err(mcp_err)
+}
+
+pub async fn handle_export_zone_file<C: DnsService + Send + Sync>(
+    client: &C,
+    policy: &Policy,
+    p: ExportZoneFileParams,
+) -> Result<CallToolResult, McpError> {
+    policy.check_zone(&p.zone).map_err(mcp_err)?;
+    zones::export_zone_file(client, &p.zone)
+        .await
+        .map(text_result)
+        .map_err(mcp_err)
+}

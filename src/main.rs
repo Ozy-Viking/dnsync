@@ -9,7 +9,7 @@ fn main() {}
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use dnslib::{
     cli::{self, RecordCmd, ZoneCmd},
-    control_plane::{config, policy},
+    control_plane::{app, config, policy},
     core::{dns::service::DnsService, error},
     mcp::server,
     vendors::runtime::{ClientOverrides, VendorClient},
@@ -158,7 +158,7 @@ async fn run(cli: Cli) -> i32 {
             && effective_servers.is_empty()
             && app_config.as_ref().is_some_and(|c| c.servers.len() > 1);
         if cli.all || !effective_servers.is_empty() || default_all_servers {
-            return run_record_list_across_servers(
+            return match app::run_record_list_across_servers(
                 &cli,
                 app_config.as_ref(),
                 domain.as_deref(),
@@ -168,7 +168,11 @@ async fn run(cli: Cli) -> i32 {
                 *use_local_ip,
                 *json,
             )
-            .await;
+            .await
+            {
+                Ok(()) => 0,
+                Err(e) => render_error(e),
+            };
         }
     }
 
@@ -204,7 +208,7 @@ async fn run(cli: Cli) -> i32 {
         ));
     }
 
-    let policy = match cli_policy(&cli, app_config.as_ref()) {
+    let policy = match Policy::from_cli_and_config(&cli, app_config.as_ref()) {
         Ok(p) => p,
         Err(e) => return render_error(e),
     };
@@ -222,145 +226,6 @@ async fn run(cli: Cli) -> i32 {
     };
 
     run_with_client(cli, client, policy).await
-}
-
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
-async fn run_record_list_across_servers(
-    cli: &Cli,
-    app_config: Option<&config::AppConfig>,
-    domain: Option<&str>,
-    zone: Option<&str>,
-    all_subdomains: bool,
-    servers: &[String],
-    use_local_ip: bool,
-    json: bool,
-) -> i32 {
-    use dnslib::cli::runner::{
-        filter_records_by_domain, infer_zone, list_records_for_all_zones, resolve_fqdn,
-        search_bare_label_in_zones,
-    };
-    use dnslib::core::dns::service::{ListRecordsOptions, ZoneRead};
-
-    if cli.token.is_some() || cli.base_url.is_some() {
-        return render_error(Error::parse(
-            "cross-server record list does not accept --token/--base-url; configure credentials per server via config file or environment variables",
-        ));
-    }
-
-    let Some(cfg) = app_config else {
-        return render_error(Error::parse(
-            "--all/--server for record list requires a config file with server entries",
-        ));
-    };
-
-    let bare_label_without_zone =
-        zone.is_none() && domain.is_some_and(|domain| !domain.contains('.'));
-    let query_all_servers =
-        cli.all || (servers.is_empty() && (domain.is_none() || bare_label_without_zone));
-    let selected: Vec<&config::DnsServerConfig> = if query_all_servers {
-        cfg.servers.iter().collect()
-    } else {
-        let mut picked = Vec::with_capacity(servers.len());
-        for server_id in servers {
-            match cfg.selected_server(Some(server_id.as_str())) {
-                Ok(s) => picked.push(s),
-                Err(e) => return render_error(e),
-            }
-        }
-        picked
-    };
-
-    if selected.is_empty() {
-        return render_error(Error::parse(
-            "--all requested, but no servers are configured; add at least one server in the config file",
-        ));
-    }
-
-    let domain_query = domain.map(|domain| {
-        let effective_fqdn = resolve_fqdn(domain, zone);
-        let is_bare_label = zone.is_none() && !effective_fqdn.contains('.');
-        let (query_domain, query_zone) = if !is_bare_label && all_subdomains {
-            let zone_name = zone
-                .map(str::to_string)
-                .or_else(|| infer_zone(&effective_fqdn).filter(|z| z.contains('.')))
-                .unwrap_or_else(|| effective_fqdn.clone());
-            (zone_name.clone(), Some(zone_name))
-        } else {
-            (effective_fqdn.clone(), zone.map(str::to_string))
-        };
-        (effective_fqdn, is_bare_label, query_domain, query_zone)
-    });
-    let options = ListRecordsOptions {
-        use_local_ip,
-        all_subdomains,
-    };
-    let mut json_zones = Vec::new();
-    let mut printed_servers = 0usize;
-
-    for server in &selected {
-        let client = match VendorClient::from_server(server) {
-            Ok(client) => client,
-            Err(e) => return render_error(e),
-        };
-        let result = match &domain_query {
-            None => list_records_for_all_zones(&client, options).await,
-            Some((effective_fqdn, true, _, _)) => {
-                search_bare_label_in_zones(&client, effective_fqdn, all_subdomains, options).await
-            }
-            Some((_, false, query_domain, query_zone)) => {
-                client
-                    .list_records(query_domain, query_zone.as_deref(), options)
-                    .await
-            }
-        };
-
-        match result {
-            Ok(mut response) => {
-                // search_bare_label_in_zones already filters internally; only
-                // apply the outer filter for non-bare-label --all-subdomains queries.
-                if let Some((effective_fqdn, false, _, _)) = &domain_query
-                    && all_subdomains
-                {
-                    filter_records_by_domain(&mut response, effective_fqdn, true);
-                }
-                if json {
-                    for mut zone_records in response.zones {
-                        if zone_records.zone.id.is_none() {
-                            zone_records.zone.id = Some(zone_records.zone.name.clone());
-                        }
-                        json_zones.push(serde_json::json!({
-                            "serverName": server.id,
-                            "serverId": server.id,
-                            "vendor": format!("{:?}", server.vendor),
-                            "zone": zone_records.zone,
-                            "records": zone_records.records,
-                        }));
-                    }
-                } else if !response.zones.is_empty() {
-                    if printed_servers > 0 {
-                        println!();
-                    }
-                    println!("=== Server: {} ({:?}) ===", server.id, server.vendor);
-                    cli::records::print_records_table(&response);
-                    printed_servers += 1;
-                }
-            }
-            Err(e) => return render_error(e),
-        }
-    }
-
-    if json {
-        match serde_json::to_string_pretty(&json_zones) {
-            Ok(pretty) => println!("{pretty}"),
-            Err(e) => {
-                return render_error(Error::parse(format!(
-                    "could not serialise record list response: {e}"
-                )));
-            }
-        }
-    }
-
-    0
 }
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
@@ -502,59 +367,6 @@ async fn server_import_zone(
     .await
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
-fn cli_policy(cli: &Cli, config: Option<&config::AppConfig>) -> Result<Policy, Error> {
-    let mcp = config
-        .and_then(|c| {
-            c.selected_server(cli.servers.first().map(|s| s.as_str()))
-                .ok()
-        })
-        .map(|s| &s.mcp);
-
-    // Take the most restrictive of CLI flag and server config; default to full access.
-    let config_access = mcp
-        .map(|p| p.access)
-        .unwrap_or(policy::PolicyRule::Delete);
-    let access = match cli.access {
-        Some(a) => a.min(config_access),
-        None => config_access,
-    };
-    let allowed_zones = allowed_zones(cli, mcp)?;
-    Ok(Policy::new(access, allowed_zones))
-}
-
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
-fn allowed_zones(
-    cli: &Cli,
-    mcp: Option<&config::McpPermissions>,
-) -> Result<Option<Vec<String>>, Error> {
-    let configured = mcp.and_then(|permissions| {
-        (!permissions.allowed_zones.is_empty()).then_some(&permissions.allowed_zones)
-    });
-
-    if cli.allow_zone.is_empty() {
-        return Ok(configured.cloned());
-    }
-
-    let Some(configured) = configured else {
-        return Ok(Some(cli.allow_zone.clone()));
-    };
-
-    let configured_policy = Policy::new(policy::PolicyRule::Delete, Some(configured.clone()));
-    for zone in &cli.allow_zone {
-        configured_policy.check_zone(zone).map_err(|_| {
-            Error::policy_violation(
-                format!(
-                    "--allow-zone '{zone}' is outside this server's configured MCP allowed zones"
-                ),
-                "Remove the override or choose a zone already permitted by this server's config.",
-            )
-        })?;
-    }
-
-    Ok(Some(cli.allow_zone.clone()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,7 +415,8 @@ mod tests {
 
     #[test]
     fn cli_allow_zone_can_narrow_configured_zones() {
-        let policy = cli_policy(&cli(vec!["sub.example.com".to_string()]), None).unwrap();
+        let policy = Policy::from_cli_and_config(&cli(vec!["sub.example.com".to_string()]), None)
+            .unwrap();
 
         assert!(policy.check_zone("sub.example.com").is_ok());
         assert!(policy.check_zone("other.example.com").is_err());
@@ -624,7 +437,8 @@ mod tests {
         )
         .unwrap();
 
-        let err = cli_policy(&cli(vec!["other.net".to_string()]), Some(&config)).unwrap_err();
+        let err = Policy::from_cli_and_config(&cli(vec!["other.net".to_string()]), Some(&config))
+            .unwrap_err();
 
         assert!(err.to_string().contains("outside this server's configured"));
     }
@@ -638,4 +452,8 @@ mod tests {
         assert!(path.exists());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
+    // #[tokio::test]
+    // async fn failing_test() {
+    //     assert_eq!(1, 3)
+    // }
 }

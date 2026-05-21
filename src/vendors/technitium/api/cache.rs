@@ -1,1 +1,0 @@
-//! Technitium cache endpoints placeholder.
