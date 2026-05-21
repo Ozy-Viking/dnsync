@@ -4,14 +4,19 @@
 //! Config, CLI, and env vars are the source of truth — callers of `DnsServer::new`
 //! must construct a `Policy` for the selected DNS server and pass it in.
 //!
-//! # Modes
+//! # Operation sets
 //!
-//! - **Read-only** (`PolicyRule::Read`): all write and delete tools are rejected.
-//! - **Write** (`PolicyRule::Write`): create/update tools are permitted; delete tools are rejected.
-//! - **Full** (`PolicyRule::Delete`): all tools are permitted (default).
+//! A `Policy` holds an explicit set of allowed `PolicyRule` variants.
+//! Rules are independent: you can permit any combination of Read, Write, and Delete.
+//!
+//! - **Read**: list/export/stats/settings/cache-browse tools are permitted.
+//! - **Write**: create/update/import/flush/block/allow tools are permitted.
+//! - **Delete**: delete tools are permitted.
 //! - **Zone allow-list**: any tool that targets a specific zone is rejected unless
 //!   that zone (or its parent) is in the allow-list. Zone-agnostic tools (stats,
 //!   settings, cache browse) are always permitted.
+
+use std::collections::HashSet;
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
@@ -20,64 +25,90 @@ use crate::cli::Cli;
 use crate::control_plane::config::{AppConfig, McpPermissions};
 use crate::core::error::{Error, Result};
 
-/// Classifies the maximum operation level the MCP server is permitted to perform.
+/// Identifies a single class of DNS operation.
 ///
-/// Variants are ordered from least to most permissive: `Read < Write < Delete`.
-/// A `Policy` with a given `access` level permits all operations at or below that level.
+/// A `Policy` holds a `HashSet<PolicyRule>` — only operations whose rule is
+/// present in that set are permitted.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ValueEnum,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyRule {
-    /// Read-only: no mutations permitted.
+    /// Read-only operations: list zones/records, export, stats, settings, cache browse.
     Read,
-    /// Writes permitted; deletes are not.
+    /// Write operations: create/update/import/flush/block/allow.
     Write,
-    /// All operations permitted (default).
+    /// Delete operations: delete zone/record/cache/block/allow entries.
     Delete,
 }
 
-impl Default for PolicyRule {
-    fn default() -> Self {
-        Self::Delete
-    }
-}
-
 /// Governs what the MCP server is permitted to do.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Policy {
-    /// Maximum permitted operation level.
-    pub access: PolicyRule,
+    /// Set of permitted operation classes.
+    pub allowed: HashSet<PolicyRule>,
 
     /// If `Some`, only zones in this list (case-insensitive) are accessible.
     /// `None` means unrestricted.
     pub allowed_zones: Option<Vec<String>>,
 }
 
+impl Default for Policy {
+    fn default() -> Self {
+        Self::new([PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete], None)
+    }
+}
+
 impl Policy {
-    pub fn new(access: PolicyRule, allowed_zones: Option<Vec<String>>) -> Self {
+    /// Construct a new policy from its constituent parts.
+    pub fn new(
+        allowed: impl IntoIterator<Item = PolicyRule>,
+        allowed_zones: Option<Vec<String>>,
+    ) -> Self {
         Self {
-            access,
-            allowed_zones,
+            allowed: allowed.into_iter().collect(),
+            allowed_zones: allowed_zones
+                .map(|zones| zones.into_iter().map(|z| z.to_lowercase()).collect()),
         }
     }
 
     pub fn check(&self, rule: PolicyRule) -> Result<()> {
-        if self.access >= rule {
+        if self.allowed.contains(&rule) {
             return Ok(());
         }
-
-        let message = if self.access == PolicyRule::Read {
-            "read-only policy blocks write and delete operations".to_string()
-        } else {
-            format!("operation requires {rule:?} access, but policy is {:?}", self.access)
-        };
-        Err(Error::policy_violation(
-            message,
-            "Use a less restrictive policy or choose a read-only operation.",
-        ))
+        match rule {
+            PolicyRule::Read => {
+                tracing::warn!("read rejected: read is not in the allowed set");
+                Err(Error::policy_violation(
+                    "this MCP server does not permit read operations",
+                    "Update this server's MCP permissions or add 'read' to the allowed operations.",
+                ))
+            }
+            PolicyRule::Write => {
+                tracing::warn!("write rejected: write is not in the allowed set");
+                Err(Error::policy_violation(
+                    "this MCP server does not permit write operations",
+                    "Update this server's MCP permissions or add 'write' to the allowed operations.",
+                ))
+            }
+            PolicyRule::Delete => {
+                tracing::warn!("delete rejected: delete is not in the allowed set");
+                Err(Error::policy_violation(
+                    "this MCP server does not permit delete operations",
+                    "Update this server's MCP permissions or add 'delete' to the allowed operations.",
+                ))
+            }
+        }
     }
 
+    /// Assert that the active policy permits read operations.
+    /// Shorthand for `check(PolicyRule::Read)`.
+    pub fn check_read(&self) -> Result<()> {
+        self.check(PolicyRule::Read)
+    }
+
+    /// Assert that the active policy permits write operations.
+    /// Shorthand for `check(PolicyRule::Write)`.
     pub fn check_write(&self) -> Result<()> {
         self.check(PolicyRule::Write)
     }
@@ -112,19 +143,54 @@ impl Policy {
     pub fn instructions_suffix(&self) -> String {
         let mut parts = Vec::new();
 
-        match self.access {
-            PolicyRule::Read => {
+        // Collect disabled operations (those NOT in self.allowed)
+        let mut disabled: Vec<&str> = Vec::new();
+        if !self.allowed.contains(&PolicyRule::Read) {
+            disabled.push("read");
+        }
+        if !self.allowed.contains(&PolicyRule::Write) {
+            disabled.push("write");
+        }
+        if !self.allowed.contains(&PolicyRule::Delete) {
+            disabled.push("delete");
+        }
+
+        if !disabled.is_empty() {
+            // Check for common named combinations for human-friendly messages
+            let read_disabled = disabled.contains(&"read");
+            let write_disabled = disabled.contains(&"write");
+            let delete_disabled = disabled.contains(&"delete");
+
+            if read_disabled && write_disabled && !delete_disabled {
+                // only delete allowed — unusual but possible
+                parts.push("⚠️  Restricted mode: read and write operations are disabled.".to_string());
+            } else if read_disabled && delete_disabled && !write_disabled {
+                // write-only
                 parts.push(
-                    "⚠️  Read-only mode: all write and delete operations are disabled."
-                        .to_string(),
+                    "⚠️  Write-only mode: read and delete operations are disabled.".to_string(),
                 );
-            }
-            PolicyRule::Write => {
+            } else if write_disabled && delete_disabled && !read_disabled {
+                // read-only
+                parts.push(
+                    "⚠️  Read-only mode: all write and delete operations are disabled.".to_string(),
+                );
+            } else if read_disabled && !write_disabled && !delete_disabled {
+                // write+delete mode (read disabled) — write mode with read blocked
+                parts.push(
+                    "⚠️  Write mode: read operations are disabled.".to_string(),
+                );
+            } else if delete_disabled && !read_disabled && !write_disabled {
+                // read+write mode (delete disabled) — write mode without deletes
                 parts.push(
                     "⚠️  Write mode: delete operations are disabled.".to_string(),
                 );
+            } else {
+                // Generic fallback: list the disabled operations
+                parts.push(format!(
+                    "⚠️  Restricted mode: {} operations are disabled.",
+                    disabled.join(", ")
+                ));
             }
-            PolicyRule::Delete => {}
         }
 
         if let Some(ref zones) = self.allowed_zones {
@@ -152,13 +218,24 @@ impl Policy {
             })
             .map(|s| &s.mcp);
 
-        let config_access = mcp.map(|p| p.access).unwrap_or(PolicyRule::Delete);
-        let access = match cli.access {
-            Some(a) => a.min(config_access),
-            None => config_access,
+        let config_set: HashSet<PolicyRule> = mcp
+            .map(|p| p.access.iter().cloned().collect())
+            .unwrap_or_else(|| {
+                [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete]
+                    .into_iter()
+                    .collect()
+            });
+
+        let cli_set: HashSet<PolicyRule> = cli.access.iter().cloned().collect();
+
+        let allowed: HashSet<PolicyRule> = if cli_set.is_empty() {
+            config_set
+        } else {
+            cli_set.intersection(&config_set).cloned().collect()
         };
+
         let allowed_zones = Self::allowed_zones_from_cli_and_mcp(cli, mcp)?;
-        Ok(Self::new(access, allowed_zones))
+        Ok(Self::new(allowed, allowed_zones))
     }
 
     /// Build allowed zones from CLI and MCP config.
@@ -178,7 +255,10 @@ impl Policy {
             return Ok(Some(cli.allow_zone.clone()));
         };
 
-        let configured_policy = Self::new(PolicyRule::Delete, Some(configured.clone()));
+        let configured_policy = Self::new(
+            [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete],
+            Some(configured.clone()),
+        );
         for zone in &cli.allow_zone {
             configured_policy.check_zone(zone).map_err(|_| {
                 Error::policy_violation(
@@ -203,33 +283,48 @@ mod tests {
 
     #[fixture]
     fn unrestricted() -> Policy {
-        Policy::default()
+        Policy::new([PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete], None)
     }
 
     #[fixture]
     fn readonly() -> Policy {
-        Policy::new(PolicyRule::Read, None)
+        Policy::new([PolicyRule::Read], None)
     }
 
     #[fixture]
     fn write_access() -> Policy {
-        Policy::new(PolicyRule::Write, None)
+        Policy::new([PolicyRule::Read, PolicyRule::Write], None)
+    }
+
+    #[fixture]
+    fn write_only() -> Policy {
+        Policy::new([PolicyRule::Write], None)
+    }
+
+    #[fixture]
+    fn write_delete() -> Policy {
+        Policy::new([PolicyRule::Write, PolicyRule::Delete], None)
     }
 
     #[fixture]
     fn zone_restricted() -> Policy {
         Policy::new(
-            PolicyRule::Delete,
+            [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete],
             Some(vec!["example.com".into(), "internal.lan".into()]),
         )
     }
 
     #[fixture]
     fn both() -> Policy {
-        Policy::new(PolicyRule::Read, Some(vec!["example.com".into()]))
+        Policy::new([PolicyRule::Read], Some(vec!["example.com".into()]))
     }
 
-    // ── check / check_write / check_delete ───────────────────────────────────
+    // ── check / check_read / check_write / check_delete ──────────────────────
+
+    #[rstest]
+    fn unrestricted_allows_reads(unrestricted: Policy) {
+        assert!(unrestricted.check_read().is_ok());
+    }
 
     #[rstest]
     fn unrestricted_allows_writes(unrestricted: Policy) {
@@ -242,10 +337,14 @@ mod tests {
     }
 
     #[rstest]
+    fn readonly_allows_reads(readonly: Policy) {
+        assert!(readonly.check_read().is_ok());
+    }
+
+    #[rstest]
     fn readonly_blocks_writes(readonly: Policy) {
         let err = readonly.check_write().unwrap_err();
         assert!(matches!(err, Error::PolicyViolation { .. }));
-        assert!(err.to_string().contains("read-only"));
     }
 
     #[rstest]
@@ -262,6 +361,41 @@ mod tests {
     fn write_access_blocks_deletes(write_access: Policy) {
         let err = write_access.check_delete().unwrap_err();
         assert!(matches!(err, Error::PolicyViolation { .. }));
+    }
+
+    #[rstest]
+    fn write_only_blocks_reads(write_only: Policy) {
+        let err = write_only.check_read().unwrap_err();
+        assert!(matches!(err, Error::PolicyViolation { .. }));
+        assert!(err.to_string().contains("read"));
+    }
+
+    #[rstest]
+    fn write_only_allows_writes(write_only: Policy) {
+        assert!(write_only.check_write().is_ok());
+    }
+
+    #[rstest]
+    fn write_only_blocks_deletes(write_only: Policy) {
+        let err = write_only.check_delete().unwrap_err();
+        assert!(matches!(err, Error::PolicyViolation { .. }));
+    }
+
+    #[rstest]
+    fn write_delete_allows_writes(write_delete: Policy) {
+        assert!(write_delete.check_write().is_ok());
+    }
+
+    #[rstest]
+    fn write_delete_allows_deletes(write_delete: Policy) {
+        assert!(write_delete.check_delete().is_ok());
+    }
+
+    #[rstest]
+    fn write_delete_blocks_reads(write_delete: Policy) {
+        let err = write_delete.check_read().unwrap_err();
+        assert!(matches!(err, Error::PolicyViolation { .. }));
+        assert!(err.to_string().contains("read"));
     }
 
     #[rstest]
@@ -332,7 +466,17 @@ mod tests {
 
     #[rstest]
     fn write_access_suffix_mentions_write_mode(write_access: Policy) {
-        assert!(write_access.instructions_suffix().contains("Write mode"));
+        assert!(write_access.instructions_suffix().contains("Write mode: delete operations are disabled."));
+    }
+
+    #[rstest]
+    fn write_only_suffix_mentions_write_only(write_only: Policy) {
+        assert!(write_only.instructions_suffix().contains("Write-only"));
+    }
+
+    #[rstest]
+    fn write_delete_suffix_mentions_read_disabled(write_delete: Policy) {
+        assert!(write_delete.instructions_suffix().contains("read operations are disabled"));
     }
 
     #[rstest]
@@ -347,14 +491,5 @@ mod tests {
         let s = both.instructions_suffix();
         assert!(s.contains("Read-only"));
         assert!(s.contains("example.com"));
-    }
-
-    // ── PolicyRule ordering ───────────────────────────────────────────────────
-
-    #[test]
-    fn policy_rule_ordering() {
-        assert!(PolicyRule::Read < PolicyRule::Write);
-        assert!(PolicyRule::Write < PolicyRule::Delete);
-        assert!(PolicyRule::Read < PolicyRule::Delete);
     }
 }

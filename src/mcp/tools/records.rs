@@ -12,6 +12,7 @@ pub async fn handle_list_records<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: ListRecordsParams,
 ) -> Result<CallToolResult, McpError> {
+    policy.check_read().map_err(mcp_err)?;
     policy
         .check_zone(p.zone.as_deref().unwrap_or(&p.domain))
         .map_err(mcp_err)?;
@@ -48,7 +49,7 @@ pub async fn handle_delete_record<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: DeleteRecordParams,
 ) -> Result<CallToolResult, McpError> {
-    policy.check_write().map_err(mcp_err)?;
+    policy.check_delete().map_err(mcp_err)?;
     policy.check_zone(&p.zone).map_err(mcp_err)?;
     let type_params = p.record.to_api_params();
     records::delete_record(client, &p.zone, &p.domain, &type_params)
