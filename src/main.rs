@@ -89,6 +89,7 @@ async fn run(cli: Cli) -> i32 {
                 vendor,
                 location,
                 base_url,
+                base_url_env,
                 token_env,
                 token,
                 org_id,
@@ -114,10 +115,11 @@ async fn run(cli: Cli) -> i32 {
                     }
                 } else {
                     config::DnsServerConfig {
-                        id: id.unwrap(),
+                        id,
                         vendor,
                         location,
                         base_url,
+                        base_url_env,
                         token,
                         token_env,
                         org_id,
@@ -125,6 +127,14 @@ async fn run(cli: Cli) -> i32 {
                             access,
                             allowed_zones: allow_zone,
                         },
+                    }
+                } else {
+                    match cli::interactive::run_add_wizard() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Error: {e:?}");
+                            return 1;
+                        }
                     }
                 };
                 match config::add_server(cli.config, server) {
@@ -167,13 +177,27 @@ async fn run(cli: Cli) -> i32 {
             && effective_servers.is_empty()
             && app_config.as_ref().is_some_and(|c| c.servers.len() > 1);
         if cli.all || !effective_servers.is_empty() || default_all_servers {
-            return match app::run_record_list_across_servers(
-                &cli,
+            if cli.token.is_some() || cli.base_url.is_some() {
+                return render_error(Error::parse(
+                    "cross-server record list does not accept --token/--base-url; configure credentials per server via config file or environment variables",
+                ));
+            }
+
+            let selected = match app::select_record_list_servers(
                 app_config.as_ref(),
                 domain.as_deref(),
                 zone.as_deref(),
-                *all_subdomains,
                 effective_servers,
+            ) {
+                Ok(selected) => selected,
+                Err(e) => return render_error(e),
+            };
+
+            return match cli::runner::run_record_list_across_servers(
+                &selected,
+                domain.as_deref(),
+                zone.as_deref(),
+                *all_subdomains,
                 *use_local_ip,
                 *json,
             )
@@ -424,8 +448,8 @@ mod tests {
 
     #[test]
     fn cli_allow_zone_can_narrow_configured_zones() {
-        let policy = Policy::from_cli_and_config(&cli(vec!["sub.example.com".to_string()]), None)
-            .unwrap();
+        let policy =
+            Policy::from_cli_and_config(&cli(vec!["sub.example.com".to_string()]), None).unwrap();
 
         assert!(policy.check_zone("sub.example.com").is_ok());
         assert!(policy.check_zone("other.example.com").is_err());

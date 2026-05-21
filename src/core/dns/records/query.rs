@@ -90,7 +90,6 @@ pub fn extract_zone_names(value: &Value) -> Vec<String> {
     Vec::new()
 }
 
-
 /// Resolve CLI/MCP-style record-list inputs into one vendor-neutral record query.
 ///
 /// # Errors
@@ -320,7 +319,11 @@ mod tests {
                 .push((domain.to_string(), zone.map(str::to_string), options));
             Ok(ListRecordsResponse::single(
                 make_zone(zone.unwrap_or(domain)),
-                vec![make_record("@"), make_record("huly"), make_record("sub.huly")],
+                vec![
+                    make_record("@"),
+                    make_record("huly"),
+                    make_record("sub.huly"),
+                ],
             ))
         }
     }
@@ -361,10 +364,7 @@ mod tests {
     #[case::pangolin(json!({"domains": [{"baseDomain": "app.hankin.io"}, {"baseDomain": "other.io"}]}), vec!["app.hankin.io", "other.io"])]
     #[case::cloudflare(json!([{"id": "abc", "name": "hankin.io"}, {"id": "def", "name": "example.com"}]), vec!["hankin.io", "example.com"])]
     #[case::unknown(json!({"other": "stuff"}), Vec::<&str>::new())]
-    fn extract_zone_names_handles_vendor_shapes(
-        #[case] value: Value,
-        #[case] expected: Vec<&str>,
-    ) {
+    fn extract_zone_names_handles_vendor_shapes(#[case] value: Value, #[case] expected: Vec<&str>) {
         assert_eq!(extract_zone_names(&value), expected);
     }
 
@@ -431,7 +431,9 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn bare_label_search_queries_each_zone_with_label(options: ListRecordsOptions) {
-        let client = FakeZoneRead::new(json!({"response": {"zones": [{"name": "hankin.io"}, {"name": "example.com"}]}}));
+        let client = FakeZoneRead::new(
+            json!({"response": {"zones": [{"name": "hankin.io"}, {"name": "example.com"}]}}),
+        );
 
         search_bare_label_in_zones(&client, "huly", false, options)
             .await
@@ -446,7 +448,10 @@ mod tests {
             calls,
             vec![
                 ("huly.hankin.io".to_string(), Some("hankin.io".to_string())),
-                ("huly.example.com".to_string(), Some("example.com".to_string())),
+                (
+                    "huly.example.com".to_string(),
+                    Some("example.com".to_string())
+                ),
             ]
         );
     }
@@ -502,7 +507,12 @@ mod tests {
         let names: Vec<&str> = resp
             .zones
             .first()
-            .map(|zone| zone.records.iter().map(|record| record.name.as_str()).collect())
+            .map(|zone| {
+                zone.records
+                    .iter()
+                    .map(|record| record.name.as_str())
+                    .collect()
+            })
             .unwrap_or_default();
         assert_eq!(names, expected_names);
     }

@@ -18,6 +18,7 @@ pub fn client_from_server(
         .base_url
         .map(ToOwned::to_owned)
         .or_else(|| env::var("DNSYNC_PANGOLIN_BASE_URL").ok())
+        .or_else(|| server.base_url_env.as_ref().and_then(|k| env::var(k).ok()))
         .or_else(|| server.base_url.clone())
         .unwrap_or_else(|| app_config::PANGOLIN_DEFAULT_BASE_URL.to_string());
     let token = overrides

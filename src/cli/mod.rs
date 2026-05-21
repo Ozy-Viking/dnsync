@@ -130,6 +130,10 @@ pub enum ConfigCmd {
         #[arg(long)]
         base_url: Option<String>,
 
+        /// Name of the environment variable that holds the base URL
+        #[arg(long)]
+        base_url_env: Option<String>,
+
         /// Name of the environment variable that holds the API token (recommended)
         #[arg(long)]
         token_env: Option<String>,

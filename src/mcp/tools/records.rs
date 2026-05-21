@@ -1,10 +1,13 @@
 use rmcp::{ErrorData as McpError, model::*};
 
 use crate::{
-    core::dns::{records, service::ListRecordsOptions},
-    mcp::{helpers::{json_result, mcp_err}, params::*},
     control_plane::policy::Policy,
+    core::dns::{records, service::ListRecordsOptions},
     core::{dns::service::DnsService, error::Error},
+    mcp::{
+        helpers::{json_result, mcp_err},
+        params::*,
+    },
 };
 
 pub async fn handle_list_records<C: DnsService + Send + Sync>(

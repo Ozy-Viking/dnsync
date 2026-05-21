@@ -60,6 +60,8 @@ pub struct DnsServerConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
@@ -85,6 +87,8 @@ struct DnsServerConfigRaw {
     location: Option<ServerLocation>,
     #[serde(default)]
     base_url: Option<String>,
+    #[serde(default)]
+    base_url_env: Option<String>,
     #[serde(default)]
     token: Option<String>,
     #[serde(default)]
@@ -130,6 +134,7 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             vendor: raw.vendor,
             location: raw.location,
             base_url: raw.base_url,
+            base_url_env: raw.base_url_env,
             token: raw.token,
             token_env: raw.token_env,
             org_id: raw.org_id,
@@ -183,6 +188,7 @@ impl AppConfig {
                 vendor: VendorKind::Technitium,
                 location: None,
                 base_url: Some(TECHNITIUM_DEFAULT_BASE_URL.to_string()),
+                base_url_env: None,
                 token: None,
                 token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
                 org_id: None,
@@ -361,6 +367,9 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     if let Some(ref v) = server.base_url {
         tbl["base_url"] = value(v.as_str());
     }
+    if let Some(ref v) = server.base_url_env {
+        tbl["base_url_env"] = value(v.as_str());
+    }
     if let Some(ref v) = server.token_env {
         tbl["token_env"] = value(v.as_str());
     }
@@ -533,6 +542,7 @@ impl DnsServerConfig {
     pub fn resolved_base_url(&self, override_url: Option<&str>) -> String {
         override_url
             .map(ToOwned::to_owned)
+            .or_else(|| self.base_url_env.as_ref().and_then(|k| env::var(k).ok()))
             .or_else(|| self.base_url.clone())
             .unwrap_or_else(|| match self.vendor {
                 VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
@@ -881,6 +891,7 @@ mod tests {
             vendor: VendorKind::Technitium,
             location: None,
             base_url: None,
+            base_url_env: None,
             token: None,
             token_env: None,
             org_id: None,
@@ -897,6 +908,7 @@ mod tests {
             vendor: VendorKind::Pangolin,
             location: None,
             base_url: None,
+            base_url_env: None,
             token: None,
             token_env: None,
             org_id: None,
@@ -1075,6 +1087,7 @@ mod tests {
             vendor: VendorKind::Technitium,
             location: None,
             base_url: Some("http://192.168.1.10:5380".to_string()),
+            base_url_env: None,
             token: None,
             token_env: Some("MY_API_TOKEN".to_string()),
             org_id: None,
@@ -1102,6 +1115,7 @@ mod tests {
             vendor: VendorKind::Technitium,
             location: None,
             base_url: Some("http://192.168.1.20:5380".to_string()),
+            base_url_env: None,
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
             org_id: None,
@@ -1141,6 +1155,7 @@ mod tests {
             vendor: VendorKind::Technitium,
             location: None,
             base_url: None,
+            base_url_env: None,
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
             org_id: None,
@@ -1175,6 +1190,7 @@ mod tests {
             vendor: VendorKind::Technitium,
             location: None,
             base_url: None,
+            base_url_env: None,
             token: None,
             token_env: None,
             org_id: None,
@@ -1214,6 +1230,7 @@ mod tests {
             vendor: VendorKind::Technitium,
             location: None,
             base_url: Some(url.to_string()),
+            base_url_env: None,
             token: None,
             token_env: None,
             org_id: None,
@@ -1284,6 +1301,7 @@ mod tests {
             vendor: VendorKind::Technitium,
             location: None,
             base_url: None,
+            base_url_env: None,
             token: None,
             token_env: None,
             org_id: None,
@@ -1299,6 +1317,7 @@ mod tests {
             vendor: VendorKind::Pangolin,
             location: None,
             base_url: None,
+            base_url_env: None,
             token: None,
             token_env: None,
             org_id: None,
