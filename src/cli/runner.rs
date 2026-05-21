@@ -2,11 +2,72 @@ use serde_json::Value;
 
 use crate::{
     cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd, records},
+    control_plane::config::DnsServerConfig,
     core::{
-        dns::{access_lists, cache, records as dns_records, service::DnsService, settings, stats, zones},
+        dns::{
+            access_lists, cache, records as dns_records, service::DnsService, settings, stats,
+            zones,
+        },
         error::{Error, Result},
     },
+    vendors::runtime::VendorClient,
 };
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_record_list_across_servers(
+    selected: &[&DnsServerConfig],
+    domain: Option<&str>,
+    zone: Option<&str>,
+    all_subdomains: bool,
+    use_local_ip: bool,
+    json: bool,
+) -> Result<()> {
+    let mut json_zones = Vec::new();
+    let mut printed_servers = 0usize;
+
+    for server in selected {
+        let client = VendorClient::from_server(server)?;
+        let response = dns_records::query::list_records_for_query(
+            &client,
+            domain,
+            zone,
+            all_subdomains,
+            use_local_ip,
+        )
+        .await?;
+
+        if json {
+            for mut zone_records in response.zones {
+                if zone_records.zone.id.is_none() {
+                    zone_records.zone.id = Some(zone_records.zone.name.clone());
+                }
+                json_zones.push(serde_json::json!({
+                    "serverName": server.id,
+                    "serverId": server.id,
+                    "vendor": format!("{:?}", server.vendor),
+                    "zone": zone_records.zone,
+                    "records": zone_records.records,
+                }));
+            }
+        } else if !response.zones.is_empty() {
+            if printed_servers > 0 {
+                println!();
+            }
+            println!("=== Server: {} ({:?}) ===", server.id, server.vendor);
+            records::print_records_table(&response);
+            printed_servers += 1;
+        }
+    }
+
+    if json {
+        let pretty = serde_json::to_string_pretty(&json_zones).map_err(|error| {
+            Error::parse(format!("could not serialise record list response: {error}"))
+        })?;
+        println!("{pretty}");
+    }
+
+    Ok(())
+}
 
 #[tracing::instrument(skip(client, command), fields(command = tracing::field::Empty))]
 pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {

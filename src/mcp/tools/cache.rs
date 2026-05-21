@@ -1,10 +1,13 @@
 use rmcp::{ErrorData as McpError, model::*};
 
 use crate::{
-    core::dns::cache,
-    mcp::{helpers::{json_result, mcp_err}, params::DomainParams},
     control_plane::policy::Policy,
+    core::dns::cache,
     core::dns::service::DnsService,
+    mcp::{
+        helpers::{json_result, mcp_err},
+        params::DomainParams,
+    },
 };
 
 pub async fn handle_list_cache<C: DnsService + Send + Sync>(

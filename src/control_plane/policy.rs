@@ -25,7 +25,7 @@ use crate::core::error::{Error, Result};
 /// Variants are ordered from least to most permissive: `Read < Write < Delete`.
 /// A `Policy` with a given `access` level permits all operations at or below that level.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ValueEnum,
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ValueEnum,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyRule {
@@ -34,13 +34,8 @@ pub enum PolicyRule {
     /// Writes permitted; deletes are not.
     Write,
     /// All operations permitted (default).
+    #[default]
     Delete,
-}
-
-impl Default for PolicyRule {
-    fn default() -> Self {
-        Self::Delete
-    }
 }
 
 /// Governs what the MCP server is permitted to do.
@@ -70,7 +65,10 @@ impl Policy {
         let message = if self.access == PolicyRule::Read {
             "read-only policy blocks write and delete operations".to_string()
         } else {
-            format!("operation requires {rule:?} access, but policy is {:?}", self.access)
+            format!(
+                "operation requires {rule:?} access, but policy is {:?}",
+                self.access
+            )
         };
         Err(Error::policy_violation(
             message,
@@ -115,14 +113,11 @@ impl Policy {
         match self.access {
             PolicyRule::Read => {
                 parts.push(
-                    "⚠️  Read-only mode: all write and delete operations are disabled."
-                        .to_string(),
+                    "⚠️  Read-only mode: all write and delete operations are disabled.".to_string(),
                 );
             }
             PolicyRule::Write => {
-                parts.push(
-                    "⚠️  Write mode: delete operations are disabled.".to_string(),
-                );
+                parts.push("⚠️  Write mode: delete operations are disabled.".to_string());
             }
             PolicyRule::Delete => {}
         }

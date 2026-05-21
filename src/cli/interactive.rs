@@ -93,9 +93,18 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
 
     let access = {
         let choices = vec![
-            AccessChoice { rule: PolicyRule::Delete, label: "delete (full access)" },
-            AccessChoice { rule: PolicyRule::Write,  label: "write  (no deletes)" },
-            AccessChoice { rule: PolicyRule::Read,   label: "read   (read-only)" },
+            AccessChoice {
+                rule: PolicyRule::Delete,
+                label: "delete (full access)",
+            },
+            AccessChoice {
+                rule: PolicyRule::Write,
+                label: "write  (no deletes)",
+            },
+            AccessChoice {
+                rule: PolicyRule::Read,
+                label: "read   (read-only)",
+            },
         ];
         Select::new("MCP access level:", choices)
             .with_help_message("Maximum operation level permitted for MCP tools on this server")

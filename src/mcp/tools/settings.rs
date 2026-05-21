@@ -1,9 +1,9 @@
 use rmcp::{ErrorData as McpError, model::*};
 
 use crate::{
+    core::dns::service::DnsService,
     core::dns::settings,
     mcp::helpers::{json_result, mcp_err},
-    core::dns::service::DnsService,
 };
 
 pub async fn handle_get_settings<C: DnsService + Send + Sync>(

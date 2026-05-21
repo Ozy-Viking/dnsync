@@ -15,8 +15,8 @@ pub mod client {
 }
 
 pub mod dns {
-    pub use crate::core::dns::*;
     pub use crate::core::dns::service::*;
+    pub use crate::core::dns::*;
 }
 
 pub mod error {

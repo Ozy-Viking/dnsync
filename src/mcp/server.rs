@@ -10,7 +10,10 @@ use crate::{
     core::dns::service::DnsService,
     mcp::{
         params::*,
-        tools::{access_lists, cache as cache_tools, records as record_tools, settings as settings_tools, stats as stats_tools, zones as zone_tools},
+        tools::{
+            access_lists, cache as cache_tools, records as record_tools,
+            settings as settings_tools, stats as stats_tools, zones as zone_tools,
+        },
     },
 };
 

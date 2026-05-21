@@ -1,14 +1,14 @@
 //! CLI display for DNS records.
 
-use clap::builder::PossibleValue;
 use clap::ValueEnum;
+use clap::builder::PossibleValue;
 
 use crate::cli::{CliDeleteSelector, CliRecordType};
-use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::dns::records::{
     DigestType, DsAlgorithm, FwdProtocol, RecordData, SshfpAlgorithm, SshfpFingerprintType,
     TlsaCertUsage, TlsaMatchingType, TlsaSelector,
 };
+use crate::core::dns::responses::ListRecordsResponse;
 
 macro_rules! impl_value_enum {
     ($ty:ty, [$($variant:expr),+ $(,)?]) => {
@@ -27,63 +27,81 @@ macro_rules! impl_value_enum {
     };
 }
 
-impl_value_enum!(DsAlgorithm, [
-    DsAlgorithm::Rsamd5,
-    DsAlgorithm::Dsa,
-    DsAlgorithm::Rsasha1,
-    DsAlgorithm::DsaNsec3Sha1,
-    DsAlgorithm::Rsasha1Nsec3Sha1,
-    DsAlgorithm::Rsasha256,
-    DsAlgorithm::Rsasha512,
-    DsAlgorithm::EccGost,
-    DsAlgorithm::Ecdsap256sha256,
-    DsAlgorithm::Ecdsap384sha384,
-    DsAlgorithm::Ed25519,
-    DsAlgorithm::Ed448,
-]);
+impl_value_enum!(
+    DsAlgorithm,
+    [
+        DsAlgorithm::Rsamd5,
+        DsAlgorithm::Dsa,
+        DsAlgorithm::Rsasha1,
+        DsAlgorithm::DsaNsec3Sha1,
+        DsAlgorithm::Rsasha1Nsec3Sha1,
+        DsAlgorithm::Rsasha256,
+        DsAlgorithm::Rsasha512,
+        DsAlgorithm::EccGost,
+        DsAlgorithm::Ecdsap256sha256,
+        DsAlgorithm::Ecdsap384sha384,
+        DsAlgorithm::Ed25519,
+        DsAlgorithm::Ed448,
+    ]
+);
 
-impl_value_enum!(DigestType, [
-    DigestType::Sha1,
-    DigestType::Sha256,
-    DigestType::GostR341194,
-    DigestType::Sha384,
-]);
+impl_value_enum!(
+    DigestType,
+    [
+        DigestType::Sha1,
+        DigestType::Sha256,
+        DigestType::GostR341194,
+        DigestType::Sha384,
+    ]
+);
 
-impl_value_enum!(SshfpAlgorithm, [
-    SshfpAlgorithm::Rsa,
-    SshfpAlgorithm::Dsa,
-    SshfpAlgorithm::Ecdsa,
-    SshfpAlgorithm::Ed25519,
-    SshfpAlgorithm::Ed448,
-]);
+impl_value_enum!(
+    SshfpAlgorithm,
+    [
+        SshfpAlgorithm::Rsa,
+        SshfpAlgorithm::Dsa,
+        SshfpAlgorithm::Ecdsa,
+        SshfpAlgorithm::Ed25519,
+        SshfpAlgorithm::Ed448,
+    ]
+);
 
-impl_value_enum!(SshfpFingerprintType, [
-    SshfpFingerprintType::Sha1,
-    SshfpFingerprintType::Sha256,
-]);
+impl_value_enum!(
+    SshfpFingerprintType,
+    [SshfpFingerprintType::Sha1, SshfpFingerprintType::Sha256,]
+);
 
-impl_value_enum!(TlsaCertUsage, [
-    TlsaCertUsage::PkixTa,
-    TlsaCertUsage::PkixEe,
-    TlsaCertUsage::DaneTa,
-    TlsaCertUsage::DaneEe,
-]);
+impl_value_enum!(
+    TlsaCertUsage,
+    [
+        TlsaCertUsage::PkixTa,
+        TlsaCertUsage::PkixEe,
+        TlsaCertUsage::DaneTa,
+        TlsaCertUsage::DaneEe,
+    ]
+);
 
 impl_value_enum!(TlsaSelector, [TlsaSelector::Cert, TlsaSelector::Spki]);
 
-impl_value_enum!(TlsaMatchingType, [
-    TlsaMatchingType::Full,
-    TlsaMatchingType::Sha2_256,
-    TlsaMatchingType::Sha2_512,
-]);
+impl_value_enum!(
+    TlsaMatchingType,
+    [
+        TlsaMatchingType::Full,
+        TlsaMatchingType::Sha2_256,
+        TlsaMatchingType::Sha2_512,
+    ]
+);
 
-impl_value_enum!(FwdProtocol, [
-    FwdProtocol::Udp,
-    FwdProtocol::Tcp,
-    FwdProtocol::Tls,
-    FwdProtocol::Https,
-    FwdProtocol::Quic,
-]);
+impl_value_enum!(
+    FwdProtocol,
+    [
+        FwdProtocol::Udp,
+        FwdProtocol::Tcp,
+        FwdProtocol::Tls,
+        FwdProtocol::Https,
+        FwdProtocol::Quic,
+    ]
+);
 
 impl CliDeleteSelector {
     /// Returns the Technitium API `type` string and any optional identifying params.
@@ -607,7 +625,10 @@ mod tests {
     #[rstest]
     fn cli_record_type_mx_maps_to_core_record(mx_record_type: CliRecordType) {
         match RecordData::from(mx_record_type) {
-            RecordData::Mx { exchange, preference } => {
+            RecordData::Mx {
+                exchange,
+                preference,
+            } => {
                 assert_eq!(exchange, "mail.example.com");
                 assert_eq!(preference, 10);
             }

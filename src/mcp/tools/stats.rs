@@ -1,9 +1,12 @@
 use rmcp::{ErrorData as McpError, model::*};
 
 use crate::{
-    core::dns::stats,
-    mcp::{helpers::{json_result, mcp_err}, params::StatsParams},
     core::dns::service::DnsService,
+    core::dns::stats,
+    mcp::{
+        helpers::{json_result, mcp_err},
+        params::StatsParams,
+    },
 };
 
 pub async fn handle_get_stats<C: DnsService + Send + Sync>(
