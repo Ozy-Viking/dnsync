@@ -12,8 +12,10 @@ use crate::{
 
 pub async fn handle_list_zones<C: DnsService + Send + Sync>(
     client: &C,
+    policy: &Policy,
     p: ListZonesParams,
 ) -> Result<CallToolResult, McpError> {
+    policy.check_read().map_err(mcp_err)?;
     zones::list_zones(
         client,
         p.page_number.unwrap_or(1),
@@ -22,6 +24,7 @@ pub async fn handle_list_zones<C: DnsService + Send + Sync>(
     .await
     .map(json_result)
     .map_err(mcp_err)
+
 }
 
 pub async fn handle_create_zone<C: DnsService + Send + Sync>(
@@ -42,7 +45,7 @@ pub async fn handle_delete_zone<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: ZoneParams,
 ) -> Result<CallToolResult, McpError> {
-    policy.check_write().map_err(mcp_err)?;
+    policy.check_delete().map_err(mcp_err)?;
     policy.check_zone(&p.zone).map_err(mcp_err)?;
     zones::delete_zone(client, &p.zone)
         .await
@@ -103,6 +106,7 @@ pub async fn handle_export_zone_file<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: ExportZoneFileParams,
 ) -> Result<CallToolResult, McpError> {
+    policy.check_read().map_err(mcp_err)?;
     policy.check_zone(&p.zone).map_err(mcp_err)?;
     zones::export_zone_file(client, &p.zone)
         .await

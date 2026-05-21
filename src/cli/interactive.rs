@@ -1,4 +1,5 @@
-use inquire::{Select, Text};
+use inquire::{InquireError, MultiSelect, Select, Text};
+use inquire::validator::Validation;
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
@@ -6,9 +7,19 @@ use crate::control_plane::config::{
 };
 use crate::control_plane::policy::PolicyRule;
 
-pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
+pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig> {
+    let existing: Vec<String> = existing_ids.iter().map(|s| s.to_lowercase()).collect();
     let id = Text::new("Server ID:")
         .with_help_message("Unique identifier for this server entry")
+        .with_validator(move |input: &str| {
+            if existing.iter().any(|id| id == &input.to_lowercase()) {
+                Ok(Validation::Invalid(
+                    format!("a server with id '{input}' already exists").into(),
+                ))
+            } else {
+                Ok(Validation::Valid)
+            }
+        })
         .prompt()
         .map_err(wizard_err)?;
 
@@ -91,36 +102,33 @@ pub fn run_add_wizard() -> miette::Result<DnsServerConfig> {
             .value
     };
 
-    let access = {
+    let access: Vec<PolicyRule> = {
         let choices = vec![
-            AccessChoice {
-                rule: PolicyRule::Delete,
-                label: "delete (full access)",
-            },
-            AccessChoice {
-                rule: PolicyRule::Write,
-                label: "write  (no deletes)",
-            },
-            AccessChoice {
-                rule: PolicyRule::Read,
-                label: "read   (read-only)",
-            },
+            AccessChoice { rule: PolicyRule::Read,   label: "read   (list/export/stats/settings)" },
+            AccessChoice { rule: PolicyRule::Write,  label: "write  (create/update/import/flush)" },
+            AccessChoice { rule: PolicyRule::Delete, label: "delete (delete zones/records/cache)" },
         ];
-        Select::new("MCP access level:", choices)
-            .with_help_message("Maximum operation level permitted for MCP tools on this server")
+        let defaults: Vec<usize> = (0..choices.len()).collect();
+        let chosen = MultiSelect::new("MCP allowed operations:", choices)
+            .with_default(&defaults)
+            .with_help_message("Select which operations are permitted for MCP tools on this server")
             .prompt()
-            .map_err(wizard_err)?
-            .rule
+            .map_err(wizard_err)?;
+        chosen.into_iter().map(|c| c.rule).collect()
     };
 
     let mut allowed_zones: Vec<String> = Vec::new();
     loop {
-        let zone = Text::new("Allowed zone (leave empty to finish):")
-            .with_help_message(
-                "Restrict zone-targeting MCP tools to this zone; subdomains are also permitted",
-            )
+        let zone = match Text::new("Add allowed zone (leave empty to finish):")
+            .with_help_message("Subdomains of an allowed zone are also permitted")
             .prompt()
-            .map_err(wizard_err)?;
+        {
+            Ok(z) => z,
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                return Err(miette::miette!("cancelled"));
+            }
+            Err(e) => return Err(wizard_err(e)),
+        };
         if zone.is_empty() {
             break;
         }

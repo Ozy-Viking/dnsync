@@ -38,9 +38,9 @@ pub struct Cli {
     #[arg(long)]
     pub token: Option<String>,
 
-    /// MCP only: maximum permitted operation level (read = read-only, write = no deletes, delete = full access)
-    #[arg(long, env = "DNS_ACCESS", value_enum)]
-    pub access: Option<PolicyRule>,
+    /// MCP only: allowed operations (comma-separated: read,write,delete); defaults to all if omitted
+    #[arg(long, env = "DNS_ACCESS", value_enum, value_delimiter = ',', num_args = 0..)]
+    pub access: Vec<PolicyRule>,
 
     /// MCP only: restrict access to this zone (repeatable); subdomains are also permitted
     #[arg(long, env = "DNS_ALLOWED_ZONES", value_delimiter = ',')]
@@ -151,9 +151,9 @@ pub enum ConfigCmd {
         #[arg(long)]
         location: Option<crate::control_plane::config::ServerLocation>,
 
-        /// Maximum permitted MCP operation level (read = read-only, write = no deletes, delete = full access)
-        #[arg(long, value_enum, default_value = "delete")]
-        access: PolicyRule,
+        /// MCP allowed operations for this server (default: all)
+        #[arg(long, value_enum, value_delimiter = ',', num_args = 0.., default_values = &["read", "write", "delete"])]
+        access: Vec<PolicyRule>,
 
         /// Restrict MCP zone-targeting tools to this zone (repeatable)
         #[arg(long, value_name = "ZONE")]

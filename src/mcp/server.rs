@@ -47,7 +47,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
         Parameters(p): Parameters<ListZonesParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_zones", "MCP tool invoked");
-        zone_tools::handle_list_zones(&self.client, p).await
+        zone_tools::handle_list_zones(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Create a new DNS zone. Types: Primary, Secondary, Stub, Forwarder.")]
@@ -166,7 +166,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_cache", "MCP tool invoked");
         tracing::debug!(domain = %p.domain, "tool invoked");
-        cache_tools::handle_list_cache(&self.client, p).await
+        cache_tools::handle_list_cache(&self.client, &self.policy, p).await
     }
 
     #[tool(description = "Evict a specific domain from the DNS cache.")]
@@ -199,7 +199,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
             stats_type = p.stats_type.as_deref().unwrap_or("LastDay"),
             "tool invoked"
         );
-        stats_tools::handle_get_stats(&self.client, p).await
+        stats_tools::handle_get_stats(&self.client, &self.policy, p).await
     }
 
     // ── Blocked ───────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     #[tool(description = "List all manually blocked domains.")]
     async fn dns_list_blocked_zones(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_blocked_zones", "MCP tool invoked");
-        access_lists::handle_list_blocked(&self.client).await
+        access_lists::handle_list_blocked(&self.client, &self.policy).await
     }
 
     #[tool(description = "Block a domain, causing the DNS server to refuse to resolve it.")]
@@ -235,7 +235,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     #[tool(description = "List all whitelisted domains.")]
     async fn dns_list_allowed_zones(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_allowed_zones", "MCP tool invoked");
-        access_lists::handle_list_allowed(&self.client).await
+        access_lists::handle_list_allowed(&self.client, &self.policy).await
     }
 
     #[tool(description = "Whitelist a domain, allowing it even if it appears on a block list.")]
@@ -263,7 +263,7 @@ impl<C: DnsService + Clone + Send + Sync + 'static> DnsServer<C> {
     #[tool(description = "Get the current Technitium DNS server configuration.")]
     async fn dns_get_settings(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_get_settings", "MCP tool invoked");
-        settings_tools::handle_get_settings(&self.client).await
+        settings_tools::handle_get_settings(&self.client, &self.policy).await
     }
 }
 
