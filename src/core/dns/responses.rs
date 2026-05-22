@@ -117,6 +117,18 @@ pub struct ZoneRecord {
     pub parsed: Option<AnyRecordData>,
 }
 
+impl ZoneRecord {
+    /// Typed record data for this record. Uses the pre-parsed value when one is
+    /// present, otherwise parses on demand from `record_type` + `data` — so it
+    /// works regardless of which vendor produced the record.
+    pub fn typed(&self) -> Option<AnyRecordData> {
+        if let Some(parsed) = &self.parsed {
+            return Some(parsed.clone());
+        }
+        parse_record_data(&self.record_type, &self.data)
+    }
+}
+
 // ─── List records response ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

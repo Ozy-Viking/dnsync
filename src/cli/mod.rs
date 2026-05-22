@@ -67,6 +67,36 @@ pub enum Command {
     #[command(subcommand)]
     Record(RecordCmd),
 
+    /// Sync records between two configured servers, optionally remapping IPs
+    Sync {
+        /// Named sync profile from the config file
+        profile: Option<String>,
+
+        /// Source server ID (overrides the profile's `from`)
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Destination server ID (overrides the profile's `to`)
+        #[arg(long)]
+        to: Option<String>,
+
+        /// Zone to sync (repeatable; overrides the profile's zones)
+        #[arg(long = "zone", value_name = "ZONE")]
+        zone: Vec<String>,
+
+        /// IP rewrite for A/AAAA records, given as SRC=DST (repeatable)
+        #[arg(long = "map", value_name = "SRC=DST")]
+        map: Vec<String>,
+
+        /// Write the changes (without this flag, sync only previews them)
+        #[arg(long)]
+        apply: bool,
+
+        /// Output the sync plan as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Manage the DNS cache
     #[command(subcommand)]
     Cache(CacheCmd),

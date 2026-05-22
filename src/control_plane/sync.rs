@@ -1,0 +1,672 @@
+//! Record-level sync between two configured DNS servers.
+//!
+//! `dns sync` reads records from a source server, optionally rewrites IP
+//! addresses on A/AAAA records (e.g. external → internal), and writes the
+//! difference to a destination server. It is vendor-neutral: it goes through
+//! the shared `core::dns` traits, so any pair of supported vendors can sync.
+//!
+//! Sync is **additive** — it adds records the destination is missing and
+//! updates record sets whose values differ, but never prunes whole names that
+//! exist only on the destination. It is **dry-run by default**; `--apply`
+//! commits the changes.
+
+use std::collections::HashMap;
+use std::net::IpAddr;
+
+use crate::control_plane::config::AppConfig;
+use crate::core::dns::records::RecordData;
+use crate::core::dns::records::query::{extract_zone_names, resolve_fqdn};
+use crate::core::dns::responses::{AnyRecordData, ListRecordsResponse};
+use crate::core::dns::service::{ListRecordsOptions, RecordWrite, ZoneRead};
+use crate::core::error::{Error, Result};
+use crate::vendors::runtime::VendorClient;
+
+/// TTL used when a source record reports a TTL of 0 (some vendors do not
+/// expose per-record TTLs).
+const DEFAULT_TTL: u32 = 3600;
+
+/// One record to be written to (or removed from) the destination.
+#[derive(Debug, Clone)]
+struct PlannedRecord {
+    /// Fully-qualified record name.
+    fqdn: String,
+    /// Uppercase record type, e.g. `A`.
+    rtype: String,
+    ttl: u32,
+    record: RecordData,
+}
+
+/// The computed difference for one zone.
+#[derive(Debug, Default)]
+struct Diff {
+    adds: Vec<PlannedRecord>,
+    deletes: Vec<PlannedRecord>,
+    unchanged: usize,
+    /// Destination records whose name+type is absent from the source — left
+    /// untouched because sync is additive.
+    untouched: usize,
+}
+
+/// The plan for one zone, ready to display or apply.
+#[derive(Debug)]
+struct ZonePlan {
+    zone: String,
+    adds: Vec<PlannedRecord>,
+    deletes: Vec<PlannedRecord>,
+    unchanged: usize,
+    untouched: usize,
+    /// Source records that cannot be synced (SOA, DNSSEC, disabled, unknown).
+    skipped: usize,
+}
+
+/// Run a record sync.
+///
+/// `profile` selects a named `[[sync]]` profile from the config; `from`, `to`,
+/// `zones` and `maps` are CLI overrides that take precedence over the profile.
+///
+/// # Errors
+///
+/// Returns an error if the config, servers, zones, or IP mappings cannot be
+/// resolved, or — when `apply` is set — if any record write fails.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_sync(
+    app_config: Option<&AppConfig>,
+    profile: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+    zones: &[String],
+    maps: &[String],
+    apply: bool,
+    json: bool,
+) -> Result<()> {
+    let Some(cfg) = app_config else {
+        return Err(Error::config(
+            "sync requires a config file defining the source and destination servers",
+        ));
+    };
+
+    // Resolve the profile, if one was named.
+    let profile = match profile {
+        Some(name) => Some(
+            cfg.sync
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| {
+                    Error::config(format!("config does not define a sync profile named '{name}'"))
+                })?,
+        ),
+        None => None,
+    };
+
+    // From/to: CLI flag wins, then the profile.
+    let from_id = from
+        .or_else(|| profile.map(|p| p.from.as_str()))
+        .ok_or_else(|| {
+            Error::parse("sync requires a source server: name a profile or pass --from")
+        })?;
+    let to_id = to
+        .or_else(|| profile.map(|p| p.to.as_str()))
+        .ok_or_else(|| {
+            Error::parse("sync requires a destination server: name a profile or pass --to")
+        })?;
+
+    // IP map: profile entries first, then CLI --map (which overrides).
+    let mut ip_map: HashMap<IpAddr, IpAddr> = HashMap::new();
+    if let Some(p) = profile {
+        for (src, dst) in &p.ip_map {
+            let (s, d) = parse_ip_pair(&format!("{src}={dst}"))?;
+            ip_map.insert(s, d);
+        }
+    }
+    for spec in maps {
+        let (s, d) = parse_ip_pair(spec)?;
+        ip_map.insert(s, d);
+    }
+
+    let from_server = cfg.selected_server(Some(from_id))?;
+    let to_server = cfg.selected_server(Some(to_id))?;
+    let from_client = VendorClient::from_server(from_server)?;
+    let to_client = VendorClient::from_server(to_server)?;
+
+    // Zones: CLI wins, then the profile, then every zone on the source.
+    let zone_list: Vec<String> = if !zones.is_empty() {
+        zones.to_vec()
+    } else if let Some(p) = profile.filter(|p| !p.zones.is_empty()) {
+        p.zones.clone()
+    } else {
+        let value = from_client.list_zones(1, 1000).await?;
+        let names = extract_zone_names(&value);
+        if names.is_empty() {
+            return Err(Error::parse(format!(
+                "no zones found on source server '{from_id}'; specify one with --zone"
+            )));
+        }
+        names
+    };
+
+    let mut plans = Vec::with_capacity(zone_list.len());
+    for zone in &zone_list {
+        plans.push(plan_zone(&from_client, &to_client, zone, &ip_map).await?);
+    }
+
+    if json {
+        render_json(from_id, to_id, &plans, apply)?;
+    } else {
+        render_table(from_id, to_id, &plans, apply);
+    }
+
+    let has_changes = plans.iter().any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
+    if !apply || !has_changes {
+        return Ok(());
+    }
+
+    apply_plans(&to_client, &plans).await
+}
+
+/// Build the sync plan for a single zone.
+async fn plan_zone(
+    from_client: &VendorClient,
+    to_client: &VendorClient,
+    zone: &str,
+    ip_map: &HashMap<IpAddr, IpAddr>,
+) -> Result<ZonePlan> {
+    let opts = ListRecordsOptions::default();
+
+    let source = from_client
+        .list_records(zone, Some(zone), opts)
+        .await
+        .map_err(|e| Error::parse(format!("source: listing records for zone '{zone}': {e}")))?;
+    let dest = to_client
+        .list_records(zone, Some(zone), opts)
+        .await
+        .map_err(|e| {
+            Error::parse(format!(
+                "destination: listing records for zone '{zone}' \
+                 (does the zone exist on the destination?): {e}"
+            ))
+        })?;
+
+    let (source_records, skipped) = collect_records(&source, zone, Some(ip_map));
+    let (dest_records, _) = collect_records(&dest, zone, None);
+
+    let mut diff = diff_records(source_records, dest_records);
+    diff.adds.sort_by_key(sort_key);
+    diff.deletes.sort_by_key(sort_key);
+
+    Ok(ZonePlan {
+        zone: zone.to_string(),
+        adds: diff.adds,
+        deletes: diff.deletes,
+        unchanged: diff.unchanged,
+        untouched: diff.untouched,
+        skipped,
+    })
+}
+
+/// Turn a vendor record-list response into syncable [`PlannedRecord`]s,
+/// applying `ip_map` when one is supplied. Returns the records plus the count
+/// of records skipped because they are disabled or not syncable.
+fn collect_records(
+    response: &ListRecordsResponse,
+    zone: &str,
+    ip_map: Option<&HashMap<IpAddr, IpAddr>>,
+) -> (Vec<PlannedRecord>, usize) {
+    let mut out = Vec::new();
+    let mut skipped = 0;
+
+    for zone_records in &response.zones {
+        for record in &zone_records.records {
+            if record.disabled {
+                skipped += 1;
+                continue;
+            }
+            // Server-managed records (SOA, DNSSEC) and unknown types cannot be
+            // written through the record API.
+            let Some(AnyRecordData::Writable(rd)) = record.typed() else {
+                skipped += 1;
+                continue;
+            };
+            let rd = match ip_map {
+                Some(map) => apply_ip_map(rd, map),
+                None => rd,
+            };
+            out.push(PlannedRecord {
+                fqdn: resolve_fqdn(&record.name, Some(zone)),
+                rtype: rd.type_name().to_string(),
+                ttl: if record.ttl == 0 { DEFAULT_TTL } else { record.ttl },
+                record: rd,
+            });
+        }
+    }
+
+    (out, skipped)
+}
+
+/// Compute the additive difference between source and destination records.
+///
+/// Records are grouped into sets by `(name, type)`. A set missing on the
+/// destination is added wholesale; a set present on both with differing values
+/// has its missing values added and its stale values removed. Sets that exist
+/// only on the destination are counted as `untouched` and never pruned.
+fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
+    let group = |records: Vec<PlannedRecord>| {
+        let mut groups: HashMap<(String, String), Vec<PlannedRecord>> = HashMap::new();
+        for r in records {
+            groups
+                .entry((r.fqdn.to_lowercase(), r.rtype.clone()))
+                .or_default()
+                .push(r);
+        }
+        groups
+    };
+
+    let source_groups = group(source);
+    let dest_groups = group(dest);
+
+    let mut diff = Diff::default();
+
+    for (key, src_recs) in &source_groups {
+        let dest_recs = dest_groups.get(key);
+        let dest_canon: Vec<String> = dest_recs
+            .map(|recs| recs.iter().map(|r| canonical(&r.record)).collect())
+            .unwrap_or_default();
+        let src_canon: Vec<String> =
+            src_recs.iter().map(|r| canonical(&r.record)).collect();
+
+        for r in src_recs {
+            if dest_canon.contains(&canonical(&r.record)) {
+                diff.unchanged += 1;
+            } else {
+                diff.adds.push(r.clone());
+            }
+        }
+        if let Some(dest_recs) = dest_recs {
+            for r in dest_recs {
+                if !src_canon.contains(&canonical(&r.record)) {
+                    diff.deletes.push(r.clone());
+                }
+            }
+        }
+    }
+
+    diff.untouched = dest_groups
+        .iter()
+        .filter(|(key, _)| !source_groups.contains_key(*key))
+        .map(|(_, recs)| recs.len())
+        .sum();
+
+    diff
+}
+
+/// Apply the planned changes to the destination, reporting per-record outcomes.
+async fn apply_plans(to_client: &VendorClient, plans: &[ZonePlan]) -> Result<()> {
+    let mut applied = 0;
+    let mut failures = 0;
+
+    for plan in plans {
+        // Add new values before removing stale ones, to minimise the window in
+        // which a name resolves to nothing.
+        for rec in &plan.adds {
+            match to_client
+                .add_record(&plan.zone, &rec.fqdn, rec.ttl, &rec.record)
+                .await
+            {
+                Ok(_) => applied += 1,
+                Err(e) => {
+                    failures += 1;
+                    eprintln!("  ! add {} {} failed: {e}", rec.fqdn, rec.rtype);
+                }
+            }
+        }
+        for rec in &plan.deletes {
+            let params = rec.record.to_api_params();
+            match to_client
+                .delete_record(&plan.zone, &rec.fqdn, &params)
+                .await
+            {
+                Ok(_) => applied += 1,
+                Err(e) => {
+                    failures += 1;
+                    eprintln!("  ! remove {} {} failed: {e}", rec.fqdn, rec.rtype);
+                }
+            }
+        }
+    }
+
+    if failures > 0 {
+        println!("\nApplied {applied} change(s), {failures} failed.");
+        return Err(Error::api(format!("{failures} sync change(s) failed")));
+    }
+    println!("\nApplied {applied} change(s).");
+    Ok(())
+}
+
+/// Rewrite an A/AAAA record's address through the IP map. Other record types
+/// and unmapped addresses pass through unchanged.
+fn apply_ip_map(record: RecordData, map: &HashMap<IpAddr, IpAddr>) -> RecordData {
+    match record {
+        RecordData::A { ip } => match map.get(&IpAddr::V4(ip)) {
+            Some(IpAddr::V4(mapped)) => RecordData::A { ip: *mapped },
+            _ => RecordData::A { ip },
+        },
+        RecordData::Aaaa { ip } => match map.get(&IpAddr::V6(ip)) {
+            Some(IpAddr::V6(mapped)) => RecordData::Aaaa { ip: *mapped },
+            _ => RecordData::Aaaa { ip },
+        },
+        other => other,
+    }
+}
+
+/// Parse a `SRC=DST` IP-mapping spec. Both sides must be IP addresses of the
+/// same family.
+fn parse_ip_pair(spec: &str) -> Result<(IpAddr, IpAddr)> {
+    let (src, dst) = spec
+        .split_once('=')
+        .ok_or_else(|| Error::parse(format!("invalid IP mapping '{spec}': expected SRC=DST")))?;
+    let src = src.trim();
+    let dst = dst.trim();
+    let source: IpAddr = src
+        .parse()
+        .map_err(|_| Error::parse(format!("invalid IP mapping '{spec}': '{src}' is not an IP")))?;
+    let dest: IpAddr = dst
+        .parse()
+        .map_err(|_| Error::parse(format!("invalid IP mapping '{spec}': '{dst}' is not an IP")))?;
+    if source.is_ipv4() != dest.is_ipv4() {
+        return Err(Error::parse(format!(
+            "invalid IP mapping '{spec}': mixes IPv4 and IPv6"
+        )));
+    }
+    Ok((source, dest))
+}
+
+/// A canonical string for a record's data, used to compare record values.
+fn canonical(record: &RecordData) -> String {
+    record
+        .to_api_params()
+        .into_iter()
+        .map(|(key, value)| format!("{key}\u{1}{value}"))
+        .collect::<Vec<_>>()
+        .join("\u{2}")
+}
+
+/// A stable sort key so plan output is deterministic.
+fn sort_key(record: &PlannedRecord) -> (String, String, String) {
+    (
+        record.fqdn.to_lowercase(),
+        record.rtype.clone(),
+        canonical(&record.record),
+    )
+}
+
+/// A compact, human-readable rendering of a record's value.
+fn value_display(record: &RecordData) -> String {
+    record
+        .to_api_params()
+        .into_iter()
+        .skip(1) // drop the leading ("type", ...) param
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Print the sync plan as an aligned table.
+fn render_table(from_id: &str, to_id: &str, plans: &[ZonePlan], apply: bool) {
+    let mode = if apply { "apply" } else { "dry run" };
+    println!("Sync plan: {from_id} -> {to_id}  ({mode})");
+
+    let mut adds = 0;
+    let mut deletes = 0;
+    let mut unchanged = 0;
+    let mut skipped = 0;
+    let mut untouched = 0;
+
+    for plan in plans {
+        adds += plan.adds.len();
+        deletes += plan.deletes.len();
+        unchanged += plan.unchanged;
+        skipped += plan.skipped;
+        untouched += plan.untouched;
+
+        if plan.adds.is_empty() && plan.deletes.is_empty() {
+            continue;
+        }
+        println!("\nZone: {}", plan.zone);
+        for rec in &plan.adds {
+            println!(
+                "  + {:<28} {:<6} {}",
+                rec.fqdn,
+                rec.rtype,
+                value_display(&rec.record)
+            );
+        }
+        for rec in &plan.deletes {
+            println!(
+                "  - {:<28} {:<6} {}",
+                rec.fqdn,
+                rec.rtype,
+                value_display(&rec.record)
+            );
+        }
+    }
+
+    println!(
+        "\n{adds} to add, {deletes} to remove, {unchanged} unchanged, \
+         {skipped} skipped (not syncable)."
+    );
+    if untouched > 0 {
+        println!(
+            "{untouched} destination record(s) absent from the source were left untouched."
+        );
+    }
+    if adds + deletes == 0 {
+        println!("Already in sync — nothing to do.");
+    } else if !apply {
+        println!("Dry run — no changes written. Re-run with --apply to commit.");
+    }
+}
+
+/// Print the sync plan as JSON.
+fn render_json(from_id: &str, to_id: &str, plans: &[ZonePlan], apply: bool) -> Result<()> {
+    let rec_json = |rec: &PlannedRecord| {
+        serde_json::json!({
+            "name": rec.fqdn,
+            "type": rec.rtype,
+            "ttl": rec.ttl,
+            "value": value_display(&rec.record),
+        })
+    };
+
+    let zones: Vec<_> = plans
+        .iter()
+        .map(|plan| {
+            serde_json::json!({
+                "zone": plan.zone,
+                "add": plan.adds.iter().map(rec_json).collect::<Vec<_>>(),
+                "remove": plan.deletes.iter().map(rec_json).collect::<Vec<_>>(),
+                "unchanged": plan.unchanged,
+                "untouched": plan.untouched,
+                "skipped": plan.skipped,
+            })
+        })
+        .collect();
+
+    let out = serde_json::json!({
+        "from": from_id,
+        "to": to_id,
+        "applied": apply,
+        "zones": zones,
+    });
+
+    let pretty = serde_json::to_string_pretty(&out)
+        .map_err(|e| Error::parse(format!("could not serialise sync plan: {e}")))?;
+    println!("{pretty}");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    fn ip_map(pairs: &[(&str, &str)]) -> HashMap<IpAddr, IpAddr> {
+        pairs
+            .iter()
+            .map(|(s, d)| (s.parse().unwrap(), d.parse().unwrap()))
+            .collect()
+    }
+
+    fn a(name: &str, ip: &str) -> PlannedRecord {
+        PlannedRecord {
+            fqdn: name.to_string(),
+            rtype: "A".to_string(),
+            ttl: 3600,
+            record: RecordData::A {
+                ip: ip.parse().unwrap(),
+            },
+        }
+    }
+
+    // ── apply_ip_map ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn ip_map_rewrites_mapped_a_record() {
+        let map = ip_map(&[("203.0.113.10", "192.168.1.10")]);
+        let mapped = apply_ip_map(
+            RecordData::A {
+                ip: "203.0.113.10".parse().unwrap(),
+            },
+            &map,
+        );
+        match mapped {
+            RecordData::A { ip } => assert_eq!(ip.to_string(), "192.168.1.10"),
+            other => panic!("expected A, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ip_map_leaves_unmapped_a_record_untouched() {
+        let map = ip_map(&[("203.0.113.10", "192.168.1.10")]);
+        let mapped = apply_ip_map(
+            RecordData::A {
+                ip: "8.8.8.8".parse().unwrap(),
+            },
+            &map,
+        );
+        match mapped {
+            RecordData::A { ip } => assert_eq!(ip.to_string(), "8.8.8.8"),
+            other => panic!("expected A, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ip_map_rewrites_mapped_aaaa_record() {
+        let map = ip_map(&[("2001:db8::1", "fd00::1")]);
+        let mapped = apply_ip_map(
+            RecordData::Aaaa {
+                ip: "2001:db8::1".parse().unwrap(),
+            },
+            &map,
+        );
+        match mapped {
+            RecordData::Aaaa { ip } => assert_eq!(ip.to_string(), "fd00::1"),
+            other => panic!("expected AAAA, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ip_map_leaves_non_address_records_untouched() {
+        let map = ip_map(&[("203.0.113.10", "192.168.1.10")]);
+        let mapped = apply_ip_map(
+            RecordData::Cname {
+                target: "example.com".to_string(),
+            },
+            &map,
+        );
+        assert!(matches!(mapped, RecordData::Cname { .. }));
+    }
+
+    // ── parse_ip_pair ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_ip_pair_accepts_valid_pair() {
+        let (s, d) = parse_ip_pair("203.0.113.10 = 192.168.1.10").unwrap();
+        assert_eq!(s.to_string(), "203.0.113.10");
+        assert_eq!(d.to_string(), "192.168.1.10");
+    }
+
+    #[rstest]
+    #[case::missing_separator("203.0.113.10")]
+    #[case::bad_address("203.0.113.10=not-an-ip")]
+    #[case::family_mismatch("203.0.113.10=fd00::1")]
+    fn parse_ip_pair_rejects_bad_input(#[case] spec: &str) {
+        assert!(parse_ip_pair(spec).is_err());
+    }
+
+    // ── canonical ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn canonical_equal_for_same_value_differs_for_others() {
+        let one = RecordData::A {
+            ip: "1.2.3.4".parse().unwrap(),
+        };
+        let same = RecordData::A {
+            ip: "1.2.3.4".parse().unwrap(),
+        };
+        let other = RecordData::A {
+            ip: "1.2.3.5".parse().unwrap(),
+        };
+        assert_eq!(canonical(&one), canonical(&same));
+        assert_ne!(canonical(&one), canonical(&other));
+    }
+
+    // ── diff_records ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn diff_adds_record_set_missing_on_destination() {
+        let diff = diff_records(vec![a("www.example.com", "1.1.1.1")], vec![]);
+        assert_eq!(diff.adds.len(), 1);
+        assert_eq!(diff.deletes.len(), 0);
+        assert_eq!(diff.unchanged, 0);
+    }
+
+    #[test]
+    fn diff_updates_changed_value_with_add_and_remove() {
+        let diff = diff_records(
+            vec![a("www.example.com", "2.2.2.2")],
+            vec![a("www.example.com", "1.1.1.1")],
+        );
+        assert_eq!(diff.adds.len(), 1);
+        assert_eq!(diff.deletes.len(), 1);
+        assert_eq!(diff.unchanged, 0);
+        match &diff.adds[0].record {
+            RecordData::A { ip } => assert_eq!(ip.to_string(), "2.2.2.2"),
+            other => panic!("expected A, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diff_reports_identical_records_as_unchanged() {
+        let diff = diff_records(
+            vec![a("www.example.com", "1.1.1.1")],
+            vec![a("www.example.com", "1.1.1.1")],
+        );
+        assert_eq!(diff.adds.len(), 0);
+        assert_eq!(diff.deletes.len(), 0);
+        assert_eq!(diff.unchanged, 1);
+    }
+
+    #[test]
+    fn diff_never_prunes_destination_only_names() {
+        let diff = diff_records(
+            vec![a("a.example.com", "1.1.1.1")],
+            vec![
+                a("a.example.com", "1.1.1.1"),
+                a("b.example.com", "2.2.2.2"),
+            ],
+        );
+        assert_eq!(diff.adds.len(), 0);
+        assert_eq!(diff.deletes.len(), 0);
+        assert_eq!(diff.unchanged, 1);
+        assert_eq!(diff.untouched, 1);
+    }
+}

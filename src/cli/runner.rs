@@ -104,7 +104,11 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             AllowedCmd::Delete { .. } => "allowed delete",
         },
         Command::Settings => "settings",
-        Command::Mcp | Command::Config(_) | Command::Completions { .. } | Command::ServerIds => {
+        Command::Mcp
+        | Command::Config(_)
+        | Command::Completions { .. }
+        | Command::ServerIds
+        | Command::Sync { .. } => {
             unreachable!()
         }
     };
@@ -153,6 +157,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
     let result = match command {
         Command::Mcp => unreachable!("handled in main"),
         Command::Config(_) => unreachable!("handled in main"),
+        Command::Sync { .. } => unreachable!("handled in main"),
         Command::Record(RecordCmd::List { .. }) => unreachable!("handled above"),
 
         Command::Zone(cmd) => match cmd {

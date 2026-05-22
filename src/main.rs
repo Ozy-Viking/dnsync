@@ -9,7 +9,7 @@ fn main() {}
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use dnslib::{
     cli::{self, RecordCmd, ZoneCmd},
-    control_plane::{app, config, policy},
+    control_plane::{app, config, policy, sync},
     core::{dns::service::DnsService, error},
     mcp::server,
     vendors::runtime::{ClientOverrides, VendorClient},
@@ -227,6 +227,39 @@ async fn run(cli: Cli) -> i32 {
             *overwrite_zone,
         )
         .await;
+    }
+
+    if let Command::Sync {
+        profile,
+        from,
+        to,
+        zone,
+        map,
+        apply,
+        json,
+    } = &cli.command
+    {
+        if cli.token.is_some() || cli.base_url.is_some() {
+            return render_error(Error::parse(
+                "sync does not accept --token/--base-url; \
+                 configure credentials per server via config file or environment variables",
+            ));
+        }
+        return match sync::run_sync(
+            app_config.as_ref(),
+            profile.as_deref(),
+            from.as_deref(),
+            to.as_deref(),
+            zone,
+            map,
+            *apply,
+            *json,
+        )
+        .await
+        {
+            Ok(()) => 0,
+            Err(e) => render_error(e),
+        };
     }
 
     if cli.servers.len() > 1 {
