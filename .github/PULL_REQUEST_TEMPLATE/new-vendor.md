@@ -50,8 +50,8 @@ Complete every item before requesting review. Check the box once it is done, or 
 
 Resolution order implemented and verified:
 
-- [ ] Token: CLI `--token` → `token_env` config lookup → literal config token → `Error::parse(...)`
-- [ ] Base URL: CLI `--base-url` → config `base_url` → vendor default constant
+- [ ] Token: CLI `--token` → `token_env` config lookup (reads the named env var) → literal config token → `Error::parse(...)`
+- [ ] Base URL: CLI `--base-url` → `base_url_env` config lookup (reads the named env var) → config `base_url` → vendor default constant
 - [ ] Any vendor-specific fields required by this provider (e.g. org ID, account ID, region) are captured in `DnsServerConfig` and resolved from config with a clear error if missing
 - [ ] Credential logic is **in the vendor module**, not in `main.rs` or `vendors/runtime.rs`
 
@@ -141,7 +141,8 @@ Follow the same tracing patterns as existing vendors (see `src/vendors/technitiu
 ### 14. Tests
 
 - [ ] Default base URL constant value tested
-- [ ] Token resolution order tested (CLI > config)
+- [ ] Token resolution order tested (CLI > `token_env` env lookup > literal config token)
+- [ ] Base URL resolution order tested (CLI > `base_url_env` env lookup > config `base_url` > default)
 - [ ] Error when required vendor-specific fields are missing (if applicable)
 - [ ] `VendorKind` serde round-trip: `"<vendor>"` → enum → `"<vendor>"`
 - [ ] Response envelope parsing: success, API error, forbidden, empty errors
