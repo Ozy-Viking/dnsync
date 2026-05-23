@@ -92,9 +92,9 @@ pub async fn handle_import_zone_file<C: DnsService + Send + Sync>(
         &p.zone,
         file_name,
         p.content.into_bytes(),
-        p.overwrite.unwrap_or(true),
-        p.overwrite_zone.unwrap_or(false),
-        p.overwrite_soa_serial.unwrap_or(false),
+        p.options.overwrite,
+        p.options.overwrite_zone,
+        p.options.overwrite_soa_serial,
     )
     .await
     .map(json_result)

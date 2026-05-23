@@ -1,3 +1,6 @@
+use clap::Args;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::core::{
@@ -11,6 +14,27 @@ pub struct ZoneSummary {
     pub name: String,
     pub zone_type: String,
     pub disabled: bool,
+}
+
+/// Overwrite flags for zone-file imports. Used by both CLI and MCP.
+#[derive(Debug, Clone, Args, Deserialize, JsonSchema)]
+pub struct ZoneImportOptions {
+    /// Overwrite existing record sets for imported types (default: true)
+    #[arg(long, default_value_t = true)]
+    #[serde(default = "default_overwrite")]
+    pub overwrite: bool,
+    /// Delete all existing records before importing — clean replace (default: false)
+    #[arg(long, default_value_t = false)]
+    #[serde(default)]
+    pub overwrite_zone: bool,
+    /// Use the SOA serial from the file instead of auto-incrementing (default: false)
+    #[arg(long, default_value_t = false)]
+    #[serde(default)]
+    pub overwrite_soa_serial: bool,
+}
+
+fn default_overwrite() -> bool {
+    true
 }
 
 /// List DNS zones through a vendor-neutral zone reader.
