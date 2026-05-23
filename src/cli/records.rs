@@ -5,8 +5,8 @@ use clap::builder::PossibleValue;
 
 use crate::cli::{CliDeleteSelector, CliRecordType};
 use crate::core::dns::records::{
-    DigestType, DsAlgorithm, FwdProtocol, RecordData, SshfpAlgorithm, SshfpFingerprintType,
-    TlsaCertUsage, TlsaMatchingType, TlsaSelector,
+    DigestType, DsAlgorithm, FwdProtocol, RecordData, RecordSelector, SshfpAlgorithm,
+    SshfpFingerprintType, TlsaCertUsage, TlsaMatchingType, TlsaSelector,
 };
 use crate::core::dns::responses::ListRecordsResponse;
 
@@ -103,162 +103,50 @@ impl_value_enum!(
     ]
 );
 
-impl CliDeleteSelector {
-    /// Returns the Technitium API `type` string and any optional identifying params.
-    /// Fields with `None` values are omitted — Technitium will delete all records
-    /// of that type for the domain when the identifying value is absent.
-    pub fn to_api_params(&self) -> Vec<(&'static str, String)> {
-        let mut p = vec![("type", self.type_name().into())];
-        match self {
-            Self::A { ip } => {
-                if let Some(v) = ip {
-                    p.push(("ipAddress", v.to_string()));
-                }
-            }
-            Self::Aaaa { ip } => {
-                if let Some(v) = ip {
-                    p.push(("ipAddress", v.to_string()));
-                }
-            }
-            Self::Aname { aname } => {
-                if let Some(v) = aname {
-                    p.push(("aname", v.clone()));
-                }
-            }
-            Self::App {
+impl From<CliDeleteSelector> for RecordSelector {
+    fn from(s: CliDeleteSelector) -> Self {
+        match s {
+            CliDeleteSelector::A { ip } => Self::A { ip },
+            CliDeleteSelector::Aaaa { ip } => Self::Aaaa { ip },
+            CliDeleteSelector::Aname { aname } => Self::Aname { aname },
+            CliDeleteSelector::App {
                 app_name,
                 class_path,
-            } => {
-                if let Some(v) = app_name {
-                    p.push(("appName", v.clone()));
-                }
-                if let Some(v) = class_path {
-                    p.push(("classPath", v.clone()));
-                }
-            }
-            Self::Caa { value } => {
-                if let Some(v) = value {
-                    p.push(("value", v.clone()));
-                }
-            }
-            Self::Cname { target } => {
-                if let Some(v) = target {
-                    p.push(("cname", v.clone()));
-                }
-            }
-            Self::Dname { dname } => {
-                if let Some(v) = dname {
-                    p.push(("dname", v.clone()));
-                }
-            }
-            Self::Ds { key_tag } => {
-                if let Some(v) = key_tag {
-                    p.push(("keyTag", v.to_string()));
-                }
-            }
-            Self::Fwd { forwarder } => {
-                if let Some(v) = forwarder {
-                    p.push(("forwarder", v.clone()));
-                }
-            }
-            Self::Https { svc_target_name } | Self::Svcb { svc_target_name } => {
-                if let Some(v) = svc_target_name {
-                    p.push(("svcTargetName", v.clone()));
-                }
-            }
-            Self::Mx { exchange } => {
-                if let Some(v) = exchange {
-                    p.push(("exchange", v.clone()));
-                }
-            }
-            Self::Naptr { replacement } => {
-                if let Some(v) = replacement {
-                    p.push(("naptrReplacement", v.clone()));
-                }
-            }
-            Self::Ns { nameserver } => {
-                if let Some(v) = nameserver {
-                    p.push(("nameServer", v.clone()));
-                }
-            }
-            Self::Ptr { name } => {
-                if let Some(v) = name {
-                    p.push(("ptrName", v.clone()));
-                }
-            }
-            Self::Sshfp { fingerprint } => {
-                if let Some(v) = fingerprint {
-                    p.push(("sshfpFingerprint", v.clone()));
-                }
-            }
-            Self::Srv {
+            } => Self::App {
+                app_name,
+                class_path,
+            },
+            CliDeleteSelector::Caa { value } => Self::Caa { value },
+            CliDeleteSelector::Cname { target } => Self::Cname { target },
+            CliDeleteSelector::Dname { dname } => Self::Dname { dname },
+            CliDeleteSelector::Ds { key_tag } => Self::Ds { key_tag },
+            CliDeleteSelector::Fwd { forwarder } => Self::Fwd { forwarder },
+            CliDeleteSelector::Https { svc_target_name } => Self::Https { svc_target_name },
+            CliDeleteSelector::Mx { exchange } => Self::Mx { exchange },
+            CliDeleteSelector::Naptr { replacement } => Self::Naptr { replacement },
+            CliDeleteSelector::Ns { nameserver } => Self::Ns { nameserver },
+            CliDeleteSelector::Ptr { name } => Self::Ptr { name },
+            CliDeleteSelector::Sshfp { fingerprint } => Self::Sshfp { fingerprint },
+            CliDeleteSelector::Srv {
                 target,
                 port,
                 priority,
                 weight,
-            } => {
-                if let Some(v) = target {
-                    p.push(("target", v.clone()));
-                }
-                if let Some(v) = port {
-                    p.push(("port", v.to_string()));
-                }
-                if let Some(v) = priority {
-                    p.push(("priority", v.to_string()));
-                }
-                if let Some(v) = weight {
-                    p.push(("weight", v.to_string()));
-                }
-            }
-            Self::Tlsa {
+            } => Self::Srv {
+                target,
+                port,
+                priority,
+                weight,
+            },
+            CliDeleteSelector::Svcb { svc_target_name } => Self::Svcb { svc_target_name },
+            CliDeleteSelector::Tlsa {
                 cert_association_data,
-            } => {
-                if let Some(v) = cert_association_data {
-                    p.push(("tlsaCertificateAssociationData", v.clone()));
-                }
-            }
-            Self::Txt { text } => {
-                if let Some(v) = text {
-                    p.push(("text", v.clone()));
-                }
-            }
-            Self::Uri { uri } => {
-                if let Some(v) = uri {
-                    p.push(("uri", v.clone()));
-                }
-            }
-            Self::Unknown { rdata } => {
-                if let Some(v) = rdata {
-                    p.push(("rdata", v.clone()));
-                }
-            }
-        }
-        p
-    }
-
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Self::A { .. } => "A",
-            Self::Aaaa { .. } => "AAAA",
-            Self::Aname { .. } => "ANAME",
-            Self::App { .. } => "APP",
-            Self::Caa { .. } => "CAA",
-            Self::Cname { .. } => "CNAME",
-            Self::Dname { .. } => "DNAME",
-            Self::Ds { .. } => "DS",
-            Self::Fwd { .. } => "FWD",
-            Self::Https { .. } => "HTTPS",
-            Self::Mx { .. } => "MX",
-            Self::Naptr { .. } => "NAPTR",
-            Self::Ns { .. } => "NS",
-            Self::Ptr { .. } => "PTR",
-            Self::Sshfp { .. } => "SSHFP",
-            Self::Srv { .. } => "SRV",
-            Self::Svcb { .. } => "SVCB",
-            Self::Tlsa { .. } => "TLSA",
-            Self::Txt { .. } => "TXT",
-            Self::Uri { .. } => "URI",
-            Self::Unknown { .. } => "UNKNOWN",
+            } => Self::Tlsa {
+                cert_association_data,
+            },
+            CliDeleteSelector::Txt { text } => Self::Txt { text },
+            CliDeleteSelector::Uri { uri } => Self::Uri { uri },
+            CliDeleteSelector::Unknown { rdata } => Self::Unknown { rdata },
         }
     }
 }
@@ -669,7 +557,8 @@ mod tests {
         #[case] selector: CliDeleteSelector,
         #[case] expected: Vec<(&'static str, &'static str)>,
     ) {
-        let actual = selector.to_api_params();
+        let core_selector: crate::core::dns::records::RecordSelector = selector.into();
+        let actual = core_selector.to_api_params();
         let expected: Vec<(&str, String)> = expected
             .into_iter()
             .map(|(key, value)| (key, value.to_string()))
