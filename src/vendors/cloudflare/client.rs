@@ -1,8 +1,9 @@
-use reqwest::{Client, Response, multipart};
+use reqwest::{Response, multipart};
 use serde_json::Value;
 
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
+use crate::vendors::http::HttpClient;
 
 /// Cloudflare DNS API client.
 ///
@@ -10,63 +11,29 @@ use crate::core::secret::ApiToken;
 /// `{"result": {...}, "success": true, "errors": [], "messages": []}`
 #[derive(Clone, Debug)]
 pub struct CloudflareClient {
-    pub http: Client,
-    pub base_url: String,
-    token: ApiToken,
+    http: HttpClient,
 }
 
 impl CloudflareClient {
     pub fn new(base_url: String, token: ApiToken) -> Result<Self> {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(Error::Network)?;
         Ok(Self {
-            http,
-            base_url,
-            token,
+            http: HttpClient::new(base_url, token, false)?,
         })
     }
 
+    pub fn base_url(&self) -> &str {
+        &self.http.base_url
+    }
+
     pub async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.get", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending GET");
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .query(params)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "GET failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.get(path).query(params);
+        let resp = self.http.send("GET", path, req).await?;
         parse_response(resp).await
     }
 
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.post", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending POST");
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "POST failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.post(path).json(body);
+        let resp = self.http.send("POST", path, req).await?;
         parse_response(resp).await
     }
 
@@ -76,77 +43,25 @@ impl CloudflareClient {
         file_name: String,
         file_bytes: Vec<u8>,
     ) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!(
-            "http.post_multipart",
-            path,
-            http.status = tracing::field::Empty
-        );
-        let _enter = span.enter();
-        tracing::debug!("sending POST (multipart)");
-
         let file_part = multipart::Part::bytes(file_bytes)
             .file_name(file_name)
             .mime_str("text/plain")
             .map_err(Error::Mime)?;
-
         let form = multipart::Form::new().part("file", file_part);
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "POST (multipart) failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.post(path).multipart(form);
+        let resp = self.http.send("POST", path, req).await?;
         parse_response(resp).await
     }
 
     pub async fn get_text(&self, path: &str, params: &[(&str, String)]) -> Result<String> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending GET (text)");
-
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .query(params)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "GET (text) failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.get(path).query(params);
+        let resp = self.http.send("GET", path, req).await?;
         parse_text_response(resp).await
     }
 
     pub async fn delete(&self, path: &str) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.delete", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending DELETE");
-        let resp = self
-            .http
-            .delete(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "DELETE failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.delete(path);
+        let resp = self.http.send("DELETE", path, req).await?;
         parse_response(resp).await
     }
 }
