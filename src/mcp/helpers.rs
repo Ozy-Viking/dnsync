@@ -1,8 +1,10 @@
 //! MCP helper functions — error and result formatting.
 
+use std::future::Future;
+
 use rmcp::{ErrorData as McpError, model::*};
 
-use crate::core::error::Error;
+use crate::core::error::{Error, Result};
 
 /// Convert a crate `Error` into an MCP protocol error.
 pub fn mcp_err(e: Error) -> McpError {
@@ -27,4 +29,30 @@ pub fn json_result(value: serde_json::Value) -> CallToolResult {
 /// Wrap a plain text string into a successful MCP call result.
 pub fn text_result(s: String) -> CallToolResult {
     CallToolResult::success(vec![Content::text(s)])
+}
+
+/// Run a permission check (or `.and(...)`-chained checks), then a future,
+/// wrapping the JSON result into a `CallToolResult`. Any crate `Error`
+/// becomes an `McpError` via [`mcp_err`].
+pub async fn run_json<F>(
+    check: Result<()>,
+    fut: F,
+) -> std::result::Result<CallToolResult, McpError>
+where
+    F: Future<Output = Result<serde_json::Value>>,
+{
+    check.map_err(mcp_err)?;
+    fut.await.map(json_result).map_err(mcp_err)
+}
+
+/// Like [`run_json`] but wraps a plain text result.
+pub async fn run_text<F>(
+    check: Result<()>,
+    fut: F,
+) -> std::result::Result<CallToolResult, McpError>
+where
+    F: Future<Output = Result<String>>,
+{
+    check.map_err(mcp_err)?;
+    fut.await.map(text_result).map_err(mcp_err)
 }
