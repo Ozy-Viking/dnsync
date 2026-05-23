@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use clap::Subcommand;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -603,13 +604,19 @@ impl RecordData {
 /// Identifies one or more records for deletion. Mirrors [`RecordData`] but every
 /// value field is optional — a missing field broadens the selector (e.g.
 /// `A { ip: None }` matches every A record at the domain).
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+///
+/// Derives both `Subcommand` (for clap-driven CLI parsing) and `Deserialize` +
+/// `JsonSchema` (for MCP tool params), so the CLI and MCP share one type.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Subcommand)]
 #[serde(tag = "type", rename_all = "UPPERCASE")]
+#[command(rename_all = "lower")]
 pub enum RecordSelector {
+    /// e.g. `a` (all A records) or `a 1.2.3.4` (specific)
     A {
         #[serde(rename = "ipAddress")]
         ip: Option<Ipv4Addr>,
     },
+    /// e.g. `aaaa` or `aaaa 2001:db8::1`
     Aaaa {
         #[serde(rename = "ipAddress")]
         ip: Option<Ipv6Addr>,
@@ -665,8 +672,11 @@ pub enum RecordSelector {
     },
     Srv {
         target: Option<String>,
+        #[arg(long)]
         port: Option<u16>,
+        #[arg(long)]
         priority: Option<u16>,
+        #[arg(long)]
         weight: Option<u16>,
     },
     Svcb {

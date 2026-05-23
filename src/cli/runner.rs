@@ -205,8 +205,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
                 domain,
                 record,
             } => {
-                let selector: crate::core::dns::records::RecordSelector = record.into();
-                let type_params = selector.to_api_params();
+                let type_params = record.to_api_params();
                 dns_records::delete_record(client, &zone, &domain, &type_params).await?
             }
         },
