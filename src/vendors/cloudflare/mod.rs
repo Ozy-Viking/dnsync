@@ -137,7 +137,7 @@ mod tests {
 
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
-        assert_eq!(client.base_url, "https://cf.example/client/v4");
+        assert_eq!(client.base_url(), "https://cf.example/client/v4");
         assert_eq!(client.kind(), app_config::VendorKind::Cloudflare);
 
         // SAFETY: this test serializes access to these process-wide env vars.
