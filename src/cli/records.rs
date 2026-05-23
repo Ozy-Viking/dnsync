@@ -3,10 +3,10 @@
 use clap::ValueEnum;
 use clap::builder::PossibleValue;
 
-use crate::cli::{CliDeleteSelector, CliRecordType};
+use crate::cli::CliRecordType;
 use crate::core::dns::records::{
-    DigestType, DsAlgorithm, FwdProtocol, RecordData, RecordSelector, SshfpAlgorithm,
-    SshfpFingerprintType, TlsaCertUsage, TlsaMatchingType, TlsaSelector,
+    DigestType, DsAlgorithm, FwdProtocol, RecordData, SshfpAlgorithm, SshfpFingerprintType,
+    TlsaCertUsage, TlsaMatchingType, TlsaSelector,
 };
 use crate::core::dns::responses::ListRecordsResponse;
 
@@ -102,54 +102,6 @@ impl_value_enum!(
         FwdProtocol::Quic,
     ]
 );
-
-impl From<CliDeleteSelector> for RecordSelector {
-    fn from(s: CliDeleteSelector) -> Self {
-        match s {
-            CliDeleteSelector::A { ip } => Self::A { ip },
-            CliDeleteSelector::Aaaa { ip } => Self::Aaaa { ip },
-            CliDeleteSelector::Aname { aname } => Self::Aname { aname },
-            CliDeleteSelector::App {
-                app_name,
-                class_path,
-            } => Self::App {
-                app_name,
-                class_path,
-            },
-            CliDeleteSelector::Caa { value } => Self::Caa { value },
-            CliDeleteSelector::Cname { target } => Self::Cname { target },
-            CliDeleteSelector::Dname { dname } => Self::Dname { dname },
-            CliDeleteSelector::Ds { key_tag } => Self::Ds { key_tag },
-            CliDeleteSelector::Fwd { forwarder } => Self::Fwd { forwarder },
-            CliDeleteSelector::Https { svc_target_name } => Self::Https { svc_target_name },
-            CliDeleteSelector::Mx { exchange } => Self::Mx { exchange },
-            CliDeleteSelector::Naptr { replacement } => Self::Naptr { replacement },
-            CliDeleteSelector::Ns { nameserver } => Self::Ns { nameserver },
-            CliDeleteSelector::Ptr { name } => Self::Ptr { name },
-            CliDeleteSelector::Sshfp { fingerprint } => Self::Sshfp { fingerprint },
-            CliDeleteSelector::Srv {
-                target,
-                port,
-                priority,
-                weight,
-            } => Self::Srv {
-                target,
-                port,
-                priority,
-                weight,
-            },
-            CliDeleteSelector::Svcb { svc_target_name } => Self::Svcb { svc_target_name },
-            CliDeleteSelector::Tlsa {
-                cert_association_data,
-            } => Self::Tlsa {
-                cert_association_data,
-            },
-            CliDeleteSelector::Txt { text } => Self::Txt { text },
-            CliDeleteSelector::Uri { uri } => Self::Uri { uri },
-            CliDeleteSelector::Unknown { rdata } => Self::Unknown { rdata },
-        }
-    }
-}
 
 impl From<CliRecordType> for RecordData {
     fn from(r: CliRecordType) -> Self {
@@ -459,8 +411,8 @@ pub fn print_records_table(response: &ListRecordsResponse) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::{CliDeleteSelector, CliRecordType};
-    use crate::core::dns::records::RecordData;
+    use crate::cli::CliRecordType;
+    use crate::core::dns::records::{RecordData, RecordSelector};
     use rstest::{fixture, rstest};
     use serde_json::json;
 
@@ -536,29 +488,28 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_none(CliDeleteSelector::A { ip: None }, vec![("type", "A")])]
+    #[case::a_none(RecordSelector::A { ip: None }, vec![("type", "A")])]
     #[case::a_some(
-        CliDeleteSelector::A { ip: Some("1.2.3.4".parse().unwrap()) },
+        RecordSelector::A { ip: Some("1.2.3.4".parse().unwrap()) },
         vec![("type", "A"), ("ipAddress", "1.2.3.4")]
     )]
     #[case::aaaa_some(
-        CliDeleteSelector::Aaaa { ip: Some("2001:db8::1".parse().unwrap()) },
+        RecordSelector::Aaaa { ip: Some("2001:db8::1".parse().unwrap()) },
         vec![("type", "AAAA"), ("ipAddress", "2001:db8::1")]
     )]
     #[case::mx_some(
-        CliDeleteSelector::Mx { exchange: Some("mail.example.com".into()) },
+        RecordSelector::Mx { exchange: Some("mail.example.com".into()) },
         vec![("type", "MX"), ("exchange", "mail.example.com")]
     )]
     #[case::txt_some(
-        CliDeleteSelector::Txt { text: Some("v=spf1 ~all".into()) },
+        RecordSelector::Txt { text: Some("v=spf1 ~all".into()) },
         vec![("type", "TXT"), ("text", "v=spf1 ~all")]
     )]
-    fn cli_delete_selector_to_api_params_matches_expected(
-        #[case] selector: CliDeleteSelector,
+    fn record_selector_to_api_params_matches_expected(
+        #[case] selector: RecordSelector,
         #[case] expected: Vec<(&'static str, &'static str)>,
     ) {
-        let core_selector: crate::core::dns::records::RecordSelector = selector.into();
-        let actual = core_selector.to_api_params();
+        let actual = selector.to_api_params();
         let expected: Vec<(&str, String)> = expected
             .into_iter()
             .map(|(key, value)| (key, value.to_string()))
