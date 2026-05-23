@@ -166,9 +166,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             ZoneCmd::Import {
                 zone,
                 file,
-                overwrite,
-                overwrite_zone,
-                overwrite_soa_serial,
+                options,
             } => {
                 let file_name = file
                     .file_name()
@@ -181,9 +179,9 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
                     &zone,
                     file_name,
                     file_bytes,
-                    overwrite,
-                    overwrite_zone,
-                    overwrite_soa_serial,
+                    options.overwrite,
+                    options.overwrite_zone,
+                    options.overwrite_soa_serial,
                 )
                 .await?
             }

@@ -190,15 +190,8 @@ pub enum ZoneCmd {
         zone: String,
         /// Path to the zone file on disk
         file: std::path::PathBuf,
-        /// Overwrite existing record sets for imported types (default: true)
-        #[arg(long, default_value_t = true)]
-        overwrite: bool,
-        /// Delete all existing records before importing (clean replace)
-        #[arg(long, default_value_t = false)]
-        overwrite_zone: bool,
-        /// Use the SOA serial from the file instead of auto-incrementing
-        #[arg(long, default_value_t = false)]
-        overwrite_soa_serial: bool,
+        #[command(flatten)]
+        options: crate::core::dns::zones::ZoneImportOptions,
     },
     /// Export a zone as a BIND-format (RFC 1035) zone file
     Export {

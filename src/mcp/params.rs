@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::core::dns::records::{RecordData, RecordSelector};
+use crate::core::dns::zones::ZoneImportOptions;
 
 // ─── Zone params ───────────────────────────────────────────────────────────
 
@@ -43,12 +44,8 @@ pub struct ImportZoneFileParams {
     pub content: String,
     /// Filename shown in API logs (default: zone.txt)
     pub file_name: Option<String>,
-    /// Overwrite existing record sets for imported types (default: true)
-    pub overwrite: Option<bool>,
-    /// Delete all existing records before importing \u2014 clean replace (default: false)
-    pub overwrite_zone: Option<bool>,
-    /// Use the SOA serial from the file instead of auto-incrementing (default: false)
-    pub overwrite_soa_serial: Option<bool>,
+    #[serde(flatten)]
+    pub options: ZoneImportOptions,
 }
 
 // ─── Record params ─────────────────────────────────────────────────────────
