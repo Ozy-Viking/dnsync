@@ -197,8 +197,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
                 ttl,
                 record,
             } => {
-                let record_data = record.into();
-                dns_records::create_record(client, &zone, &domain, ttl, &record_data).await?
+                dns_records::create_record(client, &zone, &domain, ttl, &record).await?
             }
             RecordCmd::Delete {
                 zone,

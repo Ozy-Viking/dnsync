@@ -3,9 +3,8 @@
 use clap::ValueEnum;
 use clap::builder::PossibleValue;
 
-use crate::cli::CliRecordType;
 use crate::core::dns::records::{
-    DigestType, DsAlgorithm, FwdProtocol, RecordData, SshfpAlgorithm, SshfpFingerprintType,
+    DigestType, DsAlgorithm, FwdProtocol, SshfpAlgorithm, SshfpFingerprintType,
     TlsaCertUsage, TlsaMatchingType, TlsaSelector,
 };
 use crate::core::dns::responses::ListRecordsResponse;
@@ -102,142 +101,6 @@ impl_value_enum!(
         FwdProtocol::Quic,
     ]
 );
-
-impl From<CliRecordType> for RecordData {
-    fn from(r: CliRecordType) -> Self {
-        match r {
-            CliRecordType::A { ip } => Self::A { ip },
-            CliRecordType::Aaaa { ip } => Self::Aaaa { ip },
-            CliRecordType::Aname { aname } => Self::Aname { aname },
-            CliRecordType::App {
-                app_name,
-                class_path,
-                record_data,
-            } => Self::App {
-                app_name,
-                class_path,
-                record_data,
-            },
-            CliRecordType::Caa { flags, tag, value } => Self::Caa { flags, tag, value },
-            CliRecordType::Cname { target } => Self::Cname { target },
-            CliRecordType::Dname { dname } => Self::Dname { dname },
-            CliRecordType::Ds {
-                key_tag,
-                algorithm,
-                digest_type,
-                digest,
-            } => Self::Ds {
-                key_tag,
-                algorithm,
-                digest_type,
-                digest,
-            },
-            CliRecordType::Fwd {
-                forwarder,
-                protocol,
-                priority,
-                dnssec_validation,
-            } => Self::Fwd {
-                forwarder,
-                protocol,
-                priority,
-                dnssec_validation,
-            },
-            CliRecordType::Https {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            } => Self::Https {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            },
-            CliRecordType::Mx {
-                exchange,
-                preference,
-            } => Self::Mx {
-                exchange,
-                preference,
-            },
-            CliRecordType::Naptr {
-                order,
-                preference,
-                flags,
-                services,
-                regexp,
-                replacement,
-            } => Self::Naptr {
-                order,
-                preference,
-                flags,
-                services,
-                regexp,
-                replacement,
-            },
-            CliRecordType::Ns { nameserver, glue } => Self::Ns { nameserver, glue },
-            CliRecordType::Ptr { name } => Self::Ptr { name },
-            CliRecordType::Sshfp {
-                algorithm,
-                fingerprint_type,
-                fingerprint,
-            } => Self::Sshfp {
-                algorithm,
-                fingerprint_type,
-                fingerprint,
-            },
-            CliRecordType::Srv {
-                priority,
-                weight,
-                port,
-                target,
-            } => Self::Srv {
-                priority,
-                weight,
-                port,
-                target,
-            },
-            CliRecordType::Svcb {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            } => Self::Svcb {
-                svc_priority,
-                svc_target_name,
-                svc_params,
-                auto_ipv4_hint,
-                auto_ipv6_hint,
-            },
-            CliRecordType::Tlsa {
-                cert_usage,
-                selector,
-                matching_type,
-                cert_association_data,
-            } => Self::Tlsa {
-                cert_usage,
-                selector,
-                matching_type,
-                cert_association_data,
-            },
-            CliRecordType::Txt { text, split_text } => Self::Txt { text, split_text },
-            CliRecordType::Uri {
-                priority,
-                weight,
-                uri,
-            } => Self::Uri {
-                priority,
-                weight,
-                uri,
-            },
-            CliRecordType::Unknown { rdata } => Self::Unknown { rdata },
-        }
-    }
-}
 
 // ─── Content extraction ───────────────────────────────────────────────────────
 
@@ -411,81 +274,9 @@ pub fn print_records_table(response: &ListRecordsResponse) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::CliRecordType;
-    use crate::core::dns::records::{RecordData, RecordSelector};
-    use rstest::{fixture, rstest};
+    use crate::core::dns::records::RecordSelector;
+    use rstest::rstest;
     use serde_json::json;
-
-    #[fixture]
-    fn a_record_type() -> CliRecordType {
-        CliRecordType::A {
-            ip: "1.2.3.4".parse().unwrap(),
-        }
-    }
-
-    #[fixture]
-    fn aaaa_record_type() -> CliRecordType {
-        CliRecordType::Aaaa {
-            ip: "2001:db8::1".parse().unwrap(),
-        }
-    }
-
-    #[fixture]
-    fn mx_record_type() -> CliRecordType {
-        CliRecordType::Mx {
-            exchange: "mail.example.com".into(),
-            preference: 10,
-        }
-    }
-
-    #[fixture]
-    fn txt_record_type() -> CliRecordType {
-        CliRecordType::Txt {
-            text: "v=spf1 ~all".into(),
-            split_text: false,
-        }
-    }
-
-    #[rstest]
-    fn cli_record_type_a_maps_to_core_record(a_record_type: CliRecordType) {
-        match RecordData::from(a_record_type) {
-            RecordData::A { ip } => assert_eq!(ip.to_string(), "1.2.3.4"),
-            other => panic!("expected A record, got {other:?}"),
-        }
-    }
-
-    #[rstest]
-    fn cli_record_type_aaaa_maps_to_core_record(aaaa_record_type: CliRecordType) {
-        match RecordData::from(aaaa_record_type) {
-            RecordData::Aaaa { ip } => assert_eq!(ip.to_string(), "2001:db8::1"),
-            other => panic!("expected AAAA record, got {other:?}"),
-        }
-    }
-
-    #[rstest]
-    fn cli_record_type_mx_maps_to_core_record(mx_record_type: CliRecordType) {
-        match RecordData::from(mx_record_type) {
-            RecordData::Mx {
-                exchange,
-                preference,
-            } => {
-                assert_eq!(exchange, "mail.example.com");
-                assert_eq!(preference, 10);
-            }
-            other => panic!("expected MX record, got {other:?}"),
-        }
-    }
-
-    #[rstest]
-    fn cli_record_type_txt_maps_to_core_record(txt_record_type: CliRecordType) {
-        match RecordData::from(txt_record_type) {
-            RecordData::Txt { text, split_text } => {
-                assert_eq!(text, "v=spf1 ~all");
-                assert!(!split_text);
-            }
-            other => panic!("expected TXT record, got {other:?}"),
-        }
-    }
 
     #[rstest]
     #[case::a_none(RecordSelector::A { ip: None }, vec![("type", "A")])]
