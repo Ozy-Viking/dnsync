@@ -261,44 +261,49 @@ impl FwdProtocol {
 ///
 /// Note: DNSKEY is intentionally absent — Technitium manages DNSKEY records
 /// automatically via its DNSSEC key management API, not via record add/delete.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Subcommand)]
 #[serde(tag = "type", rename_all = "UPPERCASE")]
+#[command(rename_all = "lower")]
 pub enum RecordData {
-    /// IPv4 address record
+    /// IPv4 address  e.g. `a 1.2.3.4`
     A {
         #[serde(rename = "ipAddress")]
         ip: Ipv4Addr,
     },
-    /// IPv6 address record
+    /// IPv6 address  e.g. `aaaa 2001:db8::1`
     Aaaa {
         #[serde(rename = "ipAddress")]
         ip: Ipv6Addr,
     },
-    /// Apex alias — like CNAME but valid at zone root (Technitium-specific)
+    /// Apex alias (Technitium-specific)  e.g. `aname target.example.net`
     Aname { aname: String },
-    /// DNS App record — routes queries to an installed Technitium DNS App
+    /// DNS App record  e.g. `app "Split Horizon" "SplitHorizon.SimpleAddress" '{}'`
     App {
         #[serde(rename = "appName")]
         app_name: String,
         #[serde(rename = "classPath")]
         class_path: String,
+        /// JSON data string passed to the app
         #[serde(rename = "recordData")]
         record_data: String,
     },
-    /// Certification Authority Authorization
+    /// CA Authorization  e.g. `caa letsencrypt.org --tag issue`
     Caa {
-        flags: u8,
-        tag: String,
         value: String,
+        #[arg(long, default_value_t = 0)]
+        flags: u8,
+        /// issue, issuewild, or iodef
+        #[arg(long, default_value = "issue")]
+        tag: String,
     },
-    /// Canonical name alias
+    /// Canonical name alias  e.g. `cname www.example.com`
     Cname {
         #[serde(rename = "cname")]
         target: String,
     },
-    /// Subtree delegation redirect
+    /// Subtree redirect  e.g. `dname target.example.com`
     Dname { dname: String },
-    /// DNSSEC Delegation Signer
+    /// DNSSEC delegation signer  e.g. `ds 12345 RSASHA256 SHA256 abcdef...`
     Ds {
         #[serde(rename = "keyTag")]
         key_tag: u16,
@@ -307,61 +312,75 @@ pub enum RecordData {
         digest_type: DigestType,
         digest: String,
     },
-    /// Conditional forwarder (Technitium-specific)
+    /// Conditional forwarder (Technitium-specific)  e.g. `fwd 1.1.1.1 --protocol Udp`
     Fwd {
         forwarder: String,
+        #[arg(long, default_value = "Udp")]
         protocol: FwdProtocol,
         #[serde(rename = "forwarderPriority", default = "default_fwd_priority")]
+        #[arg(long, default_value_t = 10)]
         priority: u16,
         #[serde(rename = "dnssecValidation", default)]
+        #[arg(long, default_value_t = false)]
         dnssec_validation: bool,
     },
-    /// HTTPS service binding (optimised SVCB for HTTPS)
+    /// HTTPS service binding  e.g. `https --svc-priority 1 svc.example.com`
     Https {
-        #[serde(rename = "svcPriority")]
-        svc_priority: u16,
         #[serde(rename = "svcTargetName")]
         svc_target_name: String,
+        #[serde(rename = "svcPriority")]
+        #[arg(long, default_value_t = 1)]
+        svc_priority: u16,
         #[serde(rename = "svcParams")]
+        #[arg(long)]
         svc_params: Option<String>,
         #[serde(rename = "autoIpv4Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv4_hint: bool,
         #[serde(rename = "autoIpv6Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv6_hint: bool,
     },
-    /// Mail exchange
+    /// Mail exchange  e.g. `mx mail.example.com --preference 10`
     Mx {
-        #[serde(default = "default_mx_preference")]
-        preference: u16,
         exchange: String,
+        #[serde(default = "default_mx_preference")]
+        #[arg(long, default_value_t = 10)]
+        preference: u16,
     },
-    /// Naming Authority Pointer
+    /// Naming authority pointer  e.g. `naptr --order 10 --preference 20 ...`
     Naptr {
         #[serde(rename = "naptrOrder")]
+        #[arg(long)]
         order: u16,
         #[serde(rename = "naptrPreference")]
+        #[arg(long)]
         preference: u16,
         #[serde(rename = "naptrFlags")]
+        #[arg(long, default_value = "")]
         flags: String,
         #[serde(rename = "naptrServices")]
+        #[arg(long, default_value = "")]
         services: String,
         #[serde(rename = "naptrRegexp")]
+        #[arg(long, default_value = "")]
         regexp: String,
         #[serde(rename = "naptrReplacement")]
         replacement: String,
     },
-    /// Name server delegation
+    /// Name server  e.g. `ns ns1.example.com` or `ns ns1.example.com --glue 1.2.3.4`
     Ns {
         #[serde(rename = "nameServer")]
         nameserver: String,
+        #[arg(long)]
         glue: Option<String>,
     },
-    /// Reverse DNS pointer
+    /// Reverse DNS pointer  e.g. `ptr host.example.com`
     Ptr {
         #[serde(rename = "ptrName")]
         name: String,
     },
-    /// SSH public key fingerprint
+    /// SSH fingerprint  e.g. `sshfp RSA SHA256 abcdef...`
     Sshfp {
         #[serde(rename = "sshfpAlgorithm")]
         algorithm: SshfpAlgorithm,
@@ -370,27 +389,34 @@ pub enum RecordData {
         #[serde(rename = "sshfpFingerprint")]
         fingerprint: String,
     },
-    /// Service locator
+    /// Service locator  e.g. `srv sip.example.com --port 5060 --priority 10 --weight 20`
     Srv {
-        priority: u16,
-        weight: u16,
-        port: u16,
         target: String,
+        #[arg(long)]
+        port: u16,
+        #[arg(long, default_value_t = 0)]
+        priority: u16,
+        #[arg(long, default_value_t = 0)]
+        weight: u16,
     },
-    /// Service binding (generic)
+    /// Service binding (generic)  e.g. `svcb --svc-priority 1 svc.example.com`
     Svcb {
-        #[serde(rename = "svcPriority")]
-        svc_priority: u16,
         #[serde(rename = "svcTargetName")]
         svc_target_name: String,
+        #[serde(rename = "svcPriority")]
+        #[arg(long, default_value_t = 1)]
+        svc_priority: u16,
         #[serde(rename = "svcParams")]
+        #[arg(long)]
         svc_params: Option<String>,
         #[serde(rename = "autoIpv4Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv4_hint: bool,
         #[serde(rename = "autoIpv6Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv6_hint: bool,
     },
-    /// DANE TLS authentication
+    /// DANE TLS authentication  e.g. `tlsa DANE-EE SPKI SHA2-256 abcdef...`
     Tlsa {
         #[serde(rename = "tlsaCertificateUsage")]
         cert_usage: TlsaCertUsage,
@@ -401,21 +427,24 @@ pub enum RecordData {
         #[serde(rename = "tlsaCertificateAssociationData")]
         cert_association_data: String,
     },
-    /// Text record
+    /// Text record  e.g. `txt "v=spf1 ~all"` or `txt "long..." --split-text`
     Txt {
         text: String,
         #[serde(rename = "splitText", default)]
+        #[arg(long, default_value_t = false)]
         split_text: bool,
     },
-    /// URI record
+    /// URI record  e.g. `uri https://example.com --priority 10 --weight 1`
     Uri {
+        uri: String,
         #[serde(rename = "uriPriority")]
+        #[arg(long, default_value_t = 10)]
         priority: u16,
         #[serde(rename = "uriWeight")]
+        #[arg(long, default_value_t = 1)]
         weight: u16,
-        uri: String,
     },
-    /// Raw/unknown type — rdata as colon-separated hex string
+    /// Raw/unknown type — rdata as colon-separated hex string  e.g. `unknown 0a0b0c...`
     Unknown { rdata: String },
 }
 
