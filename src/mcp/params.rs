@@ -92,3 +92,9 @@ pub struct StatsParams {
     /// LastHour, LastDay, LastWeek, LastMonth, LastYear (default: LastDay)
     pub stats_type: Option<String>,
 }
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SelectServerParams {
+    /// The server ID to select, as returned by dns_list_servers
+    pub server_id: String,
+}
