@@ -207,18 +207,61 @@ impl RecordWrite for CloudflareClient {
             .as_array()
             .ok_or_else(|| Error::parse("Cloudflare dns_records response is not an array"))?;
 
-        let record_id = records
-            .first()
-            .and_then(|r| r.get("id"))
-            .and_then(|id| id.as_str())
+        // If the caller supplied a value-bearing parameter (e.g. `ipAddress`
+        // for A/AAAA, `cname` for CNAME), restrict the match to records whose
+        // Cloudflare `content` field equals that value. Without this filter an
+        // rrset with several values would have its first entry deleted at
+        // random rather than the requested one.
+        let expected_content = expected_cloudflare_content(record_type, type_params);
+        let matched = records
+            .iter()
+            .find(|r| match expected_content {
+                Some(expected) => {
+                    r.get("content").and_then(|c| c.as_str()) == Some(expected)
+                }
+                None => true,
+            })
             .ok_or_else(|| Error::Api {
-                message: format!("no {record_type} record found for '{fqdn}'"),
-            })?
+                message: match expected_content {
+                    Some(value) => {
+                        format!("no {record_type} record '{fqdn}' with value '{value}' found")
+                    }
+                    None => format!("no {record_type} record found for '{fqdn}'"),
+                },
+            })?;
+
+        let record_id = matched
+            .get("id")
+            .and_then(|id| id.as_str())
+            .ok_or_else(|| Error::parse("Cloudflare dns_records entry missing id"))?
             .to_owned();
 
         self.delete(&format!("/zones/{zone_id}/dns_records/{record_id}"))
             .await
     }
+}
+
+/// Returns the value Cloudflare stores in the `content` field for the given
+/// record type, looked up from the canonical `type_params` API payload.
+/// Returns `None` for record types whose value lives in a structured `data`
+/// object (MX, SRV, CAA, …) — those fall back to first-match behaviour.
+fn expected_cloudflare_content<'a>(
+    record_type: &str,
+    type_params: &'a [(&'a str, String)],
+) -> Option<&'a str> {
+    let key = match record_type {
+        "A" | "AAAA" => "ipAddress",
+        "CNAME" => "cname",
+        "NS" => "nameserver",
+        "TXT" => "text",
+        "PTR" => "name",
+        "DNAME" => "dname",
+        _ => return None,
+    };
+    type_params
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| v.as_str())
 }
 
 // ─── Unsupported operations ───────────────────────────────────────────────────
@@ -872,5 +915,33 @@ mod tests {
         assert_eq!(body["data"]["priority"], 10);
         assert_eq!(body["data"]["weight"], 1);
         assert_eq!(body["data"]["content"], "https://example.com");
+    }
+
+    #[test]
+    fn expected_content_extracts_value_for_simple_types() {
+        let params = vec![("type", "A".to_string()), ("ipAddress", "1.2.3.4".to_string())];
+        assert_eq!(expected_cloudflare_content("A", &params), Some("1.2.3.4"));
+
+        let params = vec![("type", "CNAME".to_string()), ("cname", "x.example.com".to_string())];
+        assert_eq!(
+            expected_cloudflare_content("CNAME", &params),
+            Some("x.example.com")
+        );
+
+        let params = vec![("type", "TXT".to_string()), ("text", "v=spf1".to_string())];
+        assert_eq!(expected_cloudflare_content("TXT", &params), Some("v=spf1"));
+    }
+
+    #[test]
+    fn expected_content_returns_none_for_structured_types() {
+        let params = vec![
+            ("type", "MX".to_string()),
+            ("preference", "10".to_string()),
+            ("exchange", "mail.example.com".to_string()),
+        ];
+        assert_eq!(expected_cloudflare_content("MX", &params), None);
+
+        let params = vec![("type", "SRV".to_string())];
+        assert_eq!(expected_cloudflare_content("SRV", &params), None);
     }
 }
