@@ -1,4 +1,4 @@
-## New Vendor: `<VendorName>`
+# New Vendor: `<VendorName>`
 
 > Replace `<VendorName>` with the name of the vendor being added (e.g. `Cloudflare`, `Route53`).
 
@@ -34,10 +34,8 @@ Complete every item before requesting review. Check the box once it is done, or 
 ### 2. `VendorKind` entry (`control_plane/config.rs`)
 
 - [ ] New variant added to `VendorKind` enum
-- [ ] Enum still derives `Debug`, `Clone`, `Copy`, `Default`*, `PartialEq`, `Eq`, `Serialize`, `Deserialize`, `clap::ValueEnum`
+- [ ] Enum still derives `Debug`, `Clone`, `Copy`, `Default` *(only if this vendor becomes the new default — otherwise leave the existing default unchanged)*, `PartialEq`, `Eq`, `Serialize`, `Deserialize`, `clap::ValueEnum`
 - [ ] `serde(rename_all = "lowercase")` remains on the enum
-
-*`Default` is only required if this vendor becomes the new default — otherwise leave the existing default unchanged.
 
 ### 3. Vendor defaults (`control_plane/config.rs`)
 
@@ -111,6 +109,7 @@ Follow the same tracing patterns as existing vendors (see `src/vendors/technitiu
 
 - [ ] `VendorClient` enum has a new feature-gated variant for this vendor
 - [ ] Dispatch branch added in `VendorClient::from_selected_server()`
+- [ ] Dispatch branch added in `VendorClient::from_server()`
 - [ ] `client_from_server()` constructor helper added in `src/vendors/<vendor>/mod.rs`
 - [ ] All `#[cfg(any(feature = "technitium", feature = "pangolin", ...))]` guards updated to include the new feature
 - [ ] `compile_error!` guard in `vendors/runtime.rs` updated
