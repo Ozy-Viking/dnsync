@@ -37,6 +37,88 @@ pub enum ServerLocation {
     External,
 }
 
+/// Transport used to query a validation endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum ValidationTransport {
+    Dns,
+    Doh,
+    Dot,
+}
+
+/// DNS endpoint used to validate imported or listed records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationEndpointConfig {
+    pub name: String,
+
+    pub transport: ValidationTransport,
+
+    #[serde(default)]
+    pub address: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_server_name: Option<String>,
+
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+impl std::str::FromStr for ValidationEndpointConfig {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let mut parts = value.splitn(3, ':');
+        let name = parts
+            .next()
+            .filter(|part| !part.trim().is_empty())
+            .ok_or_else(|| "validation endpoint must use name:transport:address".to_string())?;
+        let transport = match parts.next().map(str::to_ascii_lowercase).as_deref() {
+            Some("dns") => ValidationTransport::Dns,
+            Some("doh") => ValidationTransport::Doh,
+            Some("dot") => ValidationTransport::Dot,
+            Some(other) => {
+                return Err(format!(
+                    "unsupported validation endpoint transport '{other}'; expected dns, doh, or dot"
+                ));
+            }
+            None => return Err("validation endpoint must use name:transport:address".to_string()),
+        };
+        let target = parts
+            .next()
+            .filter(|part| !part.trim().is_empty())
+            .ok_or_else(|| "validation endpoint must use name:transport:address".to_string())?;
+
+        Ok(ValidationEndpointConfig {
+            name: name.to_string(),
+            transport,
+            address: if matches!(transport, ValidationTransport::Doh) {
+                String::new()
+            } else {
+                target.to_string()
+            },
+            port: None,
+            url: if matches!(transport, ValidationTransport::Doh) {
+                Some(target.to_string())
+            } else {
+                None
+            },
+            tls_server_name: None,
+            enabled: true,
+            timeout_ms: None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -70,6 +152,9 @@ pub struct DnsServerConfig {
 
     #[serde(default, skip_serializing_if = "McpPermissions::is_default")]
     pub mcp: McpPermissions,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validation_endpoints: Vec<ValidationEndpointConfig>,
 }
 
 /// Intermediate struct used only for TOML deserialization.
@@ -97,6 +182,8 @@ struct DnsServerConfigRaw {
     org_id: Option<String>,
     #[serde(default)]
     mcp: McpPermissions,
+    #[serde(default)]
+    validation_endpoints: Vec<ValidationEndpointConfig>,
     // Flat shorthands — merged into `mcp` on conversion.
     /// Flat shorthand: `mcp_access = ["read", "write", "delete"]`.
     #[serde(default)]
@@ -121,10 +208,16 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
         let config_set: HashSet<PolicyRule> = raw.mcp.access.iter().cloned().collect();
         let access = if let Some(flat) = raw.mcp_access {
             let flat_set: HashSet<PolicyRule> = flat.into_iter().collect();
-            flat_set.intersection(&config_set).cloned().collect::<Vec<_>>()
+            flat_set
+                .intersection(&config_set)
+                .cloned()
+                .collect::<Vec<_>>()
         } else if raw.mcp_readonly {
             let flat_set: HashSet<PolicyRule> = [PolicyRule::Read].into_iter().collect();
-            flat_set.intersection(&config_set).cloned().collect::<Vec<_>>()
+            flat_set
+                .intersection(&config_set)
+                .cloned()
+                .collect::<Vec<_>>()
         } else {
             raw.mcp.access
         };
@@ -142,8 +235,13 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
                 access,
                 allowed_zones: zones,
             },
+            validation_endpoints: raw.validation_endpoints,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_access() -> Vec<PolicyRule> {
@@ -193,6 +291,7 @@ impl AppConfig {
                 token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
                 org_id: None,
                 mcp: McpPermissions::default(),
+                validation_endpoints: Vec::new(),
             }],
         }
     }
@@ -285,10 +384,47 @@ impl AppConfig {
                     server.id
                 )));
             }
+            validate_validation_endpoints(server)?;
         }
 
         Ok(())
     }
+}
+
+fn validate_validation_endpoints(server: &DnsServerConfig) -> Result<()> {
+    for endpoint in &server.validation_endpoints {
+        if endpoint.name.trim().is_empty() {
+            return Err(Error::config(format!(
+                "DNS server '{}' contains a validation endpoint with an empty name",
+                server.id
+            )));
+        }
+
+        match endpoint.transport {
+            ValidationTransport::Dns | ValidationTransport::Dot
+                if endpoint.address.trim().is_empty() =>
+            {
+                return Err(Error::config(format!(
+                    "validation endpoint '{}' on DNS server '{}' requires address for {:?} transport",
+                    endpoint.name, server.id, endpoint.transport
+                )));
+            }
+            ValidationTransport::Doh
+                if endpoint
+                    .url
+                    .as_deref()
+                    .is_none_or(|url| url.trim().is_empty()) =>
+            {
+                return Err(Error::config(format!(
+                    "validation endpoint '{}' on DNS server '{}' requires url for doh transport",
+                    endpoint.name, server.id
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
 }
 
 pub fn init_config(path: Option<PathBuf>, force: bool) -> Result<PathBuf> {
@@ -397,6 +533,37 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         zones.push(zone.as_str());
     }
     tbl["mcp_allowed_zones"] = value(zones);
+
+    if !server.validation_endpoints.is_empty() {
+        let mut endpoints = ArrayOfTables::new();
+        for endpoint in &server.validation_endpoints {
+            let mut endpoint_tbl = Table::new();
+            endpoint_tbl["name"] = value(endpoint.name.as_str());
+            endpoint_tbl["transport"] = value(match endpoint.transport {
+                ValidationTransport::Dns => "dns",
+                ValidationTransport::Doh => "doh",
+                ValidationTransport::Dot => "dot",
+            });
+            if !endpoint.address.is_empty() {
+                endpoint_tbl["address"] = value(endpoint.address.as_str());
+            }
+            if let Some(port) = endpoint.port {
+                endpoint_tbl["port"] = value(i64::from(port));
+            }
+            if let Some(ref url) = endpoint.url {
+                endpoint_tbl["url"] = value(url.as_str());
+            }
+            if let Some(ref tls_server_name) = endpoint.tls_server_name {
+                endpoint_tbl["tls_server_name"] = value(tls_server_name.as_str());
+            }
+            endpoint_tbl["enabled"] = value(endpoint.enabled);
+            if let Some(timeout_ms) = endpoint.timeout_ms {
+                endpoint_tbl["timeout_ms"] = value(timeout_ms as i64);
+            }
+            endpoints.push(endpoint_tbl);
+        }
+        tbl["validation_endpoints"] = Item::ArrayOfTables(endpoints);
+    }
 
     match doc.entry("servers") {
         toml_edit::Entry::Occupied(mut e) => {
@@ -786,7 +953,10 @@ mod tests {
         assert!(server.token.is_none());
         {
             use std::collections::HashSet;
-            let full: HashSet<PolicyRule> = [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete].into_iter().collect();
+            let full: HashSet<PolicyRule> =
+                [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete]
+                    .into_iter()
+                    .collect();
             let actual: HashSet<PolicyRule> = server.mcp.access.iter().cloned().collect();
             assert_eq!(actual, full);
         }
@@ -900,6 +1070,7 @@ mod tests {
             token_env: None,
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
 
         assert_eq!(server.resolved_base_url(None), TECHNITIUM_DEFAULT_BASE_URL);
@@ -917,6 +1088,7 @@ mod tests {
             token_env: None,
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
 
         assert_eq!(server.resolved_base_url(None), PANGOLIN_DEFAULT_BASE_URL);
@@ -981,7 +1153,10 @@ mod tests {
         assert!(server.token.is_none());
         {
             use std::collections::HashSet;
-            let full: HashSet<PolicyRule> = [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete].into_iter().collect();
+            let full: HashSet<PolicyRule> =
+                [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete]
+                    .into_iter()
+                    .collect();
             let actual: HashSet<PolicyRule> = server.mcp.access.iter().cloned().collect();
             assert_eq!(actual, full);
         }
@@ -1061,6 +1236,119 @@ mod tests {
     }
 
     #[test]
+    fn config_validation_endpoint_roundtrip() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "home"
+                token_env = "MY_TOKEN_VAR"
+
+                [[servers.validation_endpoints]]
+                name = "router"
+                transport = "dns"
+                address = "192.168.1.1"
+                port = 53
+                enabled = true
+                timeout_ms = 1500
+
+                [[servers.validation_endpoints]]
+                name = "cloudflare-doh"
+                transport = "doh"
+                url = "https://cloudflare-dns.com/dns-query"
+                enabled = true
+
+                [[servers.validation_endpoints]]
+                name = "quad9-dot"
+                transport = "dot"
+                address = "9.9.9.9"
+                port = 853
+                tls_server_name = "dns.quad9.net"
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let rendered = cfg.render_toml().unwrap();
+        let reparsed: AppConfig = toml::from_str(&rendered).unwrap();
+        let endpoints = &reparsed.selected_server(None).unwrap().validation_endpoints;
+
+        assert_eq!(endpoints.len(), 3);
+        assert_eq!(endpoints[0].name, "router");
+        assert_eq!(endpoints[0].transport, ValidationTransport::Dns);
+        assert_eq!(
+            endpoints[1].url.as_deref(),
+            Some("https://cloudflare-dns.com/dns-query")
+        );
+        assert_eq!(
+            endpoints[2].tls_server_name.as_deref(),
+            Some("dns.quad9.net")
+        );
+        assert!(rendered.contains("[[servers.validation_endpoints]]"));
+    }
+
+    #[test]
+    fn config_rejects_invalid_validation_endpoint() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "home"
+                token_env = "MY_TOKEN_VAR"
+
+                [[servers.validation_endpoints]]
+                name = ""
+                transport = "dns"
+                address = "192.168.1.1"
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("empty name"));
+
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "home"
+                token_env = "MY_TOKEN_VAR"
+
+                [[servers.validation_endpoints]]
+                name = "missing-url"
+                transport = "doh"
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("requires url"));
+    }
+
+    #[test]
+    fn config_print_redacts_tokens_but_keeps_validation_endpoints() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "home"
+                token = "secret"
+
+                [[servers.validation_endpoints]]
+                name = "router"
+                transport = "dns"
+                address = "192.168.1.1"
+            "#,
+        )
+        .unwrap();
+
+        let redacted = cfg.redact();
+        let server = redacted.selected_server(None).unwrap();
+
+        assert_eq!(server.token.as_deref(), Some("[redacted]"));
+        assert_eq!(
+            server.validation_endpoints,
+            cfg.servers[0].validation_endpoints
+        );
+    }
+
+    #[test]
     fn load_if_exists_returns_none_when_no_file() {
         let path = temp_config_path("load-if-exists-missing");
         assert!(!path.exists());
@@ -1096,6 +1384,7 @@ mod tests {
             token_env: Some("MY_API_TOKEN".to_string()),
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
 
         let written = add_server(Some(path.clone()), server).unwrap();
@@ -1124,6 +1413,7 @@ mod tests {
             token_env: Some("LAB_TOKEN".to_string()),
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
 
         add_server(Some(path.clone()), server).unwrap();
@@ -1164,6 +1454,7 @@ mod tests {
             token_env: Some("LAB_TOKEN".to_string()),
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
         add_server(Some(path.clone()), server).unwrap();
 
@@ -1199,6 +1490,7 @@ mod tests {
             token_env: None,
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
 
         let err = add_server(Some(path.clone()), server).unwrap_err();
@@ -1239,6 +1531,7 @@ mod tests {
             token_env: None,
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         }
     }
 
@@ -1310,6 +1603,7 @@ mod tests {
             token_env: None,
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
         assert_eq!(server.resolved_location().await, ServerLocation::Local);
     }
@@ -1326,6 +1620,7 @@ mod tests {
             token_env: None,
             org_id: None,
             mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
         };
         assert_eq!(server.resolved_location().await, ServerLocation::External);
     }

@@ -58,6 +58,11 @@ async fn run(cli: Cli) -> i32 {
         }
         return 0;
     }
+    fn test() -> u8 {
+        println!("hello");
+        8
+    }
+    test();
 
     if let Command::Config(config_cmd) = cli.command {
         return match config_cmd {
@@ -95,6 +100,7 @@ async fn run(cli: Cli) -> i32 {
                 org_id,
                 access,
                 allow_zone,
+                validation_endpoints,
             } => {
                 let server = if id.is_none() {
                     let existing_ids: Vec<String> =
@@ -128,6 +134,7 @@ async fn run(cli: Cli) -> i32 {
                             access,
                             allowed_zones: allow_zone,
                         },
+                        validation_endpoints,
                     }
                 };
                 match config::add_server(cli.config, server) {
@@ -480,6 +487,6 @@ mod tests {
     }
     // #[tokio::test]
     // async fn failing_test() {
-    //     assert_eq!(1, 3)
+    //     assert_eq!(1, 3, "hi uh")
     // }
 }

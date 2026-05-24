@@ -6,4 +6,5 @@ pub mod responses;
 pub mod service;
 pub mod settings;
 pub mod stats;
+pub mod validation;
 pub mod zones;

@@ -158,6 +158,10 @@ pub enum ConfigCmd {
         /// Restrict MCP zone-targeting tools to this zone (repeatable)
         #[arg(long, value_name = "ZONE")]
         allow_zone: Vec<String>,
+
+        /// Validation endpoint in name:transport:address format (repeatable; transport: dns, doh, dot)
+        #[arg(long = "validation-endpoint", value_name = "NAME:TRANSPORT:ADDRESS")]
+        validation_endpoints: Vec<crate::control_plane::config::ValidationEndpointConfig>,
     },
 }
 

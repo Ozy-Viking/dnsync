@@ -73,6 +73,25 @@ vendor = "technitium"
 base_url = "http://192.168.1.10:5380"   # or use base_url_env to read from an env var
 token_env = "DNSYNC_HOME_API_TOKEN"
 
+[[servers.validation_endpoints]]
+name = "home-router"
+transport = "dns"
+address = "192.168.1.1"
+port = 53
+
+[[servers.validation_endpoints]]
+name = "cloudflare-doh"
+transport = "doh"
+url = "https://cloudflare-dns.com/dns-query"
+timeout_ms = 2000
+
+[[servers.validation_endpoints]]
+name = "quad9-dot"
+transport = "dot"
+address = "9.9.9.9"
+port = 853
+tls_server_name = "dns.quad9.net"
+
 [servers.mcp]
 access = "read"
 allowed_zones = ["example.com", "internal.lan"]
@@ -103,6 +122,13 @@ Vendor defaults when no `base_url` is set:
 - `technitium` → `http://localhost:5380`
 - `pangolin` → `https://api.pangolin.net/v1`
 - `cloudflare` → `https://api.cloudflare.com/client/v4`
+
+Validation endpoints are optional per-server DNS resolvers used by endpoint
+validation. Configure them with `[[servers.validation_endpoints]]`. Supported
+transports are `dns`, `doh`, and `dot`; DNS/DoT endpoints require `address`,
+while DoH endpoints require `url`. If no validation endpoints are configured,
+validation remains enabled but is skipped with reason
+`no_validation_endpoints_configured`.
 
 MCP permissions are applied per selected server. `access` controls the maximum
 permitted operation level (`read` = read-only, `write` = no deletes, `delete` =

@@ -1,9 +1,9 @@
-use inquire::{InquireError, MultiSelect, Select, Text};
 use inquire::validator::Validation;
+use inquire::{InquireError, MultiSelect, Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
-    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, VendorKind,
+    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, ValidationEndpointConfig, VendorKind,
 };
 use crate::control_plane::policy::PolicyRule;
 
@@ -104,9 +104,18 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
 
     let access: Vec<PolicyRule> = {
         let choices = vec![
-            AccessChoice { rule: PolicyRule::Read,   label: "read   (list/export/stats/settings)" },
-            AccessChoice { rule: PolicyRule::Write,  label: "write  (create/update/import/flush)" },
-            AccessChoice { rule: PolicyRule::Delete, label: "delete (delete zones/records/cache)" },
+            AccessChoice {
+                rule: PolicyRule::Read,
+                label: "read   (list/export/stats/settings)",
+            },
+            AccessChoice {
+                rule: PolicyRule::Write,
+                label: "write  (create/update/import/flush)",
+            },
+            AccessChoice {
+                rule: PolicyRule::Delete,
+                label: "delete (delete zones/records/cache)",
+            },
         ];
         let defaults: Vec<usize> = (0..choices.len()).collect();
         let chosen = MultiSelect::new("MCP allowed operations:", choices)
@@ -127,10 +136,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
                 allowed_zones.join(", ")
             )
         };
-        let zone = match Text::new("Allowed zone:")
-            .with_help_message(&help)
-            .prompt()
-        {
+        let zone = match Text::new("Allowed zone:").with_help_message(&help).prompt() {
             Ok(z) => z,
             Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
                 return Err(miette::miette!("cancelled"));
@@ -141,6 +147,36 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
             break;
         }
         allowed_zones.push(zone);
+    }
+
+    let mut validation_endpoints: Vec<ValidationEndpointConfig> = Vec::new();
+    loop {
+        let help = if validation_endpoints.is_empty() {
+            "Optional DNS validation endpoints as name:transport:address (transport: dns, doh, dot). Leave empty to skip.".to_string()
+        } else {
+            format!(
+                "Added: {} — enter another, or leave empty to finish",
+                validation_endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let endpoint = match Text::new("Validation endpoint:")
+            .with_help_message(&help)
+            .prompt()
+        {
+            Ok(endpoint) => endpoint,
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                return Err(miette::miette!("cancelled"));
+            }
+            Err(e) => return Err(wizard_err(e)),
+        };
+        if endpoint.is_empty() {
+            break;
+        }
+        validation_endpoints.push(endpoint.parse().map_err(miette::Error::msg)?);
     }
 
     Ok(DnsServerConfig {
@@ -156,6 +192,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
             access,
             allowed_zones,
         },
+        validation_endpoints,
     })
 }
 
