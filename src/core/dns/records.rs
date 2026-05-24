@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use clap::Subcommand;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -260,44 +261,49 @@ impl FwdProtocol {
 ///
 /// Note: DNSKEY is intentionally absent — Technitium manages DNSKEY records
 /// automatically via its DNSSEC key management API, not via record add/delete.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Subcommand)]
 #[serde(tag = "type", rename_all = "UPPERCASE")]
+#[command(rename_all = "lower")]
 pub enum RecordData {
-    /// IPv4 address record
+    /// IPv4 address  e.g. `a 1.2.3.4`
     A {
         #[serde(rename = "ipAddress")]
         ip: Ipv4Addr,
     },
-    /// IPv6 address record
+    /// IPv6 address  e.g. `aaaa 2001:db8::1`
     Aaaa {
         #[serde(rename = "ipAddress")]
         ip: Ipv6Addr,
     },
-    /// Apex alias — like CNAME but valid at zone root (Technitium-specific)
+    /// Apex alias (Technitium-specific)  e.g. `aname target.example.net`
     Aname { aname: String },
-    /// DNS App record — routes queries to an installed Technitium DNS App
+    /// DNS App record  e.g. `app "Split Horizon" "SplitHorizon.SimpleAddress" '{}'`
     App {
         #[serde(rename = "appName")]
         app_name: String,
         #[serde(rename = "classPath")]
         class_path: String,
+        /// JSON data string passed to the app
         #[serde(rename = "recordData")]
         record_data: String,
     },
-    /// Certification Authority Authorization
+    /// CA Authorization  e.g. `caa letsencrypt.org --tag issue`
     Caa {
-        flags: u8,
-        tag: String,
         value: String,
+        #[arg(long, default_value_t = 0)]
+        flags: u8,
+        /// issue, issuewild, or iodef
+        #[arg(long, default_value = "issue")]
+        tag: String,
     },
-    /// Canonical name alias
+    /// Canonical name alias  e.g. `cname www.example.com`
     Cname {
         #[serde(rename = "cname")]
         target: String,
     },
-    /// Subtree delegation redirect
+    /// Subtree redirect  e.g. `dname target.example.com`
     Dname { dname: String },
-    /// DNSSEC Delegation Signer
+    /// DNSSEC delegation signer  e.g. `ds 12345 RSASHA256 SHA256 abcdef...`
     Ds {
         #[serde(rename = "keyTag")]
         key_tag: u16,
@@ -306,61 +312,75 @@ pub enum RecordData {
         digest_type: DigestType,
         digest: String,
     },
-    /// Conditional forwarder (Technitium-specific)
+    /// Conditional forwarder (Technitium-specific)  e.g. `fwd 1.1.1.1 --protocol Udp`
     Fwd {
         forwarder: String,
+        #[arg(long, default_value = "Udp")]
         protocol: FwdProtocol,
         #[serde(rename = "forwarderPriority", default = "default_fwd_priority")]
+        #[arg(long, default_value_t = 10)]
         priority: u16,
         #[serde(rename = "dnssecValidation", default)]
+        #[arg(long, default_value_t = false)]
         dnssec_validation: bool,
     },
-    /// HTTPS service binding (optimised SVCB for HTTPS)
+    /// HTTPS service binding  e.g. `https --svc-priority 1 svc.example.com`
     Https {
-        #[serde(rename = "svcPriority")]
-        svc_priority: u16,
         #[serde(rename = "svcTargetName")]
         svc_target_name: String,
+        #[serde(rename = "svcPriority")]
+        #[arg(long, default_value_t = 1)]
+        svc_priority: u16,
         #[serde(rename = "svcParams")]
+        #[arg(long)]
         svc_params: Option<String>,
         #[serde(rename = "autoIpv4Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv4_hint: bool,
         #[serde(rename = "autoIpv6Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv6_hint: bool,
     },
-    /// Mail exchange
+    /// Mail exchange  e.g. `mx mail.example.com --preference 10`
     Mx {
-        #[serde(default = "default_mx_preference")]
-        preference: u16,
         exchange: String,
+        #[serde(default = "default_mx_preference")]
+        #[arg(long, default_value_t = 10)]
+        preference: u16,
     },
-    /// Naming Authority Pointer
+    /// Naming authority pointer  e.g. `naptr --order 10 --preference 20 ...`
     Naptr {
         #[serde(rename = "naptrOrder")]
+        #[arg(long)]
         order: u16,
         #[serde(rename = "naptrPreference")]
+        #[arg(long)]
         preference: u16,
         #[serde(rename = "naptrFlags")]
+        #[arg(long, default_value = "")]
         flags: String,
         #[serde(rename = "naptrServices")]
+        #[arg(long, default_value = "")]
         services: String,
         #[serde(rename = "naptrRegexp")]
+        #[arg(long, default_value = "")]
         regexp: String,
         #[serde(rename = "naptrReplacement")]
         replacement: String,
     },
-    /// Name server delegation
+    /// Name server  e.g. `ns ns1.example.com` or `ns ns1.example.com --glue 1.2.3.4`
     Ns {
         #[serde(rename = "nameServer")]
         nameserver: String,
+        #[arg(long)]
         glue: Option<String>,
     },
-    /// Reverse DNS pointer
+    /// Reverse DNS pointer  e.g. `ptr host.example.com`
     Ptr {
         #[serde(rename = "ptrName")]
         name: String,
     },
-    /// SSH public key fingerprint
+    /// SSH fingerprint  e.g. `sshfp RSA SHA256 abcdef...`
     Sshfp {
         #[serde(rename = "sshfpAlgorithm")]
         algorithm: SshfpAlgorithm,
@@ -369,27 +389,34 @@ pub enum RecordData {
         #[serde(rename = "sshfpFingerprint")]
         fingerprint: String,
     },
-    /// Service locator
+    /// Service locator  e.g. `srv sip.example.com --port 5060 --priority 10 --weight 20`
     Srv {
-        priority: u16,
-        weight: u16,
-        port: u16,
         target: String,
+        #[arg(long)]
+        port: u16,
+        #[arg(long, default_value_t = 0)]
+        priority: u16,
+        #[arg(long, default_value_t = 0)]
+        weight: u16,
     },
-    /// Service binding (generic)
+    /// Service binding (generic)  e.g. `svcb --svc-priority 1 svc.example.com`
     Svcb {
-        #[serde(rename = "svcPriority")]
-        svc_priority: u16,
         #[serde(rename = "svcTargetName")]
         svc_target_name: String,
+        #[serde(rename = "svcPriority")]
+        #[arg(long, default_value_t = 1)]
+        svc_priority: u16,
         #[serde(rename = "svcParams")]
+        #[arg(long)]
         svc_params: Option<String>,
         #[serde(rename = "autoIpv4Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv4_hint: bool,
         #[serde(rename = "autoIpv6Hint", default)]
+        #[arg(long, default_value_t = false)]
         auto_ipv6_hint: bool,
     },
-    /// DANE TLS authentication
+    /// DANE TLS authentication  e.g. `tlsa DANE-EE SPKI SHA2-256 abcdef...`
     Tlsa {
         #[serde(rename = "tlsaCertificateUsage")]
         cert_usage: TlsaCertUsage,
@@ -400,21 +427,24 @@ pub enum RecordData {
         #[serde(rename = "tlsaCertificateAssociationData")]
         cert_association_data: String,
     },
-    /// Text record
+    /// Text record  e.g. `txt "v=spf1 ~all"` or `txt "long..." --split-text`
     Txt {
         text: String,
         #[serde(rename = "splitText", default)]
+        #[arg(long, default_value_t = false)]
         split_text: bool,
     },
-    /// URI record
+    /// URI record  e.g. `uri https://example.com --priority 10 --weight 1`
     Uri {
+        uri: String,
         #[serde(rename = "uriPriority")]
+        #[arg(long, default_value_t = 10)]
         priority: u16,
         #[serde(rename = "uriWeight")]
+        #[arg(long, default_value_t = 1)]
         weight: u16,
-        uri: String,
     },
-    /// Raw/unknown type — rdata as colon-separated hex string
+    /// Raw/unknown type — rdata as colon-separated hex string  e.g. `unknown 0a0b0c...`
     Unknown { rdata: String },
 }
 
@@ -595,6 +625,263 @@ impl RecordData {
                 p.push(("uri", uri.clone()));
             }
             Self::Unknown { rdata } => p.push(("rdata", rdata.clone())),
+        }
+        p
+    }
+}
+
+/// Identifies one or more records for deletion. Similar to [`RecordData`] but
+/// intentionally not identical — every value field is optional, and some variants
+/// omit fields that are only meaningful at creation time (e.g. `Caa`, `Ds`,
+/// `App`, `Https`). A missing field broadens the selector (e.g. `A { ip: None }`
+/// matches every A record at the domain); compare [`RecordData`] to understand
+/// which fields each variant actually exposes.
+///
+/// Derives both `Subcommand` (for clap-driven CLI parsing) and `Deserialize` +
+/// `JsonSchema` (for MCP tool params), so the CLI and MCP share one type.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Subcommand)]
+#[serde(tag = "type", rename_all = "UPPERCASE")]
+#[command(rename_all = "lower")]
+pub enum RecordSelector {
+    /// e.g. `a` (all A records) or `a 1.2.3.4` (specific)
+    A {
+        #[serde(rename = "ipAddress")]
+        ip: Option<Ipv4Addr>,
+    },
+    /// e.g. `aaaa` or `aaaa 2001:db8::1`
+    Aaaa {
+        #[serde(rename = "ipAddress")]
+        ip: Option<Ipv6Addr>,
+    },
+    Aname {
+        aname: Option<String>,
+    },
+    App {
+        #[serde(rename = "appName")]
+        app_name: Option<String>,
+        #[serde(rename = "classPath")]
+        class_path: Option<String>,
+    },
+    Caa {
+        value: Option<String>,
+    },
+    Cname {
+        #[serde(rename = "cname")]
+        target: Option<String>,
+    },
+    Dname {
+        dname: Option<String>,
+    },
+    Ds {
+        #[serde(rename = "keyTag")]
+        key_tag: Option<u16>,
+    },
+    Fwd {
+        forwarder: Option<String>,
+    },
+    Https {
+        #[serde(rename = "svcTargetName")]
+        svc_target_name: Option<String>,
+    },
+    Mx {
+        exchange: Option<String>,
+    },
+    Naptr {
+        #[serde(rename = "naptrReplacement")]
+        replacement: Option<String>,
+    },
+    Ns {
+        #[serde(rename = "nameServer")]
+        nameserver: Option<String>,
+    },
+    Ptr {
+        #[serde(rename = "ptrName")]
+        name: Option<String>,
+    },
+    Sshfp {
+        #[serde(rename = "sshfpFingerprint")]
+        fingerprint: Option<String>,
+    },
+    Srv {
+        target: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        priority: Option<u16>,
+        #[arg(long)]
+        weight: Option<u16>,
+    },
+    Svcb {
+        #[serde(rename = "svcTargetName")]
+        svc_target_name: Option<String>,
+    },
+    Tlsa {
+        #[serde(rename = "tlsaCertificateAssociationData")]
+        cert_association_data: Option<String>,
+    },
+    Txt {
+        text: Option<String>,
+    },
+    Uri {
+        uri: Option<String>,
+    },
+    Unknown {
+        rdata: Option<String>,
+    },
+}
+
+impl RecordSelector {
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::A { .. } => "A",
+            Self::Aaaa { .. } => "AAAA",
+            Self::Aname { .. } => "ANAME",
+            Self::App { .. } => "APP",
+            Self::Caa { .. } => "CAA",
+            Self::Cname { .. } => "CNAME",
+            Self::Dname { .. } => "DNAME",
+            Self::Ds { .. } => "DS",
+            Self::Fwd { .. } => "FWD",
+            Self::Https { .. } => "HTTPS",
+            Self::Mx { .. } => "MX",
+            Self::Naptr { .. } => "NAPTR",
+            Self::Ns { .. } => "NS",
+            Self::Ptr { .. } => "PTR",
+            Self::Sshfp { .. } => "SSHFP",
+            Self::Srv { .. } => "SRV",
+            Self::Svcb { .. } => "SVCB",
+            Self::Tlsa { .. } => "TLSA",
+            Self::Txt { .. } => "TXT",
+            Self::Uri { .. } => "URI",
+            Self::Unknown { .. } => "UNKNOWN",
+        }
+    }
+
+    pub fn to_api_params(&self) -> Vec<(&'static str, String)> {
+        let mut p = vec![("type", self.type_name().into())];
+        match self {
+            Self::A { ip } => {
+                if let Some(v) = ip {
+                    p.push(("ipAddress", v.to_string()));
+                }
+            }
+            Self::Aaaa { ip } => {
+                if let Some(v) = ip {
+                    p.push(("ipAddress", v.to_string()));
+                }
+            }
+            Self::Aname { aname } => {
+                if let Some(v) = aname {
+                    p.push(("aname", v.clone()));
+                }
+            }
+            Self::App {
+                app_name,
+                class_path,
+            } => {
+                if let Some(v) = app_name {
+                    p.push(("appName", v.clone()));
+                }
+                if let Some(v) = class_path {
+                    p.push(("classPath", v.clone()));
+                }
+            }
+            Self::Caa { value } => {
+                if let Some(v) = value {
+                    p.push(("value", v.clone()));
+                }
+            }
+            Self::Cname { target } => {
+                if let Some(v) = target {
+                    p.push(("cname", v.clone()));
+                }
+            }
+            Self::Dname { dname } => {
+                if let Some(v) = dname {
+                    p.push(("dname", v.clone()));
+                }
+            }
+            Self::Ds { key_tag } => {
+                if let Some(v) = key_tag {
+                    p.push(("keyTag", v.to_string()));
+                }
+            }
+            Self::Fwd { forwarder } => {
+                if let Some(v) = forwarder {
+                    p.push(("forwarder", v.clone()));
+                }
+            }
+            Self::Https { svc_target_name } | Self::Svcb { svc_target_name } => {
+                if let Some(v) = svc_target_name {
+                    p.push(("svcTargetName", v.clone()));
+                }
+            }
+            Self::Mx { exchange } => {
+                if let Some(v) = exchange {
+                    p.push(("exchange", v.clone()));
+                }
+            }
+            Self::Naptr { replacement } => {
+                if let Some(v) = replacement {
+                    p.push(("naptrReplacement", v.clone()));
+                }
+            }
+            Self::Ns { nameserver } => {
+                if let Some(v) = nameserver {
+                    p.push(("nameServer", v.clone()));
+                }
+            }
+            Self::Ptr { name } => {
+                if let Some(v) = name {
+                    p.push(("ptrName", v.clone()));
+                }
+            }
+            Self::Sshfp { fingerprint } => {
+                if let Some(v) = fingerprint {
+                    p.push(("sshfpFingerprint", v.clone()));
+                }
+            }
+            Self::Srv {
+                target,
+                port,
+                priority,
+                weight,
+            } => {
+                if let Some(v) = target {
+                    p.push(("target", v.clone()));
+                }
+                if let Some(v) = port {
+                    p.push(("port", v.to_string()));
+                }
+                if let Some(v) = priority {
+                    p.push(("priority", v.to_string()));
+                }
+                if let Some(v) = weight {
+                    p.push(("weight", v.to_string()));
+                }
+            }
+            Self::Tlsa {
+                cert_association_data,
+            } => {
+                if let Some(v) = cert_association_data {
+                    p.push(("tlsaCertificateAssociationData", v.clone()));
+                }
+            }
+            Self::Txt { text } => {
+                if let Some(v) = text {
+                    p.push(("text", v.clone()));
+                }
+            }
+            Self::Uri { uri } => {
+                if let Some(v) = uri {
+                    p.push(("uri", v.clone()));
+                }
+            }
+            Self::Unknown { rdata } => {
+                if let Some(v) = rdata {
+                    p.push(("rdata", v.clone()));
+                }
+            }
         }
         p
     }

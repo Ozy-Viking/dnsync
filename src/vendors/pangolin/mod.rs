@@ -75,7 +75,7 @@ mod tests {
 
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
-        assert_eq!(client.base_url, app_config::PANGOLIN_DEFAULT_BASE_URL);
+        assert_eq!(client.base_url(), app_config::PANGOLIN_DEFAULT_BASE_URL);
         assert_eq!(client.org_id, "org_123");
     }
 
@@ -101,7 +101,7 @@ mod tests {
 
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
-        assert_eq!(client.base_url, "https://pangolin.example/v1");
+        assert_eq!(client.base_url(), "https://pangolin.example/v1");
         assert_eq!(client.org_id, "env-org");
 
         // SAFETY: this test serializes access to these process-wide env vars.

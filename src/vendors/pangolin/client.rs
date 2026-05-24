@@ -1,8 +1,9 @@
-use reqwest::{Client, Response};
+use reqwest::Response;
 use serde_json::Value;
 
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
+use crate::vendors::http::HttpClient;
 
 /// Pangolin API client.
 ///
@@ -10,46 +11,27 @@ use crate::core::secret::ApiToken;
 /// `{"data": {...}, "success": true, "error": false, "message": "...", "status": 200}`
 #[derive(Clone, Debug)]
 pub struct PangolinClient {
-    pub http: Client,
-    pub base_url: String,
-    token: ApiToken,
+    http: HttpClient,
     pub org_id: String,
 }
 
 impl PangolinClient {
     pub fn new(base_url: String, token: ApiToken, org_id: String) -> Result<Self> {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(Error::Network)?;
         Ok(Self {
-            http,
-            base_url,
-            token,
+            http: HttpClient::new(base_url, token, false)?,
             org_id,
         })
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.http.base_url
     }
 
     /// GET the given path (relative to base_url) with query parameters.
     /// Strips the Pangolin envelope and returns the inner `data` value.
     pub async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.get", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending GET");
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .query(params)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "GET failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.get(path).query(params);
+        let resp = self.http.send("GET", path, req).await?;
         parse_response(resp).await
     }
 }

@@ -1,93 +1,44 @@
-use reqwest::{Client, Response, multipart};
+use reqwest::{Response, multipart};
 use serde_json::Value;
 
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
+use crate::vendors::http::HttpClient;
 
 #[derive(Clone, Debug)]
 pub struct TechnitiumClient {
-    pub http: Client,
-    pub base_url: String,
-    token: ApiToken,
+    http: HttpClient,
 }
 
 impl TechnitiumClient {
     pub fn new(base_url: String, token: ApiToken) -> Result<Self> {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .no_proxy()
-            .build()
-            .map_err(Error::Network)?;
         Ok(Self {
-            http,
-            base_url,
-            token,
+            http: HttpClient::new(base_url, token, true)?,
         })
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.http.base_url
     }
 
     /// GET with query params.
     pub async fn get(&self, path: &str, params: &[(&str, &str)]) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.get", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending GET");
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .query(params)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "GET failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.get(path).query(params);
+        let resp = self.http.send("GET", path, req).await?;
         parse_response(resp).await
     }
 
     /// POST with form-encoded body.
     pub async fn post(&self, path: &str, form: &[(&str, &str)]) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.post", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending POST");
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .form(form)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "POST failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.post(path).form(form);
+        let resp = self.http.send("POST", path, req).await?;
         parse_response(resp).await
     }
 
     /// GET that returns a plain-text body (e.g. zone file export).
     pub async fn get_text(&self, path: &str, params: &[(&str, &str)]) -> Result<String> {
-        let url = format!("{}{}", self.base_url, path);
-        let span = tracing::debug_span!("http.get_text", path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending GET (text)");
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .query(params)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "GET (text) failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.get(path).query(params);
+        let resp = self.http.send("GET", path, req).await?;
         let status = resp.status();
         if status.is_success() {
             return resp.text().await.map_err(Error::Network);
@@ -114,43 +65,13 @@ impl TechnitiumClient {
         file_name: String,
         file_bytes: Vec<u8>,
     ) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let zone = params
-            .iter()
-            .find(|(k, _)| *k == "zone")
-            .map(|(_, v)| *v)
-            .unwrap_or("");
-        let span = tracing::debug_span!(
-            "http.post_file",
-            path,
-            zone,
-            http.status = tracing::field::Empty
-        );
-        let _enter = span.enter();
-        tracing::debug!("sending POST (multipart)");
-
         let file_part = multipart::Part::bytes(file_bytes)
             .file_name(file_name)
             .mime_str("text/plain")
             .map_err(Error::Mime)?;
-
         let form = multipart::Form::new().part("zoneFile", file_part);
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(self.token.expose_for_auth())
-            .query(params)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "POST (multipart) failed");
-                Error::Network(e)
-            })?;
-
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
+        let req = self.http.post(path).query(params).multipart(form);
+        let resp = self.http.send("POST", path, req).await?;
         parse_response(resp).await
     }
 }

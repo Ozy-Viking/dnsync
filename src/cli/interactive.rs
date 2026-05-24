@@ -119,8 +119,16 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
 
     let mut allowed_zones: Vec<String> = Vec::new();
     loop {
-        let zone = match Text::new("Add allowed zone (leave empty to finish):")
-            .with_help_message("Subdomains of an allowed zone are also permitted")
+        let help = if allowed_zones.is_empty() {
+            "Restrict zone-targeting tools to specific zones; subdomains are also permitted. Leave empty to skip.".to_string()
+        } else {
+            format!(
+                "Added: {} — enter another, or leave empty to finish",
+                allowed_zones.join(", ")
+            )
+        };
+        let zone = match Text::new("Allowed zone:")
+            .with_help_message(&help)
             .prompt()
         {
             Ok(z) => z,
