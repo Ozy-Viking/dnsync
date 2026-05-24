@@ -209,6 +209,51 @@ impl Policy {
 }
 
 impl Policy {
+    /// Build a `Policy` for a single server, intersecting its MCP config with CLI overrides.
+    pub fn for_server(
+        server: &crate::control_plane::config::DnsServerConfig,
+        cli_access: &[PolicyRule],
+        cli_allow_zone: &[String],
+    ) -> Result<Self> {
+        let mcp = &server.mcp;
+
+        let config_set: HashSet<PolicyRule> = mcp.access.iter().cloned().collect();
+        let cli_set: HashSet<PolicyRule> = cli_access.iter().cloned().collect();
+
+        let allowed: HashSet<PolicyRule> = if cli_set.is_empty() {
+            config_set
+        } else {
+            cli_set.intersection(&config_set).cloned().collect()
+        };
+
+        let configured_zones =
+            (!mcp.allowed_zones.is_empty()).then_some(&mcp.allowed_zones);
+
+        let allowed_zones = if cli_allow_zone.is_empty() {
+            configured_zones.cloned()
+        } else if let Some(configured) = configured_zones {
+            let configured_policy = Self::new(
+                [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete],
+                Some(configured.clone()),
+            );
+            for zone in cli_allow_zone {
+                configured_policy.check_zone(zone).map_err(|_| {
+                    Error::policy_violation(
+                        format!(
+                            "--allow-zone '{zone}' is outside this server's configured MCP allowed zones"
+                        ),
+                        "Remove the override or choose a zone already permitted by this server's config.",
+                    )
+                })?;
+            }
+            Some(cli_allow_zone.to_vec())
+        } else {
+            Some(cli_allow_zone.to_vec())
+        };
+
+        Ok(Self::new(allowed, allowed_zones))
+    }
+
     /// Build a `Policy` from CLI options and config.
     pub fn from_cli_and_config(cli: &Cli, config: Option<&AppConfig>) -> Result<Self> {
         let mcp = config
