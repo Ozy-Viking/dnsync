@@ -57,7 +57,16 @@ impl DnsServer {
     }
 
     fn resolve_server(&self, server_id: &str) -> crate::core::error::Result<(VendorClient, Policy)> {
-        let server = self.config.selected_server(Some(server_id))?;
+        let server = self
+            .config
+            .servers
+            .iter()
+            .find(|s| s.id.eq_ignore_ascii_case(server_id))
+            .ok_or_else(|| {
+                crate::core::error::Error::config(format!(
+                    "no server named '{server_id}' — call dns_list_servers to see available IDs"
+                ))
+            })?;
         let client = VendorClient::from_server(server)?;
         let policy = Policy::for_server(server, &self.cli_access, &self.cli_allow_zone)?;
         Ok((client, policy))
