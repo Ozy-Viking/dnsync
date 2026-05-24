@@ -245,6 +245,11 @@ async fn run(cli: Cli) -> i32 {
                  configure credentials per server via config file or environment variables",
             ));
         }
+        if !cli.servers.is_empty() || cli.all {
+            return render_error(Error::parse(
+                "sync does not accept --server/--all; configure server selection via profile or explicit from/to",
+            ));
+        }
         return match sync::run_sync(
             app_config.as_ref(),
             profile.as_deref(),
