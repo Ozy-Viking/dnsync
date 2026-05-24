@@ -1,0 +1,4 @@
+reviews:
+  slop_detection:
+    enabled: true   # Runs automatically on public repos unless disabled
+    label: "slop"   # Add a label to apply when slop is detected (no label applied by default)

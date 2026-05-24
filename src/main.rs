@@ -58,11 +58,6 @@ async fn run(cli: Cli) -> i32 {
         }
         return 0;
     }
-    fn test() -> u8 {
-        println!("hello");
-        8
-    }
-    test();
 
     if let Command::Config(config_cmd) = cli.command {
         return match config_cmd {
