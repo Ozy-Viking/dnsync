@@ -537,4 +537,87 @@ mod tests {
         assert!(s.contains("Read-only"));
         assert!(s.contains("example.com"));
     }
+
+    // ── Policy::for_server ────────────────────────────────────────────────────
+
+    use crate::control_plane::config::{DnsServerConfig, McpPermissions, VendorKind};
+
+    fn server_with_mcp(access: Vec<PolicyRule>, allowed_zones: Vec<String>) -> DnsServerConfig {
+        DnsServerConfig {
+            id: "test".into(),
+            vendor: VendorKind::Technitium,
+            location: None,
+            base_url: None,
+            base_url_env: None,
+            token: Some("tok".into()),
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions { access, allowed_zones },
+        }
+    }
+
+    #[test]
+    fn for_server_uses_mcp_access_when_cli_access_empty() {
+        let server = server_with_mcp(vec![PolicyRule::Read], vec![]);
+        let policy = Policy::for_server(&server, &[], &[]).unwrap();
+        assert!(policy.check_read().is_ok());
+        assert!(policy.check_write().is_err());
+        assert!(policy.check_delete().is_err());
+    }
+
+    #[test]
+    fn for_server_intersects_cli_access_with_mcp_access() {
+        let server = server_with_mcp(
+            vec![PolicyRule::Read, PolicyRule::Write],
+            vec![],
+        );
+        // CLI requests read+delete but server only allows read+write → intersection is read only
+        let policy =
+            Policy::for_server(&server, &[PolicyRule::Read, PolicyRule::Delete], &[]).unwrap();
+        assert!(policy.check_read().is_ok());
+        assert!(policy.check_write().is_err());
+        assert!(policy.check_delete().is_err());
+    }
+
+    #[test]
+    fn for_server_cli_access_cannot_broaden_mcp_access() {
+        let server = server_with_mcp(vec![PolicyRule::Read], vec![]);
+        // CLI asks for write but server config only permits read → result is still read-only
+        let policy = Policy::for_server(&server, &[PolicyRule::Write], &[]).unwrap();
+        assert!(policy.check_read().is_err());
+        assert!(policy.check_write().is_err());
+    }
+
+    #[test]
+    fn for_server_cli_allow_zone_narrows_mcp_zones() {
+        let server = server_with_mcp(
+            vec![PolicyRule::Read],
+            vec!["example.com".into(), "internal.lan".into()],
+        );
+        let policy =
+            Policy::for_server(&server, &[], &["example.com".to_string()]).unwrap();
+        assert!(policy.check_zone("example.com").is_ok());
+        assert!(policy.check_zone("sub.example.com").is_ok());
+        assert!(policy.check_zone("internal.lan").is_err());
+    }
+
+    #[test]
+    fn for_server_cli_allow_zone_outside_mcp_zones_is_rejected() {
+        let server = server_with_mcp(
+            vec![PolicyRule::Read],
+            vec!["example.com".into()],
+        );
+        let err =
+            Policy::for_server(&server, &[], &["other.net".to_string()]).unwrap_err();
+        assert!(matches!(err, Error::PolicyViolation { .. }));
+        assert!(err.to_string().contains("other.net"));
+    }
+
+    #[test]
+    fn for_server_unrestricted_zones_when_neither_side_configures_them() {
+        let server = server_with_mcp(vec![PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete], vec![]);
+        let policy = Policy::for_server(&server, &[], &[]).unwrap();
+        assert!(policy.allowed_zones.is_none());
+        assert!(policy.check_zone("anything.example.com").is_ok());
+    }
 }
