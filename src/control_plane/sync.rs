@@ -134,8 +134,19 @@ pub async fn run_sync(
     } else if let Some(p) = profile.filter(|p| !p.zones.is_empty()) {
         p.zones.clone()
     } else {
-        let value = from_client.list_zones(1, 1000).await?;
-        let names = extract_zone_names(&value);
+        const PAGE_SIZE: u32 = 1000;
+        let mut page = 1;
+        let mut names = Vec::new();
+        loop {
+            let value = from_client.list_zones(page, PAGE_SIZE).await?;
+            let batch = extract_zone_names(&value);
+            let batch_len = batch.len();
+            names.extend(batch);
+            if batch_len < PAGE_SIZE as usize {
+                break;
+            }
+            page += 1;
+        }
         if names.is_empty() {
             return Err(Error::parse(format!(
                 "no zones found on source server '{from_id}'; specify one with --zone"
@@ -265,16 +276,20 @@ fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
 
     let mut diff = Diff::default();
 
+    // A record is "unchanged" only when its value AND TTL match the destination;
+    // otherwise it is added (and the stale destination value, if any, deleted)
+    // so source TTLs propagate.
+    let match_key = |r: &PlannedRecord| (canonical(&r.record), r.ttl);
+
     for (key, src_recs) in &source_groups {
         let dest_recs = dest_groups.get(key);
-        let dest_canon: Vec<String> = dest_recs
-            .map(|recs| recs.iter().map(|r| canonical(&r.record)).collect())
+        let dest_keys: Vec<(String, u32)> = dest_recs
+            .map(|recs| recs.iter().map(match_key).collect())
             .unwrap_or_default();
-        let src_canon: Vec<String> =
-            src_recs.iter().map(|r| canonical(&r.record)).collect();
+        let src_keys: Vec<(String, u32)> = src_recs.iter().map(match_key).collect();
 
         for r in src_recs {
-            if dest_canon.contains(&canonical(&r.record)) {
+            if dest_keys.contains(&match_key(r)) {
                 diff.unchanged += 1;
             } else {
                 diff.adds.push(r.clone());
@@ -282,7 +297,7 @@ fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
         }
         if let Some(dest_recs) = dest_recs {
             for r in dest_recs {
-                if !src_canon.contains(&canonical(&r.record)) {
+                if !src_keys.contains(&match_key(r)) {
                     diff.deletes.push(r.clone());
                 }
             }
@@ -306,6 +321,7 @@ async fn apply_plans(to_client: &VendorClient, plans: &[ZonePlan]) -> Result<()>
     for plan in plans {
         // Add new values before removing stale ones, to minimise the window in
         // which a name resolves to nothing.
+        let mut zone_add_failed = false;
         for rec in &plan.adds {
             match to_client
                 .add_record(&plan.zone, &rec.fqdn, rec.ttl, &rec.record)
@@ -314,9 +330,19 @@ async fn apply_plans(to_client: &VendorClient, plans: &[ZonePlan]) -> Result<()>
                 Ok(_) => applied += 1,
                 Err(e) => {
                     failures += 1;
+                    zone_add_failed = true;
                     eprintln!("  ! add {} {} failed: {e}", rec.fqdn, rec.rtype);
                 }
             }
+        }
+        // Don't run destructive deletes for a zone whose additions failed —
+        // we might remove the only working copy of a record.
+        if zone_add_failed {
+            eprintln!(
+                "  ! skipping removals for zone '{}' because one or more additions failed",
+                plan.zone
+            );
+            continue;
         }
         for rec in &plan.deletes {
             let params = rec.record.to_api_params();
@@ -653,6 +679,19 @@ mod tests {
         assert_eq!(diff.adds.len(), 0);
         assert_eq!(diff.deletes.len(), 0);
         assert_eq!(diff.unchanged, 1);
+    }
+
+    #[test]
+    fn diff_treats_ttl_difference_as_update() {
+        let mut src = a("www.example.com", "1.1.1.1");
+        src.ttl = 300;
+        let mut dst = a("www.example.com", "1.1.1.1");
+        dst.ttl = 3600;
+        let diff = diff_records(vec![src], vec![dst]);
+        assert_eq!(diff.adds.len(), 1);
+        assert_eq!(diff.deletes.len(), 1);
+        assert_eq!(diff.unchanged, 0);
+        assert_eq!(diff.adds[0].ttl, 300);
     }
 
     #[test]

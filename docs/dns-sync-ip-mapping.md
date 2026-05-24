@@ -37,7 +37,7 @@ This feature addresses gaps 1, 2 and 5 directly.
 A new vendor-neutral command that copies records from a source server to a
 destination server, applying an explicit IP-address mapping to A/AAAA records.
 
-```
+```bash
 dns sync <PROFILE>                                  # run a named profile (dry run)
 dns sync <PROFILE> --apply                          # commit the changes
 dns sync --from cf --to home --zone example.com \

@@ -117,7 +117,7 @@ vendor = "pangolin"
 org_id = "my-org"
 token_env = "PANGOLIN_API_TOKEN"
 
-# Named record-sync profile — see the Sync section above.
+# Named record-sync profile — see the Sync section below.
 [[sync]]
 name = "home"          # invoked as `dns sync home`
 from = "cf"            # source server id
@@ -282,7 +282,7 @@ values are preserved exactly.
 
 ### Sync
 
-`record sync` copies records from one configured server to another, optionally
+`dns sync` copies records from one configured server to another, optionally
 rewriting IP addresses on A/AAAA records — for example, mapping a public
 address to its internal LAN equivalent ("split-horizon" DNS).
 
