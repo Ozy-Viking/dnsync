@@ -444,6 +444,12 @@ impl AppConfig {
                     profile.name, profile.to
                 )));
             }
+            if profile.from.to_lowercase() == profile.to.to_lowercase() {
+                return Err(Error::config(format!(
+                    "sync profile '{}' has identical source and destination server '{}'",
+                    profile.name, profile.from
+                )));
+            }
             for (src, dst) in &profile.ip_map {
                 validate_ip_pair(&profile.name, src, dst)?;
             }
