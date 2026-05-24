@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use reqwest::{Client, RequestBuilder, Response};
+use tracing::Instrument;
 
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
@@ -65,18 +66,21 @@ impl HttpClient {
     ) -> Result<Response> {
         let span =
             tracing::debug_span!("http.request", method, path, http.status = tracing::field::Empty);
-        let _enter = span.enter();
-        tracing::debug!("sending request");
-        let resp = builder
-            .bearer_auth(self.token.expose_for_auth())
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "request failed");
-                Error::Network(e)
-            })?;
-        span.record("http.status", resp.status().as_u16());
-        tracing::debug!("received response");
-        Ok(resp)
+        async {
+            tracing::debug!("sending request");
+            let resp = builder
+                .bearer_auth(self.token.expose_for_auth())
+                .send()
+                .await
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "request failed");
+                    Error::Network(e)
+                })?;
+            tracing::Span::current().record("http.status", resp.status().as_u16());
+            tracing::debug!("received response");
+            Ok(resp)
+        }
+        .instrument(span)
+        .await
     }
 }

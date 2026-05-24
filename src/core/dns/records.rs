@@ -630,9 +630,12 @@ impl RecordData {
     }
 }
 
-/// Identifies one or more records for deletion. Mirrors [`RecordData`] but every
-/// value field is optional — a missing field broadens the selector (e.g.
-/// `A { ip: None }` matches every A record at the domain).
+/// Identifies one or more records for deletion. Similar to [`RecordData`] but
+/// intentionally not identical — every value field is optional, and some variants
+/// omit fields that are only meaningful at creation time (e.g. `Caa`, `Ds`,
+/// `App`, `Https`). A missing field broadens the selector (e.g. `A { ip: None }`
+/// matches every A record at the domain); compare [`RecordData`] to understand
+/// which fields each variant actually exposes.
 ///
 /// Derives both `Subcommand` (for clap-driven CLI parsing) and `Deserialize` +
 /// `JsonSchema` (for MCP tool params), so the CLI and MCP share one type.
