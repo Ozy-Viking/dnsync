@@ -553,6 +553,7 @@ mod tests {
             token_env: None,
             org_id: None,
             mcp: McpPermissions { access, allowed_zones },
+            validation_endpoints: vec![],
         }
     }
 
