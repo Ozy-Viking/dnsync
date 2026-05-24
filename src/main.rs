@@ -304,56 +304,8 @@ async fn run(cli: Cli) -> i32 {
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> i32 {
     let config = app_config.unwrap_or_default();
-
-    // Pre-select a server if explicitly requested via --server, or when only one exists.
-    let preselected: Option<(String, VendorClient, Policy)> =
-        if let Some(server_id) = cli.servers.first() {
-            let server = match config.selected_server(Some(server_id)) {
-                Ok(s) => s,
-                Err(e) => return render_error(e),
-            };
-            let client = match VendorClient::from_server(server) {
-                Ok(c) => c,
-                Err(e) => return render_error(e),
-            };
-            let pol = match policy::Policy::for_server(server, &cli.access, &cli.allow_zone) {
-                Ok(p) => p,
-                Err(e) => return render_error(e),
-            };
-            Some((server_id.clone(), client, pol))
-        } else if let [server] = config.servers.as_slice() {
-            let client = match VendorClient::from_server(server) {
-                Ok(c) => c,
-                Err(e) => return render_error(e),
-            };
-            let pol = match policy::Policy::for_server(server, &cli.access, &cli.allow_zone) {
-                Ok(p) => p,
-                Err(e) => return render_error(e),
-            };
-            Some((server.id.clone(), client, pol))
-        } else {
-            None
-        };
-
-    if let Some((ref id, _, ref pol)) = preselected {
-        if !pol.allowed.contains(&policy::PolicyRule::Read) {
-            tracing::info!("MCP server: read operations disabled");
-        }
-        if !pol.allowed.contains(&policy::PolicyRule::Write) {
-            tracing::info!("MCP server: write operations disabled");
-        }
-        if !pol.allowed.contains(&policy::PolicyRule::Delete) {
-            tracing::info!("MCP server: delete operations disabled");
-        }
-        if let Some(ref zones) = pol.allowed_zones {
-            tracing::info!("MCP server zone restriction: {}", zones.join(", "));
-        }
-        tracing::info!(server = %id, "Starting MCP server (stdio)");
-    } else {
-        tracing::info!("Starting MCP server (stdio) — no server pre-selected");
-    }
-
-    let dns_server = DnsServer::new(config, preselected, cli.access, cli.allow_zone);
+    tracing::info!("Starting MCP server (stdio)");
+    let dns_server = DnsServer::new(config, cli.access, cli.allow_zone);
     let transport = (tokio::io::stdin(), tokio::io::stdout());
     match dns_server.serve(transport).await {
         Ok(service) => match service.waiting().await {
