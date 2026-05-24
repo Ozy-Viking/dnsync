@@ -303,6 +303,13 @@ async fn run(cli: Cli) -> i32 {
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> i32 {
+    if cli.token.is_some() || cli.base_url.is_some() || !cli.servers.is_empty() {
+        return render_error(Error::parse(
+            "`mcp` does not accept --token, --base-url, or --server; \
+             configure server credentials in the config file and pass `server_id` per tool call",
+        ));
+    }
+
     let config = app_config.unwrap_or_default();
     tracing::info!("Starting MCP server (stdio)");
     let dns_server = DnsServer::new(config, cli.access, cli.allow_zone);
