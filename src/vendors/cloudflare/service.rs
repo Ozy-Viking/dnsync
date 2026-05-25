@@ -22,6 +22,7 @@ use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
+use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
     RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
@@ -67,6 +68,7 @@ impl DnsVendor for CloudflareClient {
             settings: true,
             zone_import: true,
             zone_export: true,
+            logs: false,
         }
     }
 }
@@ -371,6 +373,12 @@ impl SettingsRead for CloudflareClient {
     }
 }
 
+impl LogsRead for CloudflareClient {
+    async fn get_logs(&self, _: LogsOptions) -> Result<Vec<LogLine>> {
+        Err(Error::unsupported("Cloudflare", "logs"))
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -404,6 +412,14 @@ mod tests {
         assert!(caps.settings);
         assert!(caps.zone_import);
         assert!(caps.zone_export);
+        assert!(!caps.logs);
+    }
+
+    #[tokio::test]
+    async fn get_logs_is_unsupported() {
+        use crate::core::dns::logs::LogsOptions;
+        let err = make_client().get_logs(LogsOptions::default()).await.unwrap_err();
+        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
     }
 
     // ── Unsupported operations return correct error ────────────────────────────

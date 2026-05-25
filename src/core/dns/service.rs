@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
+use crate::core::dns::logs::LogsRead;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::error::Result;
@@ -147,11 +148,13 @@ pub trait SettingsRead {
 
 pub trait DnsRead:
     DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport
+    + LogsRead
 {
 }
 
 impl<T> DnsRead for T where
     T: DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport
+        + LogsRead
 {
 }
 

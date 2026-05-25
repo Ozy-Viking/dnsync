@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use crate::control_plane::config::{self, DnsServerConfig, VendorKind};
 use crate::core::dns::capabilities::VendorCapabilities;
+use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::dns::service::{
@@ -350,6 +351,12 @@ impl ZoneExport for VendorClient {
 impl SettingsRead for VendorClient {
     async fn get_settings(&self) -> Result<Value> {
         delegate_vendor!(self, client => client.get_settings().await)
+    }
+}
+
+impl LogsRead for VendorClient {
+    async fn get_logs(&self, options: LogsOptions) -> Result<Vec<LogLine>> {
+        delegate_vendor!(self, client => client.get_logs(options).await)
     }
 }
 

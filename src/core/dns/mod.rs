@@ -1,6 +1,7 @@
 pub mod access_lists;
 pub mod cache;
 pub mod capabilities;
+pub mod logs;
 pub mod records;
 pub mod responses;
 pub mod service;
