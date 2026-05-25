@@ -209,7 +209,36 @@ impl Policy {
 }
 
 impl Policy {
-    /// Build a `Policy` for a single server, intersecting its MCP config with CLI overrides.
+    /// Constructs an effective `Policy` for a single DNS server by combining the server's MCP
+    /// access configuration with CLI-provided access and zone overrides.
+    ///
+    /// - Operation permissions: if `cli_access` is empty the server's MCP `access` is used;
+    ///   otherwise the resulting allowed operations are the intersection of `cli_access` and the
+    ///   server's MCP `access` (the CLI cannot broaden permissions beyond the server's config).
+    /// - Zone restrictions: if `cli_allow_zone` is empty the server's configured `allowed_zones`
+    ///   (if any) is used; if `cli_allow_zone` is non-empty it becomes the resulting zone list.
+    ///   When the server has configured allowed zones, each CLI-provided zone is validated against
+    ///   the server's allowed zones (subdomains and case-insensitive matches are permitted);
+    ///   a CLI zone outside the server's configured zones causes a `PolicyViolation` error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::PolicyViolation` when any entry in `cli_allow_zone` is not permitted by the
+    /// server's MCP configured allowed zones (when that restriction exists).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use crate::control_plane::policy::Policy;
+    /// use crate::control_plane::config::DnsServerConfig;
+    ///
+    /// // Construct `server`, `cli_access`, and `cli_allow_zone` according to your application.
+    /// let server: DnsServerConfig = /* server from config */ unimplemented!();
+    /// let cli_access = vec![]; // empty means "use server MCP access"
+    /// let cli_allow_zone: Vec<String> = vec![]; // empty means "use server MCP zones"
+    ///
+    /// let policy = Policy::for_server(&server, &cli_access, &cli_allow_zone)?;
+    /// ```
     pub fn for_server(
         server: &crate::control_plane::config::DnsServerConfig,
         cli_access: &[PolicyRule],
@@ -542,6 +571,20 @@ mod tests {
 
     use crate::control_plane::config::{DnsServerConfig, McpPermissions, VendorKind};
 
+    /// Constructs a test `DnsServerConfig` with the provided MCP permissions.
+    ///
+    /// The returned config is populated with a fixed id, vendor, token and the given
+    /// `access` and `allowed_zones` embedded in `mcp`. Other fields are left as
+    /// None or empty suitable for unit tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = server_with_mcp(vec![PolicyRule::Read, PolicyRule::Write], vec!["example.com".into()]);
+    /// assert_eq!(cfg.id, "test");
+    /// assert_eq!(cfg.mcp.allowed_zones.len(), 1);
+    /// assert!(cfg.mcp.access.contains(&PolicyRule::Read));
+    /// ```
     fn server_with_mcp(access: Vec<PolicyRule>, allowed_zones: Vec<String>) -> DnsServerConfig {
         DnsServerConfig {
             id: "test".into(),
