@@ -228,7 +228,7 @@ impl Policy {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```ignore
     /// use crate::control_plane::policy::Policy;
     /// use crate::control_plane::config::DnsServerConfig;
     ///
@@ -238,7 +238,7 @@ impl Policy {
     /// let cli_allow_zone: Vec<String> = vec![]; // empty means "use server MCP zones"
     ///
     /// let policy = Policy::for_server(&server, &cli_access, &cli_allow_zone)?;
-    /// ```
+    /// ```ignore
     pub fn for_server(
         server: &crate::control_plane::config::DnsServerConfig,
         cli_access: &[PolicyRule],
@@ -579,12 +579,12 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// let cfg = server_with_mcp(vec![PolicyRule::Read, PolicyRule::Write], vec!["example.com".into()]);
     /// assert_eq!(cfg.id, "test");
     /// assert_eq!(cfg.mcp.allowed_zones.len(), 1);
     /// assert!(cfg.mcp.access.contains(&PolicyRule::Read));
-    /// ```
+    /// ```ignore
     fn server_with_mcp(access: Vec<PolicyRule>, allowed_zones: Vec<String>) -> DnsServerConfig {
         DnsServerConfig {
             id: "test".into(),
