@@ -43,7 +43,28 @@ async fn main() {
     process::exit(run(cli).await);
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+/// Dispatches CLI commands, performs the requested operation, and returns an exit status code.
+///
+/// This function interprets the parsed `Cli` command, handles early-exit subcommands (completions,
+/// server id listing, and config subcommands), loads the application configuration for other
+/// commands, and dispatches to specialized handlers (MCP server, record listing across servers,
+/// zone transfer, sync, or single-server command execution). Errors are printed and mapped to
+/// non-zero exit codes.
+///
+/// # Returns
+///
+/// `0` on success, a non-zero exit code on error.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Run the CLI dispatcher with a prepared `cli`.
+/// // The example is `no_run` because constructing a full `Cli` in a doctest depends on the
+/// // surrounding application context.
+/// let cli = /* build or parse Cli here */;
+/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(run(cli));
+/// std::process::exit(exit);
+/// ```
 async fn run(cli: Cli) -> i32 {
     if let Command::Completions { shell } = cli.command {
         cli::completions::generate_completions(shell);
@@ -301,6 +322,23 @@ async fn run(cli: Cli) -> i32 {
     run_with_client(cli, client, policy).await
 }
 
+/// Start an MCP (MCP-over-stdio) server using the provided CLI options and optional app configuration.
+///
+/// The function validates that no per-call credentials or server selection flags (`--token`, `--base-url`, `--server`) were supplied;
+/// if any are present it returns a non-zero exit code after emitting a parse error diagnostic. It then constructs a `DnsServer` from the
+/// provided or default configuration and runs it over stdin/stdout. The function returns `0` on a normal shutdown, or `1` on startup or
+/// transport errors (and prints a brief error message to stderr).
+///
+/// # Examples
+///
+/// ```no_run
+/// # use tokio::runtime::Runtime;
+/// # use dnsync_main::{run_mcp, Cli, AppConfig};
+/// let rt = Runtime::new().unwrap();
+/// let cli = Cli { token: None, base_url: None, servers: vec![], access: None, allow_zone: vec![], config: None, ..Default::default() };
+/// let exit = rt.block_on(async { run_mcp(cli, None).await });
+/// assert!(exit == 0 || exit == 1);
+/// ```
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> i32 {
     if cli.token.is_some() || cli.base_url.is_some() || !cli.servers.is_empty() {
@@ -329,6 +367,21 @@ async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> i32 {
     }
 }
 
+/// Dispatches non-MCP CLI commands to the runner using the provided DNS client.
+///
+/// # Returns
+///
+/// `0` on success, otherwise an exit code derived from the encountered error.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Assume `client` implements `DnsService` and `cli`/`policy` are prepared.
+/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(async {
+///     run_with_client(cli, client, policy).await
+/// });
+/// assert!(exit >= 0);
+/// ```
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     cli: Cli,
