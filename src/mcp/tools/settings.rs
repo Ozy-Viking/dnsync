@@ -11,5 +11,10 @@ pub async fn handle_get_settings<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
 ) -> Result<CallToolResult, McpError> {
-    run_json(policy.check_read(), settings::get_settings(client)).await
+    Ok(run_json(
+        "dns_get_settings",
+        policy.check_read(),
+        settings::get_settings(client),
+    )
+    .await)
 }
