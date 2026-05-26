@@ -319,6 +319,8 @@ mod tests {
     #[case::http(Error::Http { status: 500, body: "".into() }, 3)]
     #[case::parse(Error::Parse { context: "x".into() }, 1)]
     #[case::io(Error::Io { context: "x".into(), source: std::io::Error::from(std::io::ErrorKind::NotFound) }, 5)]
+    #[case::cancelled(Error::UserCancelled, 130)]
+    #[case::mcp(Error::Mcp { context: "transport".into() }, 1)]
     fn exit_code_by_variant(#[case] e: Error, #[case] expected: i32) {
         assert_eq!(e.exit_code(), expected);
     }
@@ -342,5 +344,30 @@ mod tests {
         assert!(
             matches!(io_error, Error::Io { ref context, .. } if context.contains("example.zone"))
         );
+    }
+
+    #[rstest]
+    fn cancelled_constructor_returns_user_cancelled_variant() {
+        assert!(matches!(Error::cancelled(), Error::UserCancelled));
+    }
+
+    #[rstest]
+    fn mcp_constructor_sets_context() {
+        let e = Error::mcp("transport closed");
+        assert!(matches!(e, Error::Mcp { ref context } if context == "transport closed"));
+    }
+
+    #[rstest]
+    fn cancelled_has_diagnostic_code() {
+        let e = Error::UserCancelled;
+        let code = e.code().expect("should have a code");
+        assert_eq!(code.to_string(), "dns::cancelled");
+    }
+
+    #[rstest]
+    fn mcp_has_diagnostic_code() {
+        let e = Error::mcp("x");
+        let code = e.code().expect("should have a code");
+        assert_eq!(code.to_string(), "dns::mcp");
     }
 }

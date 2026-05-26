@@ -41,17 +41,18 @@ async fn main() -> miette::Result<()> {
     Ok(())
 }
 
-/// Dispatches CLI commands, performs the requested operation, and returns an exit status code.
+/// Dispatches CLI commands and performs the requested operation.
 ///
 /// This function interprets the parsed `Cli` command, handles early-exit subcommands (completions,
 /// server id listing, and config subcommands), loads the application configuration for other
 /// commands, and dispatches to specialized handlers (MCP server, record listing across servers,
-/// zone transfer, sync, or single-server command execution). Errors are printed and mapped to
-/// non-zero exit codes.
+/// zone transfer, sync, or single-server command execution). `Error::UserCancelled` is caught
+/// here and rendered as a clean exit; all other errors propagate to `main()` for miette to render.
 ///
 /// # Returns
 ///
-/// `0` on success, a non-zero exit code on error.
+/// `Ok(())` on success, `Err(Error)` on failure. The caller (`main`) returns a
+/// `miette::Result<()>`, so miette will format and print the diagnostic.
 ///
 /// # Examples
 ///
@@ -59,9 +60,10 @@ async fn main() -> miette::Result<()> {
 /// // Run the CLI dispatcher with a prepared `cli`.
 /// // The example is `no_run` because constructing a full `Cli` in a doctest depends on the
 /// // surrounding application context.
+/// # async fn doc() -> miette::Result<()> {
 /// let cli = /* build or parse Cli here */;
-/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(run(cli));
-/// std::process::exit(exit);
+/// run(cli).await?;
+/// # Ok(()) }
 /// ```
 async fn run(cli: Cli) -> Result<()> {
     match run_inner(cli).await {
@@ -298,19 +300,22 @@ async fn run_inner(cli: Cli) -> Result<()> {
 /// Start an MCP (MCP-over-stdio) server using the provided CLI options and optional app configuration.
 ///
 /// The function validates that no per-call credentials or server selection flags (`--token`, `--base-url`, `--server`) were supplied;
-/// if any are present it returns a non-zero exit code after emitting a parse error diagnostic. It then constructs a `DnsServer` from the
-/// provided or default configuration and runs it over stdin/stdout. The function returns `0` on a normal shutdown, or `1` on startup or
-/// transport errors (and prints a brief error message to stderr).
+/// if any are present it returns `Err(Error::Parse { .. })` so the caller's miette pipeline can render the diagnostic. It then
+/// constructs a `DnsServer` from the provided or default configuration and runs it over stdin/stdout. Startup or transport
+/// failures are wrapped in `Error::Mcp { .. }` and propagated.
+///
+/// # Returns
+///
+/// `Ok(())` on a clean shutdown, `Err(Error)` on validation, startup, or transport failure.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// # use tokio::runtime::Runtime;
+/// # async fn doc() -> miette::Result<()> {
 /// # use dnsync_main::{run_mcp, Cli, AppConfig};
-/// let rt = Runtime::new().unwrap();
 /// let cli = Cli { token: None, base_url: None, servers: vec![], access: None, allow_zone: vec![], config: None, ..Default::default() };
-/// let exit = rt.block_on(async { run_mcp(cli, None).await });
-/// assert!(exit == 0 || exit == 1);
+/// run_mcp(cli, None).await?;
+/// # Ok(()) }
 /// ```
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
@@ -340,16 +345,15 @@ async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
 ///
 /// # Returns
 ///
-/// `0` on success, otherwise an exit code derived from the encountered error.
+/// `Ok(())` on success, `Err(Error)` propagated from the runner on failure.
 ///
 /// # Examples
 ///
 /// ```no_run
+/// # async fn doc() -> miette::Result<()> {
 /// // Assume `client` implements `DnsService` and `cli`/`policy` are prepared.
-/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(async {
-///     run_with_client(cli, client, policy).await
-/// });
-/// assert!(exit >= 0);
+/// run_with_client(cli, client, policy).await?;
+/// # Ok(()) }
 /// ```
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
