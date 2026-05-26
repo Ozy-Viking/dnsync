@@ -12,7 +12,12 @@ pub async fn handle_list_cache<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: DomainParams,
 ) -> Result<CallToolResult, McpError> {
-    run_json(policy.check_read(), cache::list_cache(client, &p.domain)).await
+    Ok(run_json(
+        "dns_list_cache",
+        policy.check_read(),
+        cache::list_cache(client, &p.domain),
+    )
+    .await)
 }
 
 pub async fn handle_delete_cache_zone<C: DnsService + Send + Sync>(
@@ -20,16 +25,22 @@ pub async fn handle_delete_cache_zone<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: DomainParams,
 ) -> Result<CallToolResult, McpError> {
-    run_json(
+    Ok(run_json(
+        "dns_delete_cache_zone",
         policy.check_delete(),
         cache::delete_cache_zone(client, &p.domain),
     )
-    .await
+    .await)
 }
 
 pub async fn handle_flush_cache<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
 ) -> Result<CallToolResult, McpError> {
-    run_json(policy.check_write(), cache::flush_cache(client)).await
+    Ok(run_json(
+        "dns_flush_cache",
+        policy.check_write(),
+        cache::flush_cache(client),
+    )
+    .await)
 }
