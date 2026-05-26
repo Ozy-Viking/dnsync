@@ -3,7 +3,8 @@
 This document is the design record for `dns query`, a vendor-neutral DNS
 lookup subcommand that lets `dns` itself resolve names — by default through
 the local system resolver, optionally through a named or ad-hoc nameserver,
-across plain DNS, DoT, DoH, and DoQ transports.
+across plain DNS, DoT, DoH, and (behind the opt-in `doq` Cargo feature)
+DoQ transports.
 
 ## Background — gap analysis
 
@@ -185,8 +186,13 @@ tls_server_name = "dns.adguard.com"
 ### Config changes required
 
 1. Extend `ValidationTransport` with a `Doq` variant (`#[serde(rename =
-   "doq")]`). Update the `FromStr` parser in `control_plane/config.rs` to
-   accept `doq`. Update the validation error message to list `doq`.
+   "doq")]`). **The variant is always compiled in**, even on builds without
+   the `doq` Cargo feature — so configs that mention `transport = "doq"`
+   parse cleanly everywhere, and `--transport doq` is recognised by clap on
+   every build. Only the resolver-wiring path is feature-gated; see §DoQ
+   feature gating below. Update the `FromStr` parser in
+   `control_plane/config.rs` to accept `doq`. Update the validation error
+   message to list `doq`.
 2. Update `validate_validation_endpoints` so `doq` requires an `address`
    (same as `dot`).
 3. Add a cross-server uniqueness check for `validation_endpoints[*].name`
@@ -217,14 +223,29 @@ already trait-shaped (`DnsEndpointResolver`).
 
    `validation.rs` re-exports / uses them; behaviour and tests unchanged.
 
-2. **Add `doq_name_server`** in the new module. Hickory exposes
-   `ConnectionConfig::quic(server_name)` when built with `quic-ring`
-   (analogous to `tls`/`https`). Mirror `dot_name_server`.
+2. **Add `doq_name_server`** in the new module, **gated behind `#[cfg(feature
+   = "doq")]`**. Hickory 0.26 exposes
+   `ConnectionConfig::quic(server_name: Arc<str>) -> Self`
+   (`hickory-resolver` `src/config.rs`, behind the internal `__quic`
+   feature). Default port is 853 — RFC 9250 registers ALPN `doq` on the
+   same port as DoT. The function mirrors `dot_name_server`:
 
-3. **Add `Cargo.toml` feature** to `hickory-resolver`: `quic-ring` (and
-   any companion required by 0.26 — verify against the published feature
-   list during implementation; fall back to `dns-over-quic-rustls` if the
-   feature name differs in this version).
+   ```rust
+   #[cfg(feature = "doq")]
+   fn doq_name_server(
+       endpoint: &ValidationEndpointConfig,
+   ) -> DnsEndpointResolverResult<NameServerConfig> {
+       let ip = endpoint_ip(endpoint)?;
+       let server_name = tls_server_name(endpoint)?.into();
+       let mut quic = ConnectionConfig::quic(server_name);
+       quic.port = endpoint.port.unwrap_or(853);
+       Ok(NameServerConfig::new(ip, true, vec![quic]))
+   }
+   ```
+
+3. **Add a project Cargo feature `doq`** (non-default) and wire it to the
+   hickory `quic-ring` feature. See §DoQ feature gating below for the full
+   plumbing.
 
 4. **Add `src/cli/query.rs`** with:
    - `QueryArgs` (clap struct, see §Flags above)
@@ -295,7 +316,12 @@ Mostly mirror the `validation.rs` test layout.
   - Reuse / extend `FakeDnsEndpointResolver` to back a `run_query` that
     accepts an injected resolver in tests.
   - Cover `noerror`, `nxdomain`, `servfail`, `timeout`, `tls_failure`,
-    `doh_http_failure`, `doq_failure` → exit code mapping.
+    `doh_http_failure`, `unsupported_transport` → exit code mapping.
+  - `#[cfg(not(feature = "doq"))]` test asserts that a `doq` endpoint
+    yields `UnsupportedTransport`.
+  - `#[cfg(feature = "doq")]` test asserts the resolver-config branch
+    chooses `doq_name_server` and returns a `NameServerConfig` whose
+    connection uses port 853.
 
 - **Output**:
   - JSON shape snapshot test (`serde_json::to_value`, asserts on stable
@@ -309,15 +335,93 @@ Mostly mirror the `validation.rs` test layout.
   against `1.1.1.1` for plain DNS and `https://cloudflare-dns.com/dns-query`
   for DoH, gated by an env var so CI does not require outbound traffic.
 
+## DoQ feature gating
+
+DoQ (DNS-over-QUIC, RFC 9250) is opt-in. It depends on `quinn`, `rustls`,
+and a handful of QUIC-only crates that materially grow build time and
+binary size; users who only need `dns`/`dot`/`doh` should not pay for
+them. **The `doq` Cargo feature is not enabled by default.**
+
+### What hickory 0.26.1 actually requires
+
+Confirmed against
+[`hickory-resolver` 0.26.1 `Cargo.toml`](https://github.com/hickory-dns/hickory-dns/blob/v0.26.1/crates/resolver/Cargo.toml)
+and `crates/net/Cargo.toml`:
+
+| Need | Feature to enable | What it pulls in |
+|---|---|---|
+| DoT (already on)  | `tls-ring` | `__tls`, `rustls`, `tokio-rustls` |
+| DoH (already on)  | `https-ring` | `__https` (→ `__tls`) |
+| **DoQ (new)** | `quic-ring` | `__quic` (→ `__tls`), `quinn` with `runtime-tokio`, `rustls-ring` backend |
+| DoH3 (future) | `h3-ring` | `__h3` (→ `__quic`) |
+
+The constructor is `ConnectionConfig::quic(server_name: Arc<str>) -> Self`,
+verified present in 0.26.1. Defaults: ALPN `"doq"`, port 853 (RFC 9250 §6).
+No additional ALPN or `rustls::ClientConfig` plumbing is required — the
+`quic-ring` feature wires `quinn` to `rustls` with the right defaults.
+
+### `Cargo.toml` changes
+
+```toml
+[features]
+default = ["technitium", "pangolin", "cloudflare"]
+technitium = []
+pangolin = []
+cloudflare = []
+doq = ["hickory-resolver/quic-ring"]   # ← new, non-default
+
+[dependencies]
+hickory-resolver = { version = "0.26", features = [
+    "tls-ring",
+    "https-ring",
+    "rustls-platform-verifier",
+] }
+```
+
+No new direct dependencies. `quinn` arrives transitively through
+`hickory-net`'s `quic-ring` feature. Confirm with
+`cargo tree --features doq -e features | rg quinn` after wiring.
+
+### Source-level gating
+
+| Symbol | Gate |
+|---|---|
+| `ValidationTransport::Doq` enum variant | always present (parses in configs and clap on every build) |
+| `ValidationTransport`'s clap `ValueEnum`/serde mapping for `doq` | always present |
+| `fn doq_name_server` in `core/dns/resolver.rs` | `#[cfg(feature = "doq")]` |
+| Match arm `ValidationTransport::Doq => doq_name_server(endpoint)?` in `resolver_config` | `#[cfg(feature = "doq")]` |
+| Match arm on `#[cfg(not(feature = "doq"))]` returning `ValidationFailureKind::UnsupportedTransport` with a `tracing::warn!` recommending the `doq` build flag | `#[cfg(not(feature = "doq"))]` |
+| Default-port table (`853` for DoQ) | always present |
+| `validate_validation_endpoints` requirement that `doq` endpoints have an `address` | always present (configs validate the same on either build) |
+| `--transport doq` CLI parsing | always present |
+| Test `validation_resolver_doq_succeeds` (live or fake-backed) | `#[cfg(feature = "doq")]` |
+| Test `validation_resolver_doq_unsupported_without_feature` | `#[cfg(not(feature = "doq"))]` |
+
+### Runtime behaviour without the feature
+
+A config file containing a `transport = "doq"` endpoint parses and
+validates on every build. Issuing a query that uses it on a build without
+`doq` returns `ValidationFailureKind::UnsupportedTransport` (already in
+the enum, no new variant). The CLI maps that to exit code `2` with the
+message:
+
+```
+DoQ transport is not enabled in this build of dns.
+Rebuild with `--features doq` to enable DNS-over-QUIC.
+```
+
+### CI / release implications
+
+- `cargo build` and `cargo test` continue to run with default features —
+  no QUIC dependencies pulled in.
+- Add `cargo build --features doq` and `cargo test --features doq` jobs
+  to CI alongside the existing default-features run. The fake-backed
+  tests cover the gated code paths so neither job needs network access.
+- The release pipeline produces two artefacts when DoQ matters: the
+  default build, and a `doq` variant. Document the choice in `README.md`.
+
 ## Open questions / deferred
 
-- **DoQ feature name in hickory 0.26.** Verify whether the cargo feature
-  is `quic-ring`, `dns-over-quic-rustls`, or both. If 0.26 lacks DoQ,
-  decide between (a) bumping to a newer version, (b) shipping `query`
-  with `dns|dot|doh` only and accepting `doq` as a "coming soon" error,
-  or (c) implementing DoQ via a thin adapter using
-  [`quinn`](https://crates.io/crates/quinn). Strong preference for the
-  hickory feature path.
 - **`ANY` queries.** Most public resolvers RFC8482-refuse `ANY`. Document
   this; do not special-case in the first cut.
 - **Reverse lookups.** `dns query 1.2.3.4` could auto-convert to
@@ -327,6 +431,9 @@ Mostly mirror the `validation.rs` test layout.
   subcommand). Rejected for v1 because it conflicts with future
   subcommand additions; users get `dns q huly.hankin.io` as the short
   form.
+- **DoH3 (HTTP/3 transport for DoH).** Hickory has `h3-ring`; the same
+  feature-gate pattern would apply. Out of scope for v1; revisit once DoQ
+  is shipped and the gating template is proven.
 
 ## Future features
 
