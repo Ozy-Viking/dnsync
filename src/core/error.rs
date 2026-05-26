@@ -111,6 +111,25 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+
+    /// The user cancelled an interactive operation (Ctrl-C, Esc, etc.).
+    #[error("operation cancelled by user")]
+    #[diagnostic(
+        code(dns::cancelled),
+        help("The operation was interrupted before completion. No changes were made.")
+    )]
+    UserCancelled,
+
+    /// An MCP transport or server-startup failure.
+    #[error("MCP error: {context}")]
+    #[diagnostic(
+        code(dns::mcp),
+        help(
+            "Check that the MCP transport (stdio) is wired up correctly and \
+              that the configured DNS servers are reachable."
+        )
+    )]
+    Mcp { context: String },
 }
 
 impl Error {
@@ -137,6 +156,8 @@ impl Error {
             Self::Io { .. } => 5,
             Self::Unsupported { .. } => 7,
             Self::Forbidden { .. } => 8,
+            Self::UserCancelled => 130,
+            Self::Mcp { .. } => 1,
             _ => 1,
         }
     }
@@ -182,6 +203,16 @@ impl Error {
     pub fn forbidden(message: impl Into<String>) -> Self {
         Self::Forbidden {
             message: message.into(),
+        }
+    }
+
+    pub fn cancelled() -> Self {
+        Self::UserCancelled
+    }
+
+    pub fn mcp(context: impl Into<String>) -> Self {
+        Self::Mcp {
+            context: context.into(),
         }
     }
 }

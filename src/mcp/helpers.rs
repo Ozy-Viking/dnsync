@@ -21,6 +21,9 @@ pub fn mcp_err(e: Error) -> McpError {
 
 /// Wrap a JSON value into a successful MCP call result.
 pub fn json_result(value: serde_json::Value) -> CallToolResult {
+    // `unwrap_or_else` is a safe fallback, not a panic: any `serde_json::Value`
+    // round-trips through `to_string()`, so pretty-printing failure degrades
+    // gracefully instead of bringing the MCP transport down.
     CallToolResult::success(vec![Content::text(
         serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
     )])
