@@ -26,6 +26,8 @@ pub enum VendorClient {
     Pangolin(crate::vendors::pangolin::client::PangolinClient),
     #[cfg(feature = "cloudflare")]
     Cloudflare(crate::vendors::cloudflare::client::CloudflareClient),
+    #[cfg(feature = "unifi")]
+    Unifi(crate::vendors::unifi::client::UnifiClient),
 }
 
 impl VendorClient {
@@ -55,6 +57,11 @@ impl VendorClient {
             VendorKind::Cloudflare => Ok(Self::Cloudflare(
                 crate::vendors::cloudflare::client_from_server(server, ClientOverrides::default())?,
             )),
+            #[cfg(feature = "unifi")]
+            VendorKind::Unifi => Ok(Self::Unifi(crate::vendors::unifi::client_from_server(
+                server,
+                ClientOverrides::default(),
+            )?)),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -86,6 +93,8 @@ impl VendorClient {
             }
             #[cfg(feature = "pangolin")]
             VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone export")),
+            #[cfg(feature = "unifi")]
+            VendorKind::Unifi => Err(Error::unsupported("UniFi", "zone export")),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -142,6 +151,8 @@ impl VendorClient {
             }
             #[cfg(feature = "pangolin")]
             VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone import")),
+            #[cfg(feature = "unifi")]
+            VendorKind::Unifi => Err(Error::unsupported("UniFi", "zone import")),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -167,6 +178,10 @@ impl VendorClient {
             VendorKind::Cloudflare => Ok(Self::Cloudflare(
                 crate::vendors::cloudflare::client_from_server(server, overrides)?,
             )),
+            #[cfg(feature = "unifi")]
+            VendorKind::Unifi => Ok(Self::Unifi(crate::vendors::unifi::client_from_server(
+                server, overrides,
+            )?)),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -199,6 +214,8 @@ macro_rules! delegate_vendor {
             Self::Pangolin($client) => $body,
             #[cfg(feature = "cloudflare")]
             Self::Cloudflare($client) => $body,
+            #[cfg(feature = "unifi")]
+            Self::Unifi($client) => $body,
         }
     };
 }

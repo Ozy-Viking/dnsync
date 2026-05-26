@@ -14,6 +14,9 @@ pub mod pangolin;
 #[cfg(feature = "cloudflare")]
 pub mod cloudflare;
 
+#[cfg(feature = "unifi")]
+pub mod unifi;
+
 pub struct DnsClient<Vendor> {
     vendor_id: VendorKind,
     vendor_client: Vendor,
