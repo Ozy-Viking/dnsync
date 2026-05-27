@@ -117,40 +117,63 @@ dns query huly.hankin.io --json
 
 ### Output
 
-**Default table** (one row per answer record, header per type):
+The header line starts with `@` (the resolver target), then transport,
+then any transport-specific key=value extras, then the elapsed wall-clock
+time. No BIND-style `;;` prefix; trailing dots on names are stripped.
+Columns are space-padded to fit the widest cell.
+
+**Default table** (one row per answer record, blank line between header
+and answers):
 
 ```
-;; @ 1.1.1.1 (dns)  in 14 ms
+@ 10.5.0.53:853  dot  sni=dns1.hankin.io  9ms
 
-huly.hankin.io.   A    300   192.168.1.42
-huly.hankin.io.   A    300   192.168.1.43
+huly.hankin.io  A  300  10.5.0.42
+huly.hankin.io  A  300  10.5.0.43
 ```
 
-**`--short`**:
+For the system-resolver default the header line names the OS resolver
+the platform actually picked:
 
 ```
-192.168.1.42
-192.168.1.43
+@ 127.0.0.53  dns  system  3ms
+
+huly.hankin.io  A  300  10.5.0.42
+```
+
+Non-`noerror` results append the status to the header line and emit no
+answer rows:
+
+```
+@ 127.0.0.53  dns  system  4ms  NXDOMAIN
+```
+
+**`--short`** — answers only, one per line:
+
+```
+10.5.0.42
+10.5.0.43
 ```
 
 **`--json`** (stable shape, suitable for piping):
 
 ```json
 {
-  "query": { "name": "huly.hankin.io", "types": ["A"] },
+  "query":    { "name": "huly.hankin.io", "types": ["A"] },
   "resolver": {
     "kind": "ad_hoc",            // "system" | "named" | "ad_hoc"
     "name": null,                 // set when kind == "named"
     "transport": "dns",
     "address": "1.1.1.1",
-    "port": 53
+    "port": 53,
+    "url": null                   // set when transport == "doh"
   },
   "elapsed_ms": 14,
+  "status": "noerror",            // "noerror" | "nxdomain" | "servfail" | "refused" | "timeout"
   "answers": [
-    { "name": "huly.hankin.io.", "type": "A", "ttl": 300, "data": "192.168.1.42" },
-    { "name": "huly.hankin.io.", "type": "A", "ttl": 300, "data": "192.168.1.43" }
-  ],
-  "status": "noerror"             // "noerror" | "nxdomain" | "servfail" | "refused" | "timeout"
+    { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.42" },
+    { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.43" }
+  ]
 }
 ```
 
