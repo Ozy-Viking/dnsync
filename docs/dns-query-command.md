@@ -46,12 +46,14 @@ dns query huly.hankin.io                          # system resolver, A
 dns query huly.hankin.io -t AAAA                  # specific record type
 dns q huly.hankin.io                              # short alias
 dns query huly.hankin.io --server dns1            # configured server entry
-dns query huly.hankin.io --server dns1 --transport dot
+dns query huly.hankin.io --server dns1 --dot      # force DoT
+dns query huly.hankin.io --server dns1 --dot --doh # fan out across two
+dns query huly.hankin.io --server dns1 --all      # every enabled block
 dns query huly.hankin.io @1.1.1.1                 # ad-hoc plain DNS
 dns query huly.hankin.io --at tls://9.9.9.9       # ad-hoc DoT
 dns query huly.hankin.io --at https://cloudflare-dns.com/dns-query
 dns query huly.hankin.io --at quic://dns.adguard.com
-dns query huly.hankin.io @9.9.9.9 --transport dot --port 853
+dns query huly.hankin.io @9.9.9.9 --dot --port 853
 dns query huly.hankin.io --json
 ```
 
@@ -65,17 +67,24 @@ dns query huly.hankin.io --json
 - **One target per invocation.** `--server` and `@host`/`--at` are
   mutually exclusive; supplying both is a parse error.
 - **`--server <ID>` selects a configured `[[servers]]` entry** and
-  queries it over whichever of its `[servers.dns|dot|doh|doq]` blocks
-  is appropriate. With `--transport`, the matching block is required;
-  without, the first enabled block in the precedence order
-  `doh → dot → dns → doq` is used.
+  queries it over its `[servers.dns|dot|doh|doq]` blocks. Without any
+  transport flag, the first enabled block in the precedence order
+  `doh → dot → dns → doq` is used. Pass one or more of `--dns`,
+  `--dot`, `--doh`, `--doq` to pick specific transports; pass `--all`
+  to fan out across every enabled block.
+- **`--all` is best-effort.** It runs against whatever transport blocks
+  are configured and `enabled = true` on the target. If only two are
+  enabled, only those two are queried — no error.
 - **Transport is auto-detected from the URL scheme** for ad-hoc targets.
-  `--transport` overrides it. Schemes recognised: `udp://`, `tcp://`,
-  `dns://` (plain), `tls://`, `dot://` (DoT), `https://`, `doh://`
-  (DoH), `quic://`, `doq://` (DoQ).
+  Any single transport flag (`--dns`/`--dot`/`--doh`/`--doq`) overrides
+  it. Schemes recognised: `udp://`, `tcp://`, `dns://` (plain),
+  `tls://`, `dot://` (DoT), `https://`, `doh://` (DoH), `quic://`,
+  `doq://` (DoQ).
 - **Output is dig-flavoured.** Default is a compact table: name, type,
-  TTL, data. `--json` emits a stable JSON shape, `--short` prints only
-  the data column (one per line).
+  TTL, data. Multiple-transport runs print one header+answer block per
+  transport, separated by blank lines, in precedence order. `--json`
+  emits a stable JSON shape with an `answers` array per transport.
+  `--short` prints only the data column.
 - **TTL preserved as observed.** Unlike validation, this command shows
   the resolver's TTL.
 
@@ -88,13 +97,21 @@ dns query huly.hankin.io --json
 | `--server <ID>` | A configured `[[servers]]` entry. Matched case-insensitively against `server.id` (existing rule). |
 | `--at <ADDR>` | Ad-hoc resolver. `host[:port]` or `scheme://host[:port][/path]`. |
 | `@ADDR` (positional) | Sugar for `--at ADDR`. Following dig convention; can appear before or after the domain. |
-| `--transport <dns\|dot\|doh\|doq>` | With `--server`, force which block is used (errors if that block is missing or `enabled = false`). With `--at`/`@`, overrides scheme inference. |
+| `--dns` | Use the `[servers.dns]` block (plain DNS, UDP+TCP). With `--at`, forces plain DNS. Combine with other transport flags to fan out. |
+| `--dot` | Use the `[servers.dot]` block. With `--at`, forces DoT. |
+| `--doh` | Use the `[servers.doh]` block. With `--at`, forces DoH. |
+| `--doq` | Use the `[servers.doq]` block. With `--at`, forces DoQ. Requires the `doq` Cargo feature. |
+| `--all` | Equivalent to passing every transport flag. Only the blocks present and `enabled = true` on the target are actually queried; missing/disabled transports are skipped silently. Requires `--server` (not valid with ad-hoc or the system resolver). |
 | `--port <u16>` | Override the port. Defaults: DNS 53, DoT 853, DoH 443, DoQ 853. |
 | `--tls-server-name <NAME>` | SNI / certificate name override for DoT, DoH, DoQ. |
 | `--timeout <MS>` | Per-attempt timeout (default 5000, overrides the block's `timeout_ms`). |
-| `--tcp` | Force TCP for plain DNS; ignored for other transports. |
+| `--tcp` | With `--dns`, force TCP for the plain-DNS query (skip UDP). Ignored for other transports. |
 | `--short` | Print only the data column. Mirrors `dig +short`. |
 | `--json` | Emit structured output (see §Output). |
+
+`--transport <X>` from earlier drafts is removed; the boolean flags
+above subsume it. Mapping for users converting scripts:
+`--transport dns` → `--dns`, `--transport doh` → `--doh`, etc.
 
 ### CLI rules
 
@@ -104,8 +121,18 @@ dns query huly.hankin.io --json
 - `--port`, `--tls-server-name`, `--tcp` only apply with an ad-hoc
   resolver. With `--server <ID>` they are an error (the transport block
   owns those values).
-- `--transport` is allowed with both `--server` and ad-hoc; with
-  `--server` it picks among that server's transport blocks.
+- **Transport flags require a resolver target.** `--dns`/`--dot`/
+  `--doh`/`--doq`/`--all` with neither `--server` nor `--at`/`@` (i.e.
+  trying to influence the system resolver) is an error — the OS
+  resolver picks the transport itself.
+- **With `--at`/`@ADDR`, at most one** of `--dns`/`--dot`/`--doh`/
+  `--doq` is accepted; combining multiple (or `--all`) is an error —
+  ad-hoc names a single endpoint with one transport. Use `--server`
+  for fan-out.
+- **`--all` is mutually exclusive** with the individual transport
+  flags; supplying both is an error.
+- **`--all` requires `--server`.** With ad-hoc or system resolver it
+  errors with a fix-it hint.
 - `--server <id>` where `<id>` resolves to a cluster, not a server,
   errors with "use `--server <member>` to pick one of <listed
   members>". Cluster fan-out is a future feature.
@@ -141,12 +168,65 @@ the platform actually picked:
 huly.hankin.io  A  300  10.5.0.42
 ```
 
-Non-`noerror` results append the status to the header line and emit no
-answer rows:
+Non-`noerror` results render as a single row in the answer table —
+queried name on the left, status where the data would go — so the
+user can see what was actually asked:
 
 ```
-@ 127.0.0.53  dns  system  4ms  NXDOMAIN
+$ dns q nope.hankin.io
+@ 127.0.0.53  dns  system  3ms
+
+nope.hankin.io  NXDOMAIN
 ```
+
+```
+$ dns q huly.hankin.io --server dns1 --dot
+@ 10.5.0.53:853  dot  sni=dns1.hankin.io  5004ms
+
+huly.hankin.io  TIMEOUT
+```
+
+In a `--type A -t AAAA` query where the type matters, the type column
+is preserved on the status row:
+
+```
+nope.hankin.io  A     NXDOMAIN
+nope.hankin.io  AAAA  NXDOMAIN
+```
+
+**Multiple transports** (`--all`, or combinations of `--dns`/`--dot`/
+`--doh`/`--doq`) — one header+answer block per transport, separated by
+blank lines, in precedence order `doh → dot → dns → doq`:
+
+```
+$ dns q huly.hankin.io --server dns1 --all
+
+@ dns1.hankin.io/dns-query  doh  22ms
+huly.hankin.io  A  300  10.5.0.42
+
+@ 10.5.0.53:853  dot  sni=dns1.hankin.io  9ms
+huly.hankin.io  A  300  10.5.0.42
+
+@ 10.5.0.53:53  dns  4ms
+huly.hankin.io  A  300  10.5.0.42
+```
+
+If a transport is requested explicitly (`--doq`) but the block is
+absent or disabled, that transport gets a header line marking the
+skip; other transports continue:
+
+```
+@ dns1.hankin.io/dns-query  doh  22ms
+huly.hankin.io  A  300  10.5.0.42
+
+@ —  doq  skipped (no [servers.doq] block on dns1)
+```
+
+`--all` skips silently — only blocks that exist and are enabled
+produce output, matching the user's expectation that `--all` on a
+server with two configured transports prints two blocks.
+
+The process exit code is the worst across transports (see §Errors).
 
 **`--short`** — answers only, one per line:
 
@@ -155,24 +235,49 @@ answer rows:
 10.5.0.43
 ```
 
-**`--json`** (stable shape, suitable for piping):
+**`--json`** (stable shape, suitable for piping). One JSON object per
+invocation, with a `results` array — one entry per transport used. A
+single-transport query produces a single-element `results` array; `--all`
+produces one entry per enabled block.
 
 ```json
 {
-  "query":    { "name": "huly.hankin.io", "types": ["A"] },
-  "resolver": {
-    "kind": "ad_hoc",            // "system" | "named" | "ad_hoc"
-    "name": null,                 // set when kind == "named"
-    "transport": "dns",
-    "address": "1.1.1.1",
-    "port": 53,
-    "url": null                   // set when transport == "doh"
+  "query":   { "name": "huly.hankin.io", "types": ["A"] },
+  "target":  {
+    "kind": "named",                  // "system" | "named" | "ad_hoc"
+    "server": "dns1",                  // null when kind != "named"
+    "cluster": "home-dns"              // server's cluster, when set
   },
-  "elapsed_ms": 14,
-  "status": "noerror",            // "noerror" | "nxdomain" | "servfail" | "refused" | "timeout"
-  "answers": [
-    { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.42" },
-    { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.43" }
+  "results": [
+    {
+      "resolver": {
+        "transport": "doh",
+        "address": null,
+        "port": 443,
+        "url": "https://dns1.hankin.io/dns-query",
+        "server_name": "dns1.hankin.io"
+      },
+      "elapsed_ms": 22,
+      "status": "noerror",             // "noerror" | "nxdomain" | "servfail" | "refused" | "timeout" | "skipped" | "unsupported_transport"
+      "skip_reason": null,             // set when status == "skipped"
+      "answers": [
+        { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.42" }
+      ]
+    },
+    {
+      "resolver": {
+        "transport": "dot",
+        "address": "10.5.0.53",
+        "port": 853,
+        "url": null,
+        "server_name": "dns1.hankin.io"
+      },
+      "elapsed_ms": 9,
+      "status": "noerror",
+      "answers": [
+        { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.42" }
+      ]
+    }
   ]
 }
 ```
@@ -187,8 +292,14 @@ answer rows:
 | REFUSED | `refused` | `2` |
 | Timeout | `timeout` | `2` |
 | TLS / HTTPS / QUIC handshake failure | `tls_failure` / `doh_http_failure` / `doq_failure` | `2` |
-| Parse / config error (bad scheme, unknown `--server`, etc.) | n/a | `64` |
+| `--doq` requested on a non-DoQ build, or block disabled | `unsupported_transport` | `2` |
+| Explicit `--<transport>` whose block is missing/disabled (skipped) | `skipped` | per per-transport status of the others; if every requested transport skipped, `2` |
+| Parse / config error (bad scheme, unknown `--server`, `--all` with ad-hoc, etc.) | n/a | `64` |
 
+For multi-transport runs (`--all` or several transport flags), the
+process exit code is the **worst** across the per-transport results, in
+the order `noerror < skipped < nxdomain < servfail/refused/timeout/...`.
+Implicit `--all` skips do not affect the exit code; they are best-effort.
 Mapped through the existing `core::error::Error::exit_code()`.
 
 ## Config — `[servers.dns|dot|doh|doq]` blocks
@@ -238,18 +349,25 @@ allowed_zones = ["example.com"]
 
 ### Selection precedence
 
-For `--server <ID>` without `--transport`, the first enabled block in
-this order is used:
+For `--server <ID>` with **no** transport flags, the first enabled block
+in this order is used:
 
 `doh` → `dot` → `dns` → `doq`
 
 DoQ is last because it is not in default builds. Users with `--features
-doq` who want it first can pass `--transport doq` explicitly or, in a
-future iteration, set a per-server `preferred_transport`.
+doq` who want it first can pass `--doq` explicitly or, in a future
+iteration, set a per-server `preferred_transport`.
 
-With `--transport <X>`, the matching block must exist on the server and
-its `enabled` flag must be true; otherwise the command errors with the
-list of enabled blocks for that server.
+For `--server <ID>` with **one or more** transport flags
+(`--dns`/`--dot`/`--doh`/`--doq`), only those transports run. If an
+explicitly-requested transport's block is missing or disabled on that
+server, the command emits a `skipped` result for it and continues with
+the others; the exit code reflects that. `--all` is equivalent to
+passing every transport flag, except that missing/disabled blocks are
+silently dropped rather than reported as `skipped`.
+
+The output order is always `doh → dot → dns → doq`, regardless of the
+order the flags were supplied on the command line.
 
 ### Field mapping → resolver
 
@@ -409,19 +527,30 @@ target type.
             ▼                            ▼                              ▼
   Resolver::builder_tokio()    cfg.selected_server(Some(id))   parse scheme → transport
   (system resolver)            → DnsServerConfig               parse addr / url / port
-                               pick transport block per        apply --transport / --port /
-                               --transport or precedence       --tls-server-name overrides
-                               (doh → dot → dns → doq)         → ResolverTarget
-                               → ResolverTarget
+                               build the transport set:        apply --dns/--dot/--doh/--doq
+                                 no flags   → first enabled    /--port / --tls-server-name
+                                              block in         overrides
+                                              precedence       → ResolverTarget
+                                 flags      → those blocks     (single-target only;
+                                              (skip if         --all rejected here)
+                                              missing/disabled)
+                                 --all      → every enabled
+                                              block
+                               → Vec<ResolverTarget>
+                                  (length 1 for no-flag /
+                                   ad-hoc; ≥1 for fan-out)
             │                            │                              │
             └────────────┬───────────────┴──────────────────────────────┘
                          ▼
-            HickoryDnsEndpointResolver::resolver_for_target(&target, timeout)
-            (system path skips this and uses the platform resolver directly)
+            For each ResolverTarget:
+              HickoryDnsEndpointResolver::resolver_for_target(&target, timeout)
+              (system path skips this and uses the platform resolver directly)
                          ▼
-            For each --type, call resolver.lookup(fqdn, RR)
+            For each --type × target, call resolver.lookup(fqdn, RR)
                          ▼
-                   Render output
+            Render output (one block per target, precedence order)
+                         ▼
+            Exit code = worst over per-target results
 ```
 
 ## Tests
