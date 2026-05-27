@@ -60,7 +60,8 @@ pub enum ClusterWritePolicy {
 pub struct DnsTransportConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    pub addr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
@@ -71,7 +72,8 @@ pub struct DnsTransportConfig {
 pub struct DotTransportConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    pub addr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,7 +86,8 @@ pub struct DotTransportConfig {
 pub struct DohTransportConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub addr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +97,9 @@ pub struct DohTransportConfig {
 }
 
 /// Logical cluster policy shared by member servers.
+///
+/// `primary` and `preferred_writer` accept either a configured DNS server id or
+/// the special value `auto`, matched case-insensitively.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterConfig {
@@ -103,10 +109,12 @@ pub struct ClusterConfig {
     pub members: Vec<String>,
     #[serde(default)]
     pub write_policy: ClusterWritePolicy,
+    /// Primary server id, or `auto` to discover it dynamically.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catalog_zone: Option<String>,
+    /// Preferred writer server id, or `auto` to discover it dynamically.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred_writer: Option<String>,
 }
@@ -510,6 +518,14 @@ impl AppConfig {
                     server.id
                 )));
             }
+            if let Some(cluster_id) = &server.cluster
+                && !self.clusters.contains_key(cluster_id)
+            {
+                return Err(Error::config(format!(
+                    "DNS server '{}' references unknown cluster '{}'",
+                    server.id, cluster_id
+                )));
+            }
             validate_server_transports(server)?;
             validate_validation_endpoints(server)?;
         }
@@ -594,7 +610,10 @@ fn validate_validation_endpoints(server: &DnsServerConfig) -> Result<()> {
 fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
     if let Some(dns) = &server.dns
         && dns.enabled
-        && dns.addr.trim().is_empty()
+        && dns
+            .addr
+            .as_deref()
+            .is_none_or(|addr| addr.trim().is_empty())
     {
         return Err(Error::config(format!(
             "DNS server '{}' has enabled dns transport without addr",
@@ -604,7 +623,10 @@ fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
 
     if let Some(dot) = &server.dot
         && dot.enabled
-        && dot.addr.trim().is_empty()
+        && dot
+            .addr
+            .as_deref()
+            .is_none_or(|addr| addr.trim().is_empty())
     {
         return Err(Error::config(format!(
             "DNS server '{}' has enabled dot transport without addr",
@@ -614,7 +636,7 @@ fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
 
     if let Some(doh) = &server.doh
         && doh.enabled
-        && doh.url.trim().is_empty()
+        && doh.url.as_deref().is_none_or(|url| url.trim().is_empty())
     {
         return Err(Error::config(format!(
             "DNS server '{}' has enabled doh transport without url",
@@ -646,7 +668,7 @@ fn validate_clusters(
             .into_iter()
             .flatten()
         {
-            if field != "auto" && !server_ids.contains(&field.to_lowercase()) {
+            if !field.eq_ignore_ascii_case("auto") && !server_ids.contains(&field.to_lowercase()) {
                 return Err(Error::config(format!(
                     "cluster '{id}' references unknown DNS server '{field}'"
                 )));
@@ -801,7 +823,9 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     if let Some(ref dns) = server.dns {
         let mut dns_tbl = Table::new();
         dns_tbl["enabled"] = value(dns.enabled);
-        dns_tbl["addr"] = value(dns.addr.as_str());
+        if let Some(ref addr) = dns.addr {
+            dns_tbl["addr"] = value(addr.as_str());
+        }
         if let Some(timeout_ms) = dns.timeout_ms {
             dns_tbl["timeout_ms"] = value(timeout_ms as i64);
         }
@@ -810,7 +834,9 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     if let Some(ref dot) = server.dot {
         let mut dot_tbl = Table::new();
         dot_tbl["enabled"] = value(dot.enabled);
-        dot_tbl["addr"] = value(dot.addr.as_str());
+        if let Some(ref addr) = dot.addr {
+            dot_tbl["addr"] = value(addr.as_str());
+        }
         if let Some(ref server_name) = dot.server_name {
             dot_tbl["server_name"] = value(server_name.as_str());
         }
@@ -822,7 +848,9 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     if let Some(ref doh) = server.doh {
         let mut doh_tbl = Table::new();
         doh_tbl["enabled"] = value(doh.enabled);
-        doh_tbl["url"] = value(doh.url.as_str());
+        if let Some(ref url) = doh.url {
+            doh_tbl["url"] = value(url.as_str());
+        }
         if let Some(ref addr) = doh.addr {
             doh_tbl["addr"] = value(addr.as_str());
         }
@@ -1693,6 +1721,9 @@ mod tests {
                 url = "https://dns1.hankin.io/dns-query"
                 addr = "10.5.0.53:443"
                 server_name = "dns1.hankin.io"
+
+                [clusters.home-dns]
+                members = ["dns1"]
             "#,
         )
         .unwrap();
@@ -1703,18 +1734,49 @@ mod tests {
         let server = reparsed.selected_server(None).unwrap();
 
         assert_eq!(server.cluster.as_deref(), Some("home-dns"));
-        assert_eq!(server.dns.as_ref().unwrap().addr, "10.5.0.53:53");
+        assert_eq!(
+            server.dns.as_ref().unwrap().addr.as_deref(),
+            Some("10.5.0.53:53")
+        );
         assert_eq!(
             server.dot.as_ref().unwrap().server_name.as_deref(),
             Some("dns1.hankin.io")
         );
         assert_eq!(
-            server.doh.as_ref().unwrap().url,
-            "https://dns1.hankin.io/dns-query"
+            server.doh.as_ref().unwrap().url.as_deref(),
+            Some("https://dns1.hankin.io/dns-query")
         );
         assert!(rendered.contains("[servers.dns]"));
         assert!(rendered.contains("[servers.dot]"));
         assert!(rendered.contains("[servers.doh]"));
+    }
+
+    #[test]
+    fn disabled_transport_blocks_can_omit_endpoints() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+
+                [servers.dns]
+                enabled = false
+
+                [servers.dot]
+                enabled = false
+
+                [servers.doh]
+                enabled = false
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let rendered = cfg.render_toml().unwrap();
+
+        assert!(rendered.contains("[servers.dns]"));
+        assert!(rendered.contains("enabled = false"));
+        assert!(!rendered.contains("addr = \"\""));
+        assert!(!rendered.contains("url = \"\""));
     }
 
     #[test]
@@ -1770,6 +1832,24 @@ mod tests {
 
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("unknown DNS server 'dns2'"));
+    }
+
+    #[test]
+    fn server_rejects_unknown_cluster_reference() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+                cluster = "missing"
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("DNS server 'dns1' references unknown cluster 'missing'")
+        );
     }
 
     #[test]
@@ -2230,11 +2310,16 @@ mod tests {
         let rendered = config.render_toml().expect("should render");
         let reparsed: AppConfig =
             toml::from_str(&rendered).expect("rendered sync config should parse back");
-        reparsed.validate().expect("reparsed config should validate");
+        reparsed
+            .validate()
+            .expect("reparsed config should validate");
         assert_eq!(reparsed.sync.len(), 1);
         assert_eq!(reparsed.sync[0].name, "split");
         assert_eq!(
-            reparsed.sync[0].ip_map.get("203.0.113.10").map(String::as_str),
+            reparsed.sync[0]
+                .ip_map
+                .get("203.0.113.10")
+                .map(String::as_str),
             Some("192.168.1.10")
         );
     }

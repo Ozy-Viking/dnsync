@@ -38,7 +38,7 @@ CLI Add / Interactive Wizard
 #### Record Listing/Query Path
 
 ```text
-CLI: dnsync records list example.com
+CLI: dns records list example.com
     → main.rs → cli::runner::run()
     → mcp::tools::records::handle_list_records()  (MCP path)
     OR
@@ -57,8 +57,8 @@ CLI: dnsync records list example.com
 
 #### Zone Import Path
 
-```
-CLI: dnsync zones import example.com zone.file
+```text
+CLI: dns zones import example.com zone.file
     → main.rs → cli::runner::run()
     → mcp::tools::zones::handle_import_zone_file()  (MCP path)
     OR
@@ -75,8 +75,8 @@ CLI: dnsync zones import example.com zone.file
 
 #### Zone Transfer Path
 
-```
-CLI: dnsync zones transfer example.com
+```text
+CLI: dns zones transfer example.com
     → main.rs
         → VendorClient::export_zone_for_server()  ← EXPORT
         → VendorClient::import_zone_for_server()  ← IMPORT
