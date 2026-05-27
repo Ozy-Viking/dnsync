@@ -3,7 +3,8 @@ use inquire::{InquireError, MultiSelect, Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
-    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, ValidationEndpointConfig, VendorKind,
+    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, UNIFI_DEFAULT_BASE_URL, ValidationEndpointConfig,
+    VendorKind,
 };
 use crate::control_plane::policy::PolicyRule;
 use crate::core::error::{Error, Result};
@@ -38,6 +39,10 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
                 kind: VendorKind::Cloudflare,
                 label: "cloudflare",
             },
+            VendorChoice {
+                kind: VendorKind::Unifi,
+                label: "unifi",
+            },
         ];
         Select::new("Vendor:", choices)
             .prompt()
@@ -49,6 +54,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
         VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
         VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
+        VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
     };
 
     let base_url = optional_text(
@@ -73,10 +79,29 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         None
     };
 
-    let org_id = if matches!(vendor, VendorKind::Pangolin) {
-        optional_text("Organisation ID (Pangolin):", "Leave empty to skip", None)?
-    } else {
-        None
+    let org_id = match vendor {
+        VendorKind::Pangolin => {
+            optional_text("Organisation ID (Pangolin):", "Leave empty to skip", None)?
+        }
+        VendorKind::Unifi => Some(
+            Text::new("Site name (UniFi):")
+                .with_help_message(
+                    "Human-readable site name (e.g. \"Default\") or site UUID; stored in org_id. \
+                     Run `dns settings` after saving to list valid site names.",
+                )
+                .with_validator(|input: &str| {
+                    if input.trim().is_empty() {
+                        Ok(Validation::Invalid(
+                            "site is required for UniFi".into(),
+                        ))
+                    } else {
+                        Ok(Validation::Valid)
+                    }
+                })
+                .prompt()
+                .map_err(wizard_err)?,
+        ),
+        _ => None,
     };
 
     let location = {

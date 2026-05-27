@@ -1,16 +1,31 @@
-#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "cloudflare")))]
+#[cfg(not(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+)))]
 compile_error!(
-    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, or `cloudflare`."
+    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, `cloudflare`, or `unifi`."
 );
 
-#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "cloudflare")))]
+#[cfg(not(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+)))]
 fn main() {}
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 use dnslib::{
     cli::{self, RecordCmd, ZoneCmd},
-    control_plane::{app, config, policy, sync},
     control_plane::config::AppConfig,
+    control_plane::{app, config, policy, sync},
     core::{dns::service::DnsService, error},
     mcp::server,
     vendors::runtime::{ClientOverrides, VendorClient},
@@ -23,10 +38,20 @@ use tracing_subscriber::{EnvFilter, fmt};
 use cli::{Cli, Command, ConfigCmd};
 use error::{Error, Result};
 use policy::Policy;
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 use server::DnsServer;
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     let cli = Cli::parse();
@@ -317,7 +342,12 @@ async fn run_inner(cli: Cli) -> Result<()> {
 /// run_mcp(cli, None).await?;
 /// # Ok(()) }
 /// ```
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
     if cli.token.is_some() || cli.base_url.is_some() || !cli.servers.is_empty() {
         return Err(Error::parse(
@@ -355,7 +385,12 @@ async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
 /// run_with_client(cli, client, policy).await?;
 /// # Ok(()) }
 /// ```
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     cli: Cli,
     client: C,
@@ -370,7 +405,12 @@ async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     }
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 async fn run_zone_transfer(
     app_config: Option<&config::AppConfig>,
     zone: &str,
@@ -420,12 +460,22 @@ async fn run_zone_transfer(
     Ok(())
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 async fn server_export_zone(server: &config::DnsServerConfig, zone: &str) -> Result<String> {
     VendorClient::export_zone_for_server(server, zone).await
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 async fn server_import_zone(
     server: &config::DnsServerConfig,
     zone: &str,

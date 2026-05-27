@@ -1,6 +1,11 @@
-#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "cloudflare")))]
+#[cfg(not(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+)))]
 compile_error!(
-    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, or `cloudflare`."
+    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, `cloudflare`, or `unifi`."
 );
 
 pub mod cli;

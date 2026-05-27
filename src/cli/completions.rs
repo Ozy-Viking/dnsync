@@ -1,4 +1,9 @@
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi"
+))]
 pub fn generate_completions(shell: clap_complete::Shell) {
     use clap::CommandFactory;
     use clap_complete::generate;
