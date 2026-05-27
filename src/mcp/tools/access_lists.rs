@@ -11,7 +11,12 @@ pub async fn handle_list_blocked<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
 ) -> Result<CallToolResult, McpError> {
-    run_json(policy.check_read(), access_lists::list_blocked(client)).await
+    Ok(run_json(
+        "dns_list_blocked",
+        policy.check_read(),
+        access_lists::list_blocked(client),
+    )
+    .await)
 }
 
 pub async fn handle_add_blocked<C: DnsService + Send + Sync>(
@@ -19,11 +24,12 @@ pub async fn handle_add_blocked<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: DomainParams,
 ) -> Result<CallToolResult, McpError> {
-    run_json(
+    Ok(run_json(
+        "dns_add_blocked",
         policy.check_write(),
         access_lists::add_blocked(client, &p.domain),
     )
-    .await
+    .await)
 }
 
 pub async fn handle_delete_blocked<C: DnsService + Send + Sync>(
@@ -31,18 +37,24 @@ pub async fn handle_delete_blocked<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: DomainParams,
 ) -> Result<CallToolResult, McpError> {
-    run_json(
+    Ok(run_json(
+        "dns_delete_blocked",
         policy.check_delete(),
         access_lists::delete_blocked(client, &p.domain),
     )
-    .await
+    .await)
 }
 
 pub async fn handle_list_allowed<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
 ) -> Result<CallToolResult, McpError> {
-    run_json(policy.check_read(), access_lists::list_allowed(client)).await
+    Ok(run_json(
+        "dns_list_allowed",
+        policy.check_read(),
+        access_lists::list_allowed(client),
+    )
+    .await)
 }
 
 pub async fn handle_add_allowed<C: DnsService + Send + Sync>(
@@ -50,11 +62,12 @@ pub async fn handle_add_allowed<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: DomainParams,
 ) -> Result<CallToolResult, McpError> {
-    run_json(
+    Ok(run_json(
+        "dns_add_allowed",
         policy.check_write(),
         access_lists::add_allowed(client, &p.domain),
     )
-    .await
+    .await)
 }
 
 pub async fn handle_delete_allowed<C: DnsService + Send + Sync>(
@@ -62,9 +75,10 @@ pub async fn handle_delete_allowed<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: DomainParams,
 ) -> Result<CallToolResult, McpError> {
-    run_json(
+    Ok(run_json(
+        "dns_delete_allowed",
         policy.check_delete(),
         access_lists::delete_allowed(client, &p.domain),
     )
-    .await
+    .await)
 }

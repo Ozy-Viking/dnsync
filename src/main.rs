@@ -16,22 +16,19 @@ use dnslib::{
     vendors::runtime::{ClientOverrides, VendorClient},
 };
 
-use std::process;
-
 use clap::Parser;
-use miette::Report;
 use rmcp::ServiceExt;
 use tracing_subscriber::{EnvFilter, fmt};
 
 use cli::{Cli, Command, ConfigCmd};
-use error::Error;
+use error::{Error, Result};
 use policy::Policy;
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use server::DnsServer;
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 #[tokio::main]
-async fn main() {
+async fn main() -> miette::Result<()> {
     let cli = Cli::parse();
 
     fmt()
@@ -40,20 +37,22 @@ async fn main() {
         )
         .with_writer(std::io::stderr)
         .init();
-    process::exit(run(cli).await);
+    run(cli).await?;
+    Ok(())
 }
 
-/// Dispatches CLI commands, performs the requested operation, and returns an exit status code.
+/// Dispatches CLI commands and performs the requested operation.
 ///
 /// This function interprets the parsed `Cli` command, handles early-exit subcommands (completions,
 /// server id listing, and config subcommands), loads the application configuration for other
 /// commands, and dispatches to specialized handlers (MCP server, record listing across servers,
-/// zone transfer, sync, or single-server command execution). Errors are printed and mapped to
-/// non-zero exit codes.
+/// zone transfer, sync, or single-server command execution). `Error::UserCancelled` is caught
+/// here and rendered as a clean exit; all other errors propagate to `main()` for miette to render.
 ///
 /// # Returns
 ///
-/// `0` on success, a non-zero exit code on error.
+/// `Ok(())` on success, `Err(Error)` on failure. The caller (`main`) returns a
+/// `miette::Result<()>`, so miette will format and print the diagnostic.
 ///
 /// # Examples
 ///
@@ -61,14 +60,26 @@ async fn main() {
 /// // Run the CLI dispatcher with a prepared `cli`.
 /// // The example is `no_run` because constructing a full `Cli` in a doctest depends on the
 /// // surrounding application context.
+/// # async fn doc() -> miette::Result<()> {
 /// let cli = /* build or parse Cli here */;
-/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(run(cli));
-/// std::process::exit(exit);
+/// run(cli).await?;
+/// # Ok(()) }
 /// ```
-async fn run(cli: Cli) -> i32 {
+async fn run(cli: Cli) -> Result<()> {
+    match run_inner(cli).await {
+        Ok(()) => Ok(()),
+        Err(Error::UserCancelled) => {
+            println!("bye felicia");
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn run_inner(cli: Cli) -> Result<()> {
     if let Command::Completions { shell } = cli.command {
         cli::completions::generate_completions(shell);
-        return 0;
+        return Ok(());
     }
 
     if let Command::ServerIds = cli.command {
@@ -78,32 +89,24 @@ async fn run(cli: Cli) -> i32 {
                 println!("{}", server.id);
             }
         }
-        return 0;
+        return Ok(());
     }
 
     if let Command::Config(config_cmd) = cli.command {
         return match config_cmd {
-            ConfigCmd::Init { force } => match config::init_config(cli.config, force) {
-                Ok(path) => {
-                    println!("Wrote config file: {}", path.display());
-                    0
-                }
-                Err(e) => render_error(e),
-            },
+            ConfigCmd::Init { force } => {
+                let path = config::init_config(cli.config, force)?;
+                println!("Wrote config file: {}", path.display());
+                Ok(())
+            }
 
             ConfigCmd::Print => {
-                let toml = match config::AppConfig::load_if_exists(cli.config.clone()) {
-                    Ok(Some(cfg)) => cfg.redact().render_toml(),
-                    Ok(None) => config::AppConfig::render_starter_toml(),
-                    Err(e) => return render_error(e),
+                let toml = match config::AppConfig::load_if_exists(cli.config.clone())? {
+                    Some(cfg) => cfg.redact().render_toml()?,
+                    None => config::AppConfig::render_starter_toml()?,
                 };
-                match toml {
-                    Ok(s) => {
-                        print!("{s}");
-                        0
-                    }
-                    Err(e) => render_error(e),
-                }
+                print!("{toml}");
+                Ok(())
             }
 
             ConfigCmd::Add {
@@ -126,17 +129,7 @@ async fn run(cli: Cli) -> i32 {
                             .flatten()
                             .map(|c| c.servers.into_iter().map(|s| s.id).collect())
                             .unwrap_or_default();
-                    match cli::interactive::run_add_wizard(&existing_ids) {
-                        Ok(s) => s,
-                        Err(e) if e.to_string() == "cancelled" => {
-                            println!("bye felicia");
-                            return 0;
-                        }
-                        Err(e) => {
-                            eprintln!("Error: {e:?}");
-                            return 1;
-                        }
-                    }
+                    cli::interactive::run_add_wizard(&existing_ids)?
                 } else {
                     config::DnsServerConfig {
                         id: id.unwrap_or_default(),
@@ -158,21 +151,14 @@ async fn run(cli: Cli) -> i32 {
                         validation_endpoints,
                     }
                 };
-                match config::add_server(cli.config, server) {
-                    Ok(path) => {
-                        println!("Updated config file: {}", path.display());
-                        0
-                    }
-                    Err(e) => render_error(e),
-                }
+                let path = config::add_server(cli.config, server)?;
+                println!("Updated config file: {}", path.display());
+                Ok(())
             }
         };
     }
 
-    let app_config = match config::AppConfig::load(cli.config.clone()) {
-        Ok(config) => config,
-        Err(e) => return render_error(e),
-    };
+    let app_config = config::AppConfig::load(cli.config.clone())?;
 
     // MCP is handled before single-client resolution so the server can start
     // without requiring a pre-selected server when multiple are configured.
@@ -205,22 +191,19 @@ async fn run(cli: Cli) -> i32 {
             && app_config.as_ref().is_some_and(|c| c.servers.len() > 1);
         if cli.all || !effective_servers.is_empty() || default_all_servers {
             if cli.token.is_some() || cli.base_url.is_some() {
-                return render_error(Error::parse(
+                return Err(Error::parse(
                     "cross-server record list does not accept --token/--base-url; configure credentials per server via config file or environment variables",
                 ));
             }
 
-            let selected = match app::select_record_list_servers(
+            let selected = app::select_record_list_servers(
                 app_config.as_ref(),
                 domain.as_deref(),
                 zone.as_deref(),
                 effective_servers,
-            ) {
-                Ok(selected) => selected,
-                Err(e) => return render_error(e),
-            };
+            )?;
 
-            return match cli::runner::run_record_list_across_servers(
+            cli::runner::run_record_list_across_servers(
                 &selected,
                 domain.as_deref(),
                 zone.as_deref(),
@@ -228,11 +211,8 @@ async fn run(cli: Cli) -> i32 {
                 *use_local_ip,
                 *json,
             )
-            .await
-            {
-                Ok(()) => 0,
-                Err(e) => render_error(e),
-            };
+            .await?;
+            return Ok(());
         }
     }
 
@@ -245,7 +225,7 @@ async fn run(cli: Cli) -> i32 {
     }) = &cli.command
     {
         if cli.token.is_some() || cli.base_url.is_some() {
-            return render_error(Error::parse(
+            return Err(Error::parse(
                 "zone transfer does not accept --token/--base-url; \
                  configure credentials per server via config file or environment variables",
             ));
@@ -272,17 +252,17 @@ async fn run(cli: Cli) -> i32 {
     } = &cli.command
     {
         if cli.token.is_some() || cli.base_url.is_some() {
-            return render_error(Error::parse(
+            return Err(Error::parse(
                 "sync does not accept --token/--base-url; \
                  configure credentials per server via config file or environment variables",
             ));
         }
         if !cli.servers.is_empty() || cli.all {
-            return render_error(Error::parse(
+            return Err(Error::parse(
                 "sync does not accept --server/--all; configure server selection via profile or explicit from/to",
             ));
         }
-        return match sync::run_sync(
+        sync::run_sync(
             app_config.as_ref(),
             profile.as_deref(),
             from.as_deref(),
@@ -292,36 +272,27 @@ async fn run(cli: Cli) -> i32 {
             *apply,
             *json,
         )
-        .await
-        {
-            Ok(()) => 0,
-            Err(e) => render_error(e),
-        };
+        .await?;
+        return Ok(());
     }
 
     if cli.servers.len() > 1 {
-        return render_error(Error::parse(
+        return Err(Error::parse(
             "multiple --server flags are only valid with `record list`; \
              use a single --server for all other commands",
         ));
     }
 
-    let policy = match Policy::from_cli_and_config(&cli, app_config.as_ref()) {
-        Ok(p) => p,
-        Err(e) => return render_error(e),
-    };
+    let policy = Policy::from_cli_and_config(&cli, app_config.as_ref())?;
 
-    let client = match VendorClient::from_cli_options(
+    let client = VendorClient::from_cli_options(
         app_config.as_ref(),
         ClientOverrides {
             selected_server: cli.servers.first().map(|s| s.as_str()),
             base_url: cli.base_url.as_deref(),
             token: cli.token.as_deref(),
         },
-    ) {
-        Ok(client) => client,
-        Err(e) => return render_error(e),
-    };
+    )?;
 
     run_with_client(cli, client, policy).await
 }
@@ -329,24 +300,27 @@ async fn run(cli: Cli) -> i32 {
 /// Start an MCP (MCP-over-stdio) server using the provided CLI options and optional app configuration.
 ///
 /// The function validates that no per-call credentials or server selection flags (`--token`, `--base-url`, `--server`) were supplied;
-/// if any are present it returns a non-zero exit code after emitting a parse error diagnostic. It then constructs a `DnsServer` from the
-/// provided or default configuration and runs it over stdin/stdout. The function returns `0` on a normal shutdown, or `1` on startup or
-/// transport errors (and prints a brief error message to stderr).
+/// if any are present it returns `Err(Error::Parse { .. })` so the caller's miette pipeline can render the diagnostic. It then
+/// constructs a `DnsServer` from the provided or default configuration and runs it over stdin/stdout. Startup or transport
+/// failures are wrapped in `Error::Mcp { .. }` and propagated.
+///
+/// # Returns
+///
+/// `Ok(())` on a clean shutdown, `Err(Error)` on validation, startup, or transport failure.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// # use tokio::runtime::Runtime;
+/// # async fn doc() -> miette::Result<()> {
 /// # use dnsync_main::{run_mcp, Cli, AppConfig};
-/// let rt = Runtime::new().unwrap();
 /// let cli = Cli { token: None, base_url: None, servers: vec![], access: None, allow_zone: vec![], config: None, ..Default::default() };
-/// let exit = rt.block_on(async { run_mcp(cli, None).await });
-/// assert!(exit == 0 || exit == 1);
+/// run_mcp(cli, None).await?;
+/// # Ok(()) }
 /// ```
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
-async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> i32 {
+async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
     if cli.token.is_some() || cli.base_url.is_some() || !cli.servers.is_empty() {
-        return render_error(Error::parse(
+        return Err(Error::parse(
             "`mcp` does not accept --token, --base-url, or --server; \
              configure server credentials in the config file and pass `server_id` per tool call",
         ));
@@ -356,56 +330,44 @@ async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> i32 {
     tracing::info!("Starting MCP server (stdio)");
     let dns_server = DnsServer::new(config, cli.access, cli.allow_zone);
     let transport = (tokio::io::stdin(), tokio::io::stdout());
-    match dns_server.serve(transport).await {
-        Ok(service) => match service.waiting().await {
-            Ok(_) => 0,
-            Err(e) => {
-                eprintln!("error: MCP transport error: {e}");
-                1
-            }
-        },
-        Err(e) => {
-            eprintln!("error: failed to start MCP server: {e}");
-            1
-        }
-    }
+    let service = dns_server
+        .serve(transport)
+        .await
+        .map_err(|e| Error::mcp(format!("failed to start MCP server: {e}")))?;
+    service
+        .waiting()
+        .await
+        .map_err(|e| Error::mcp(format!("MCP transport error: {e}")))?;
+    Ok(())
 }
 
 /// Dispatches non-MCP CLI commands to the runner using the provided DNS client.
 ///
 /// # Returns
 ///
-/// `0` on success, otherwise an exit code derived from the encountered error.
+/// `Ok(())` on success, `Err(Error)` propagated from the runner on failure.
 ///
 /// # Examples
 ///
 /// ```no_run
+/// # async fn doc() -> miette::Result<()> {
 /// // Assume `client` implements `DnsService` and `cli`/`policy` are prepared.
-/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(async {
-///     run_with_client(cli, client, policy).await
-/// });
-/// assert!(exit >= 0);
+/// run_with_client(cli, client, policy).await?;
+/// # Ok(()) }
 /// ```
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     cli: Cli,
     client: C,
     _policy: Policy,
-) -> i32 {
+) -> Result<()> {
     match cli.command {
         Command::Mcp => unreachable!("handled in run()"),
-        other => match cli::runner::run(&client, other).await {
-            Ok(_) => 0,
-            Err(e) => render_error(e),
-        },
+        other => {
+            cli::runner::run(&client, other).await?;
+            Ok(())
+        }
     }
-}
-
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
-fn render_error(e: Error) -> i32 {
-    let code = e.exit_code();
-    eprintln!("{:?}", Report::from(e));
-    code
 }
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
@@ -416,38 +378,32 @@ async fn run_zone_transfer(
     to_id: &str,
     overwrite: bool,
     overwrite_zone: bool,
-) -> i32 {
+) -> Result<()> {
     let Some(cfg) = app_config else {
-        return render_error(Error::parse(
+        return Err(Error::parse(
             "zone transfer requires a config file with --from and --to server entries",
         ));
     };
 
-    let from_server = match cfg.selected_server(Some(from_id)) {
-        Ok(s) => s,
-        Err(e) => return render_error(e),
-    };
-    let to_server = match cfg.selected_server(Some(to_id)) {
-        Ok(s) => s,
-        Err(e) => return render_error(e),
-    };
+    let from_server = cfg.selected_server(Some(from_id))?;
+    let to_server = cfg.selected_server(Some(to_id))?;
 
-    eprintln!(
-        "Exporting '{zone}' from '{from_id}' ({:?})…",
-        from_server.vendor
+    tracing::info!(
+        zone = %zone,
+        from = %from_id,
+        vendor = ?from_server.vendor,
+        "Exporting zone"
     );
-    let zone_file = match server_export_zone(from_server, zone).await {
-        Ok(text) => text,
-        Err(e) => return render_error(e),
-    };
+    let zone_file = server_export_zone(from_server, zone).await?;
 
-    eprintln!(
-        "Importing {} bytes into '{to_id}' ({:?})…",
-        zone_file.len(),
-        to_server.vendor
+    tracing::info!(
+        bytes = zone_file.len(),
+        to = %to_id,
+        vendor = ?to_server.vendor,
+        "Importing zone"
     );
     let file_name = format!("{zone}.txt");
-    match server_import_zone(
+    let result = server_import_zone(
         to_server,
         zone,
         file_name,
@@ -455,23 +411,17 @@ async fn run_zone_transfer(
         overwrite,
         overwrite_zone,
     )
-    .await
-    {
-        Ok(result) => {
-            if !result.is_null() {
-                match serde_json::to_string_pretty(&result) {
-                    Ok(pretty) => println!("{pretty}"),
-                    Err(e) => return render_error(Error::parse(format!("serialise error: {e}"))),
-                }
-            }
-            0
-        }
-        Err(e) => render_error(e),
+    .await?;
+    if !result.is_null() {
+        let pretty = serde_json::to_string_pretty(&result)
+            .map_err(|e| Error::parse(format!("serialise error: {e}")))?;
+        println!("{pretty}");
     }
+    Ok(())
 }
 
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
-async fn server_export_zone(server: &config::DnsServerConfig, zone: &str) -> Result<String, Error> {
+async fn server_export_zone(server: &config::DnsServerConfig, zone: &str) -> Result<String> {
     VendorClient::export_zone_for_server(server, zone).await
 }
 
@@ -483,7 +433,7 @@ async fn server_import_zone(
     file_bytes: Vec<u8>,
     overwrite: bool,
     overwrite_zone: bool,
-) -> Result<serde_json::Value, Error> {
+) -> Result<serde_json::Value> {
     VendorClient::import_zone_for_server(
         server,
         zone,
@@ -576,7 +526,7 @@ mod tests {
         let path = temp_config_path("config-init");
         let status = run(config_cli(path.clone(), false)).await;
 
-        assert_eq!(status, 0);
+        assert!(status.is_ok(), "expected Ok, got: {status:?}");
         assert!(path.exists());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

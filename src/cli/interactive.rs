@@ -6,8 +6,9 @@ use crate::control_plane::config::{
     ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, ValidationEndpointConfig, VendorKind,
 };
 use crate::control_plane::policy::PolicyRule;
+use crate::core::error::{Error, Result};
 
-pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig> {
+pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
     let existing: Vec<String> = existing_ids.iter().map(|s| s.to_lowercase()).collect();
     let id = Text::new("Server ID:")
         .with_help_message("Unique identifier for this server entry")
@@ -139,7 +140,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
         let zone = match Text::new("Allowed zone:").with_help_message(&help).prompt() {
             Ok(z) => z,
             Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
-                return Err(miette::miette!("cancelled"));
+                return Err(Error::cancelled());
             }
             Err(e) => return Err(wizard_err(e)),
         };
@@ -169,14 +170,14 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
         {
             Ok(endpoint) => endpoint,
             Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
-                return Err(miette::miette!("cancelled"));
+                return Err(Error::cancelled());
             }
             Err(e) => return Err(wizard_err(e)),
         };
         if endpoint.is_empty() {
             break;
         }
-        validation_endpoints.push(endpoint.parse().map_err(miette::Error::msg)?);
+        validation_endpoints.push(endpoint.parse::<ValidationEndpointConfig>().map_err(Error::parse)?);
     }
 
     Ok(DnsServerConfig {
@@ -200,7 +201,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
     })
 }
 
-fn optional_text(label: &str, help: &str, default: Option<&str>) -> miette::Result<Option<String>> {
+fn optional_text(label: &str, help: &str, default: Option<&str>) -> Result<Option<String>> {
     let mut builder = Text::new(label).with_help_message(help);
     if let Some(d) = default {
         builder = builder.with_default(d);
@@ -209,8 +210,14 @@ fn optional_text(label: &str, help: &str, default: Option<&str>) -> miette::Resu
     Ok(if val.is_empty() { None } else { Some(val) })
 }
 
-fn wizard_err(e: inquire::InquireError) -> miette::Error {
-    miette::miette!("{e}")
+fn wizard_err(e: inquire::InquireError) -> Error {
+    match e {
+        InquireError::OperationCanceled | InquireError::OperationInterrupted => Error::cancelled(),
+        other => Error::io(
+            format!("interactive prompt failed: {other}"),
+            std::io::Error::other(other.to_string()),
+        ),
+    }
 }
 
 // ─── Display wrappers so Select can render enum variants ─────────────────────
