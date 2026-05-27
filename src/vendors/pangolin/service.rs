@@ -17,6 +17,7 @@ use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
+use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
     RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
@@ -118,6 +119,7 @@ impl DnsVendor for PangolinClient {
             settings: true,
             zone_import: false,
             zone_export: false,
+            logs: false,
         }
     }
 }
@@ -353,6 +355,12 @@ impl SettingsRead for PangolinClient {
             )
             .await?;
         Ok(redact_org_keys(data))
+    }
+}
+
+impl LogsRead for PangolinClient {
+    async fn get_logs(&self, _: LogsOptions) -> Result<Vec<LogLine>> {
+        Err(Error::unsupported("Pangolin", "logs"))
     }
 }
 

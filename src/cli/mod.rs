@@ -115,6 +115,23 @@ pub enum Command {
     /// Show server settings
     Settings,
 
+    /// Fetch DNS query logs
+    Logs {
+        /// Maximum number of log entries to return
+        #[arg(long, default_value_t = 50)]
+        lines: u32,
+        /// Start time: ISO 8601 (2024-01-01T10:00:00), relative duration (10m, 2h, 1d, 30s),
+        /// or time of day (14:30 → most recent occurrence)
+        #[arg(long)]
+        start: Option<String>,
+        /// End time: same format as --start
+        #[arg(long)]
+        end: Option<String>,
+        /// Minimum log level; omit to show all
+        #[arg(long, value_enum)]
+        level: Option<crate::core::dns::logs::LogLevel>,
+    },
+
     /// Print a shell completion script to stdout.
     ///
     /// Redirect the output to a file in your shell's completions directory:

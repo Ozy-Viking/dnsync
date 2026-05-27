@@ -11,7 +11,8 @@ use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
     RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
 };
-use crate::core::error::Result;
+use crate::core::dns::logs::{LogLevel, LogLine, LogsOptions, LogsRead};
+use crate::core::error::{Error, Result};
 use crate::vendors::technitium::client::TechnitiumClient;
 
 impl DnsVendor for TechnitiumClient {
@@ -28,6 +29,7 @@ impl DnsVendor for TechnitiumClient {
             settings: true,
             zone_import: true,
             zone_export: true,
+            logs: true,
         }
     }
 }
@@ -264,4 +266,46 @@ impl SettingsRead for TechnitiumClient {
     async fn get_settings(&self) -> Result<Value> {
         self.get("/api/settings/get", &[]).await
     }
+}
+
+impl LogsRead for TechnitiumClient {
+    #[instrument(skip(self, options), fields(vendor = "technitium", operation = "get_logs"))]
+    async fn get_logs(&self, options: LogsOptions) -> Result<Vec<LogLine>> {
+        let lines = options.lines.to_string();
+        let mut params: Vec<(&str, &str)> = vec![("entriesPerPage", &lines)];
+        if let Some(ref s) = options.start { params.push(("start", s)); }
+        if let Some(ref e) = options.end   { params.push(("end",   e)); }
+        let response_type = match options.level {
+            Some(LogLevel::Critical) | Some(LogLevel::Error) => Some("Dropped"),
+            Some(LogLevel::Warning)                          => Some("Blocked"),
+            _                                                => None,
+        };
+        if let Some(rt) = response_type { params.push(("responseType", rt)); }
+        let raw = self.get("/api/log/query", &params).await?;
+        parse_log_lines(&raw)
+    }
+}
+
+fn parse_log_lines(raw: &Value) -> Result<Vec<LogLine>> {
+    let entries = raw["response"]["entries"]
+        .as_array()
+        .ok_or_else(|| Error::parse("log query response missing entries array"))?;
+    let lines = entries.iter().map(|e| {
+        let response_type = e["responseType"].as_str().unwrap_or("");
+        let level = match response_type {
+            "Dropped"                                                    => LogLevel::Error,
+            "Blocked"                                                    => LogLevel::Warning,
+            "Cached" | "Recursive" | "Authoritative" | "LocallyServed"  => LogLevel::Info,
+            _                                                            => LogLevel::Debug,
+        };
+        let name  = e["question"]["name"].as_str().unwrap_or("");
+        let qtype = e["question"]["type"].as_str().unwrap_or("");
+        let title = if name.is_empty() { None } else { Some(format!("{name} ({qtype})")) };
+        let rcode     = e["rCode"].as_str().unwrap_or("");
+        let client_ip = e["clientIpAddress"].as_str().unwrap_or("");
+        let message   = format!("{response_type}: {rcode} from {client_ip}");
+        let timestamp = e["timestamp"].as_str().unwrap_or("").to_string();
+        LogLine { timestamp, level, title, message }
+    }).collect();
+    Ok(lines)
 }
