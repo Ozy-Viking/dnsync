@@ -142,7 +142,22 @@ id = "pg"
 vendor = "pangolin"
 org_id = "my-org"
 token_env = "PANGOLIN_API_TOKEN"
+
+# Named record-sync profile — see the Sync section below.
+[[sync]]
+name = "home"          # invoked as `dns sync home`
+from = "cf"            # source server id
+to = "home"            # destination server id
+zones = ["example.com"]  # optional; omit to sync every zone on the source
+
+[sync.ip_map]
+"203.0.113.10" = "192.168.1.10"
+"203.0.113.11" = "192.168.1.11"
 ```
+
+Each `[[sync]]` profile names a `from`/`to` pair of server ids and an optional
+`ip_map` of `external = internal` address rewrites. Both sides of a mapping
+must be valid IP addresses of the same family (IPv4↔IPv4 or IPv6↔IPv6).
 
 Vendor defaults when no `base_url` is set:
 - `technitium` → `http://localhost:5380`
@@ -208,6 +223,7 @@ Commands:
   mcp         Start as MCP stdio server
   zone        Manage DNS zones
   record      Manage DNS records
+  sync        Sync records between two configured servers, remapping IPs
   cache       Manage the DNS cache
   stats       View server statistics
   blocked     Manage blocked domains
@@ -297,6 +313,34 @@ normalizes them into the same shape used by other vendors. `--use-local-ip`
 optionally resolves A/AAAA record names with Hickory and prefers a
 private/local address when one is visible; without the flag, provider API
 values are preserved exactly.
+
+### Sync
+
+`dns sync` copies records from one configured server to another, optionally
+rewriting IP addresses on A/AAAA records — for example, mapping a public
+address to its internal LAN equivalent ("split-horizon" DNS).
+
+```bash
+dns sync home                                   # run the "home" profile (dry run)
+dns sync home --apply                           # commit the changes
+dns sync home --json                            # emit the plan as JSON
+dns sync --from cf --to home --zone example.com # ad-hoc, no profile
+dns sync --from cf --to home --zone example.com --map 203.0.113.10=192.168.1.10
+```
+
+Sync is **dry-run by default** — it prints the planned changes and writes
+nothing until `--apply` is passed. It is **additive**: it adds records the
+destination is missing and updates record sets whose values differ, but never
+prunes whole names that exist only on the destination. Server-managed records
+(SOA, DNSSEC) and disabled records are skipped; source TTLs are preserved.
+
+Because it reads and writes individual records through the vendor-neutral API,
+`sync` works between any pair of supported vendors — including Pangolin, which
+cannot participate in `zone transfer`.
+
+Sync pairs and their IP-mapping tables can be stored as named `[[sync]]`
+profiles in the config file (see below). CLI flags override the profile, and
+`--map SRC=DST` entries merge into and override the profile's `ip_map`.
 
 ### Cache
 

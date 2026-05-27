@@ -6,16 +6,28 @@ use serde::Deserialize;
 use crate::core::dns::records::{RecordData, RecordSelector};
 use crate::core::dns::zones::ZoneImportOptions;
 
+// ─── Shared server scope ───────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ServerScopeParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
+}
+
 // ─── Zone params ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ZoneParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     /// The zone name, e.g. "example.com"
     pub zone: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ListZonesParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     /// Page number for pagination (default: 1)
     pub page_number: Option<u32>,
     /// Zones per page (default: 50)
@@ -24,6 +36,8 @@ pub struct ListZonesParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct CreateZoneParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     /// Zone name, e.g. "example.com"
     pub zone: String,
     /// Zone type: Primary, Secondary, Stub, Forwarder
@@ -32,12 +46,16 @@ pub struct CreateZoneParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExportZoneFileParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     /// Zone name to export, e.g. "example.com"
     pub zone: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ImportZoneFileParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     /// Zone name the file will be imported into (must already exist)
     pub zone: String,
     /// Full RFC 1035 zone file content as a string
@@ -52,6 +70,8 @@ pub struct ImportZoneFileParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ListRecordsParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     /// Domain to list records for
     pub domain: String,
     /// Zone name (if different from domain)
@@ -63,6 +83,8 @@ pub struct ListRecordsParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AddRecordParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     pub zone: String,
     pub domain: String,
     /// TTL in seconds (default: 3600)
@@ -74,6 +96,8 @@ pub struct AddRecordParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct DeleteRecordParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     pub zone: String,
     pub domain: String,
     /// Which record(s) to delete. Only the `type` field is required.
@@ -84,11 +108,15 @@ pub struct DeleteRecordParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct DomainParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     pub domain: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct StatsParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
     /// LastHour, LastDay, LastWeek, LastMonth, LastYear (default: LastDay)
     pub stats_type: Option<String>,
 }

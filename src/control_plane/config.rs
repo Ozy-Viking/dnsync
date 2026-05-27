@@ -191,6 +191,33 @@ pub struct AppConfig {
     pub servers: Vec<DnsServerConfig>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub clusters: BTreeMap<String, ClusterConfig>,
+
+    /// Named record-sync profiles (see `dns sync`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sync: Vec<SyncProfile>,
+}
+
+/// A named record-sync profile: copy records from one configured server to
+/// another, optionally rewriting IP addresses on A/AAAA records.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncProfile {
+    /// Unique profile name, invoked as `dns sync <name>`.
+    pub name: String,
+
+    /// Source server id — must match a `[[servers]]` entry.
+    pub from: String,
+
+    /// Destination server id — must match a `[[servers]]` entry.
+    pub to: String,
+
+    /// Zones to sync. Empty means every zone found on the source server.
+    #[serde(default)]
+    pub zones: Vec<String>,
+
+    /// Explicit `source = destination` IP rewrites applied to A/AAAA records.
+    #[serde(default)]
+    pub ip_map: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,6 +412,7 @@ impl AppConfig {
                 validation_endpoints: Vec::new(),
             }],
             clusters: BTreeMap::new(),
+            sync: Vec::new(),
         }
     }
 
@@ -398,6 +426,9 @@ impl AppConfig {
             append_server_entry(&mut doc, server);
         }
         append_cluster_entries(&mut doc, &self.clusters);
+        for profile in &self.sync {
+            append_sync_entry(&mut doc, profile);
+        }
         Ok(doc.to_string())
     }
 
@@ -415,6 +446,7 @@ impl AppConfig {
                 })
                 .collect(),
             clusters: self.clusters.clone(),
+            sync: self.sync.clone(),
         }
     }
 
@@ -482,6 +514,42 @@ impl AppConfig {
             validate_validation_endpoints(server)?;
         }
         validate_clusters(&self.clusters, &ids)?;
+
+        let mut sync_names = std::collections::HashSet::new();
+        for profile in &self.sync {
+            if profile.name.trim().is_empty() {
+                return Err(Error::config(
+                    "config contains a sync profile with an empty name",
+                ));
+            }
+            if !sync_names.insert(profile.name.to_lowercase()) {
+                return Err(Error::config(format!(
+                    "config contains duplicate sync profile name '{}'",
+                    profile.name
+                )));
+            }
+            if !ids.contains(&profile.from.to_lowercase()) {
+                return Err(Error::config(format!(
+                    "sync profile '{}' references unknown source server '{}'",
+                    profile.name, profile.from
+                )));
+            }
+            if !ids.contains(&profile.to.to_lowercase()) {
+                return Err(Error::config(format!(
+                    "sync profile '{}' references unknown destination server '{}'",
+                    profile.name, profile.to
+                )));
+            }
+            if profile.from.to_lowercase() == profile.to.to_lowercase() {
+                return Err(Error::config(format!(
+                    "sync profile '{}' has identical source and destination server '{}'",
+                    profile.name, profile.from
+                )));
+            }
+            for (src, dst) in &profile.ip_map {
+                validate_ip_pair(&profile.name, src, dst)?;
+            }
+        }
 
         Ok(())
     }
@@ -779,6 +847,68 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
             e.insert(Item::ArrayOfTables(aot));
         }
     }
+}
+
+/// Append a `[[sync]]` profile entry to a toml_edit document without touching
+/// any existing content.
+fn append_sync_entry(doc: &mut toml_edit::DocumentMut, profile: &SyncProfile) {
+    use toml_edit::{Array, ArrayOfTables, Item, Table, value};
+
+    let mut tbl = Table::new();
+    // Blank line before each [[sync]] header for readability.
+    tbl.decor_mut().set_prefix("\n");
+
+    tbl["name"] = value(profile.name.as_str());
+    tbl["from"] = value(profile.from.as_str());
+    tbl["to"] = value(profile.to.as_str());
+
+    let mut zones = Array::new();
+    for zone in &profile.zones {
+        zones.push(zone.as_str());
+    }
+    tbl["zones"] = value(zones);
+
+    if !profile.ip_map.is_empty() {
+        let mut map_tbl = Table::new();
+        for (src, dst) in &profile.ip_map {
+            map_tbl[src.as_str()] = value(dst.as_str());
+        }
+        tbl["ip_map"] = Item::Table(map_tbl);
+    }
+
+    match doc.entry("sync") {
+        toml_edit::Entry::Occupied(mut e) => {
+            if let Some(aot) = e.get_mut().as_array_of_tables_mut() {
+                aot.push(tbl);
+            }
+        }
+        toml_edit::Entry::Vacant(e) => {
+            let mut aot = ArrayOfTables::new();
+            aot.push(tbl);
+            e.insert(Item::ArrayOfTables(aot));
+        }
+    }
+}
+
+/// Validate a single `ip_map` entry: both sides must parse as IP addresses of
+/// the same family.
+fn validate_ip_pair(profile: &str, src: &str, dst: &str) -> Result<()> {
+    let source: IpAddr = src.parse().map_err(|_| {
+        Error::config(format!(
+            "sync profile '{profile}': '{src}' is not a valid IP address"
+        ))
+    })?;
+    let dest: IpAddr = dst.parse().map_err(|_| {
+        Error::config(format!(
+            "sync profile '{profile}': '{dst}' is not a valid IP address"
+        ))
+    })?;
+    if source.is_ipv4() != dest.is_ipv4() {
+        return Err(Error::config(format!(
+            "sync profile '{profile}': IP mapping '{src}' = '{dst}' mixes IPv4 and IPv6"
+        )));
+    }
+    Ok(())
 }
 
 fn write_default_config(path: &Path, force: bool) -> Result<()> {
@@ -2052,5 +2182,136 @@ mod tests {
         let config: AppConfig = toml::from_str(toml).expect("should parse");
         let server = config.selected_server(None).unwrap();
         assert_eq!(server.location, Some(ServerLocation::External));
+    }
+
+    // ── sync profiles ─────────────────────────────────────────────────────────
+
+    fn sync_config() -> &'static str {
+        r#"
+            [[servers]]
+            id = "cf"
+            token = "tok"
+
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[sync]]
+            name = "split"
+            from = "cf"
+            to = "home"
+            zones = ["example.com"]
+
+            [sync.ip_map]
+            "203.0.113.10" = "192.168.1.10"
+        "#
+    }
+
+    #[test]
+    fn parses_and_validates_sync_profile() {
+        let config: AppConfig = toml::from_str(sync_config()).expect("should parse");
+        config.validate().expect("sync profile should validate");
+
+        assert_eq!(config.sync.len(), 1);
+        let profile = &config.sync[0];
+        assert_eq!(profile.name, "split");
+        assert_eq!(profile.from, "cf");
+        assert_eq!(profile.to, "home");
+        assert_eq!(profile.zones, ["example.com"]);
+        assert_eq!(
+            profile.ip_map.get("203.0.113.10").map(String::as_str),
+            Some("192.168.1.10")
+        );
+    }
+
+    #[test]
+    fn sync_profile_round_trips_through_render_toml() {
+        let config: AppConfig = toml::from_str(sync_config()).expect("should parse");
+        let rendered = config.render_toml().expect("should render");
+        let reparsed: AppConfig =
+            toml::from_str(&rendered).expect("rendered sync config should parse back");
+        reparsed.validate().expect("reparsed config should validate");
+        assert_eq!(reparsed.sync.len(), 1);
+        assert_eq!(reparsed.sync[0].name, "split");
+        assert_eq!(
+            reparsed.sync[0].ip_map.get("203.0.113.10").map(String::as_str),
+            Some("192.168.1.10")
+        );
+    }
+
+    #[test]
+    fn rejects_sync_profile_with_unknown_server() {
+        let config: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf"
+                token = "tok"
+
+                [[sync]]
+                name = "bad"
+                from = "cf"
+                to = "missing"
+            "#,
+        )
+        .expect("should parse before validation");
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("unknown destination server"));
+    }
+
+    #[test]
+    fn rejects_sync_profile_with_family_mismatched_ip_map() {
+        let config: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf"
+                token = "tok"
+
+                [[servers]]
+                id = "home"
+                token = "tok"
+
+                [[sync]]
+                name = "bad"
+                from = "cf"
+                to = "home"
+
+                [sync.ip_map]
+                "203.0.113.10" = "fd00::1"
+            "#,
+        )
+        .expect("should parse before validation");
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("IPv4 and IPv6"));
+    }
+
+    #[test]
+    fn rejects_duplicate_sync_profile_names() {
+        let config: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf"
+                token = "tok"
+
+                [[servers]]
+                id = "home"
+                token = "tok"
+
+                [[sync]]
+                name = "dup"
+                from = "cf"
+                to = "home"
+
+                [[sync]]
+                name = "DUP"
+                from = "home"
+                to = "cf"
+            "#,
+        )
+        .expect("should parse before validation");
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("duplicate sync profile name"));
     }
 }

@@ -209,6 +209,80 @@ impl Policy {
 }
 
 impl Policy {
+    /// Constructs an effective `Policy` for a single DNS server by combining the server's MCP
+    /// access configuration with CLI-provided access and zone overrides.
+    ///
+    /// - Operation permissions: if `cli_access` is empty the server's MCP `access` is used;
+    ///   otherwise the resulting allowed operations are the intersection of `cli_access` and the
+    ///   server's MCP `access` (the CLI cannot broaden permissions beyond the server's config).
+    /// - Zone restrictions: if `cli_allow_zone` is empty the server's configured `allowed_zones`
+    ///   (if any) is used; if `cli_allow_zone` is non-empty it becomes the resulting zone list.
+    ///   When the server has configured allowed zones, each CLI-provided zone is validated against
+    ///   the server's allowed zones (subdomains and case-insensitive matches are permitted);
+    ///   a CLI zone outside the server's configured zones causes a `PolicyViolation` error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::PolicyViolation` when any entry in `cli_allow_zone` is not permitted by the
+    /// server's MCP configured allowed zones (when that restriction exists).
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use crate::control_plane::policy::Policy;
+    /// use crate::control_plane::config::DnsServerConfig;
+    ///
+    /// // Construct `server`, `cli_access`, and `cli_allow_zone` according to your application.
+    /// let server: DnsServerConfig = /* server from config */ unimplemented!();
+    /// let cli_access = vec![]; // empty means "use server MCP access"
+    /// let cli_allow_zone: Vec<String> = vec![]; // empty means "use server MCP zones"
+    ///
+    /// let policy = Policy::for_server(&server, &cli_access, &cli_allow_zone)?;
+    /// ```ignore
+    pub fn for_server(
+        server: &crate::control_plane::config::DnsServerConfig,
+        cli_access: &[PolicyRule],
+        cli_allow_zone: &[String],
+    ) -> Result<Self> {
+        let mcp = &server.mcp;
+
+        let config_set: HashSet<PolicyRule> = mcp.access.iter().cloned().collect();
+        let cli_set: HashSet<PolicyRule> = cli_access.iter().cloned().collect();
+
+        let allowed: HashSet<PolicyRule> = if cli_set.is_empty() {
+            config_set
+        } else {
+            cli_set.intersection(&config_set).cloned().collect()
+        };
+
+        let configured_zones =
+            (!mcp.allowed_zones.is_empty()).then_some(&mcp.allowed_zones);
+
+        let allowed_zones = if cli_allow_zone.is_empty() {
+            configured_zones.cloned()
+        } else if let Some(configured) = configured_zones {
+            let configured_policy = Self::new(
+                [PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete],
+                Some(configured.clone()),
+            );
+            for zone in cli_allow_zone {
+                configured_policy.check_zone(zone).map_err(|_| {
+                    Error::policy_violation(
+                        format!(
+                            "--allow-zone '{zone}' is outside this server's configured MCP allowed zones"
+                        ),
+                        "Remove the override or choose a zone already permitted by this server's config.",
+                    )
+                })?;
+            }
+            Some(cli_allow_zone.to_vec())
+        } else {
+            Some(cli_allow_zone.to_vec())
+        };
+
+        Ok(Self::new(allowed, allowed_zones))
+    }
+
     /// Build a `Policy` from CLI options and config.
     pub fn from_cli_and_config(cli: &Cli, config: Option<&AppConfig>) -> Result<Self> {
         let mcp = config
@@ -491,5 +565,103 @@ mod tests {
         let s = both.instructions_suffix();
         assert!(s.contains("Read-only"));
         assert!(s.contains("example.com"));
+    }
+
+    // ── Policy::for_server ────────────────────────────────────────────────────
+
+    use crate::control_plane::config::{DnsServerConfig, McpPermissions, VendorKind};
+
+    /// Constructs a test `DnsServerConfig` with the provided MCP permissions.
+    ///
+    /// The returned config is populated with a fixed id, vendor, token and the given
+    /// `access` and `allowed_zones` embedded in `mcp`. Other fields are left as
+    /// None or empty suitable for unit tests.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let cfg = server_with_mcp(vec![PolicyRule::Read, PolicyRule::Write], vec!["example.com".into()]);
+    /// assert_eq!(cfg.id, "test");
+    /// assert_eq!(cfg.mcp.allowed_zones.len(), 1);
+    /// assert!(cfg.mcp.access.contains(&PolicyRule::Read));
+    /// ```ignore
+    fn server_with_mcp(access: Vec<PolicyRule>, allowed_zones: Vec<String>) -> DnsServerConfig {
+        DnsServerConfig {
+            id: "test".into(),
+            vendor: VendorKind::Technitium,
+            location: None,
+            base_url: None,
+            base_url_env: None,
+            token: Some("tok".into()),
+            token_env: None,
+            org_id: None,
+            mcp: McpPermissions { access, allowed_zones },
+            validation_endpoints: vec![],
+        }
+    }
+
+    #[test]
+    fn for_server_uses_mcp_access_when_cli_access_empty() {
+        let server = server_with_mcp(vec![PolicyRule::Read], vec![]);
+        let policy = Policy::for_server(&server, &[], &[]).unwrap();
+        assert!(policy.check_read().is_ok());
+        assert!(policy.check_write().is_err());
+        assert!(policy.check_delete().is_err());
+    }
+
+    #[test]
+    fn for_server_intersects_cli_access_with_mcp_access() {
+        let server = server_with_mcp(
+            vec![PolicyRule::Read, PolicyRule::Write],
+            vec![],
+        );
+        // CLI requests read+delete but server only allows read+write → intersection is read only
+        let policy =
+            Policy::for_server(&server, &[PolicyRule::Read, PolicyRule::Delete], &[]).unwrap();
+        assert!(policy.check_read().is_ok());
+        assert!(policy.check_write().is_err());
+        assert!(policy.check_delete().is_err());
+    }
+
+    #[test]
+    fn for_server_cli_access_cannot_broaden_mcp_access() {
+        let server = server_with_mcp(vec![PolicyRule::Read], vec![]);
+        // CLI asks for write but server config only permits read → result is still read-only
+        let policy = Policy::for_server(&server, &[PolicyRule::Write], &[]).unwrap();
+        assert!(policy.check_read().is_err());
+        assert!(policy.check_write().is_err());
+    }
+
+    #[test]
+    fn for_server_cli_allow_zone_narrows_mcp_zones() {
+        let server = server_with_mcp(
+            vec![PolicyRule::Read],
+            vec!["example.com".into(), "internal.lan".into()],
+        );
+        let policy =
+            Policy::for_server(&server, &[], &["example.com".to_string()]).unwrap();
+        assert!(policy.check_zone("example.com").is_ok());
+        assert!(policy.check_zone("sub.example.com").is_ok());
+        assert!(policy.check_zone("internal.lan").is_err());
+    }
+
+    #[test]
+    fn for_server_cli_allow_zone_outside_mcp_zones_is_rejected() {
+        let server = server_with_mcp(
+            vec![PolicyRule::Read],
+            vec!["example.com".into()],
+        );
+        let err =
+            Policy::for_server(&server, &[], &["other.net".to_string()]).unwrap_err();
+        assert!(matches!(err, Error::PolicyViolation { .. }));
+        assert!(err.to_string().contains("other.net"));
+    }
+
+    #[test]
+    fn for_server_unrestricted_zones_when_neither_side_configures_them() {
+        let server = server_with_mcp(vec![PolicyRule::Read, PolicyRule::Write, PolicyRule::Delete], vec![]);
+        let policy = Policy::for_server(&server, &[], &[]).unwrap();
+        assert!(policy.allowed_zones.is_none());
+        assert!(policy.check_zone("anything.example.com").is_ok());
     }
 }

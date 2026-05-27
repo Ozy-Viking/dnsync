@@ -9,7 +9,8 @@ fn main() {}
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 use dnslib::{
     cli::{self, RecordCmd, ZoneCmd},
-    control_plane::{app, config, policy},
+    control_plane::{app, config, policy, sync},
+    control_plane::config::AppConfig,
     core::{dns::service::DnsService, error},
     mcp::server,
     vendors::runtime::{ClientOverrides, VendorClient},
@@ -42,7 +43,28 @@ async fn main() {
     process::exit(run(cli).await);
 }
 
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+/// Dispatches CLI commands, performs the requested operation, and returns an exit status code.
+///
+/// This function interprets the parsed `Cli` command, handles early-exit subcommands (completions,
+/// server id listing, and config subcommands), loads the application configuration for other
+/// commands, and dispatches to specialized handlers (MCP server, record listing across servers,
+/// zone transfer, sync, or single-server command execution). Errors are printed and mapped to
+/// non-zero exit codes.
+///
+/// # Returns
+///
+/// `0` on success, a non-zero exit code on error.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Run the CLI dispatcher with a prepared `cli`.
+/// // The example is `no_run` because constructing a full `Cli` in a doctest depends on the
+/// // surrounding application context.
+/// let cli = /* build or parse Cli here */;
+/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(run(cli));
+/// std::process::exit(exit);
+/// ```
 async fn run(cli: Cli) -> i32 {
     if let Command::Completions { shell } = cli.command {
         cli::completions::generate_completions(shell);
@@ -152,6 +174,12 @@ async fn run(cli: Cli) -> i32 {
         Err(e) => return render_error(e),
     };
 
+    // MCP is handled before single-client resolution so the server can start
+    // without requiring a pre-selected server when multiple are configured.
+    if let Command::Mcp = cli.command {
+        return run_mcp(cli, app_config).await;
+    }
+
     if let Command::Record(RecordCmd::List {
         domain,
         zone,
@@ -233,6 +261,44 @@ async fn run(cli: Cli) -> i32 {
         .await;
     }
 
+    if let Command::Sync {
+        profile,
+        from,
+        to,
+        zone,
+        map,
+        apply,
+        json,
+    } = &cli.command
+    {
+        if cli.token.is_some() || cli.base_url.is_some() {
+            return render_error(Error::parse(
+                "sync does not accept --token/--base-url; \
+                 configure credentials per server via config file or environment variables",
+            ));
+        }
+        if !cli.servers.is_empty() || cli.all {
+            return render_error(Error::parse(
+                "sync does not accept --server/--all; configure server selection via profile or explicit from/to",
+            ));
+        }
+        return match sync::run_sync(
+            app_config.as_ref(),
+            profile.as_deref(),
+            from.as_deref(),
+            to.as_deref(),
+            zone,
+            map,
+            *apply,
+            *json,
+        )
+        .await
+        {
+            Ok(()) => 0,
+            Err(e) => render_error(e),
+        };
+    }
+
     if cli.servers.len() > 1 {
         return render_error(Error::parse(
             "multiple --server flags are only valid with `record list`; \
@@ -260,44 +326,74 @@ async fn run(cli: Cli) -> i32 {
     run_with_client(cli, client, policy).await
 }
 
+/// Start an MCP (MCP-over-stdio) server using the provided CLI options and optional app configuration.
+///
+/// The function validates that no per-call credentials or server selection flags (`--token`, `--base-url`, `--server`) were supplied;
+/// if any are present it returns a non-zero exit code after emitting a parse error diagnostic. It then constructs a `DnsServer` from the
+/// provided or default configuration and runs it over stdin/stdout. The function returns `0` on a normal shutdown, or `1` on startup or
+/// transport errors (and prints a brief error message to stderr).
+///
+/// # Examples
+///
+/// ```no_run
+/// # use tokio::runtime::Runtime;
+/// # use dnsync_main::{run_mcp, Cli, AppConfig};
+/// let rt = Runtime::new().unwrap();
+/// let cli = Cli { token: None, base_url: None, servers: vec![], access: None, allow_zone: vec![], config: None, ..Default::default() };
+/// let exit = rt.block_on(async { run_mcp(cli, None).await });
+/// assert!(exit == 0 || exit == 1);
+/// ```
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
+async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> i32 {
+    if cli.token.is_some() || cli.base_url.is_some() || !cli.servers.is_empty() {
+        return render_error(Error::parse(
+            "`mcp` does not accept --token, --base-url, or --server; \
+             configure server credentials in the config file and pass `server_id` per tool call",
+        ));
+    }
+
+    let config = app_config.unwrap_or_default();
+    tracing::info!("Starting MCP server (stdio)");
+    let dns_server = DnsServer::new(config, cli.access, cli.allow_zone);
+    let transport = (tokio::io::stdin(), tokio::io::stdout());
+    match dns_server.serve(transport).await {
+        Ok(service) => match service.waiting().await {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("error: MCP transport error: {e}");
+                1
+            }
+        },
+        Err(e) => {
+            eprintln!("error: failed to start MCP server: {e}");
+            1
+        }
+    }
+}
+
+/// Dispatches non-MCP CLI commands to the runner using the provided DNS client.
+///
+/// # Returns
+///
+/// `0` on success, otherwise an exit code derived from the encountered error.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Assume `client` implements `DnsService` and `cli`/`policy` are prepared.
+/// let exit = tokio::runtime::Runtime::new().unwrap().block_on(async {
+///     run_with_client(cli, client, policy).await
+/// });
+/// assert!(exit >= 0);
+/// ```
 #[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare"))]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     cli: Cli,
     client: C,
-    policy: Policy,
+    _policy: Policy,
 ) -> i32 {
     match cli.command {
-        Command::Mcp => {
-            if !policy.allowed.contains(&policy::PolicyRule::Read) {
-                tracing::info!("MCP server: read operations disabled");
-            }
-            if !policy.allowed.contains(&policy::PolicyRule::Write) {
-                tracing::info!("MCP server: write operations disabled");
-            }
-            if !policy.allowed.contains(&policy::PolicyRule::Delete) {
-                tracing::info!("MCP server: delete operations disabled");
-            }
-            if let Some(ref zones) = policy.allowed_zones {
-                tracing::info!("MCP server zone restriction: {}", zones.join(", "));
-            }
-            tracing::info!("Starting MCP server (stdio)");
-
-            let dns_server = DnsServer::new(client, policy);
-            let transport = (tokio::io::stdin(), tokio::io::stdout());
-            match dns_server.serve(transport).await {
-                Ok(service) => match service.waiting().await {
-                    Ok(_) => 0,
-                    Err(e) => {
-                        eprintln!("error: MCP transport error: {e}");
-                        1
-                    }
-                },
-                Err(e) => {
-                    eprintln!("error: failed to start MCP server: {e}");
-                    1
-                }
-            }
-        }
+        Command::Mcp => unreachable!("handled in run()"),
         other => match cli::runner::run(&client, other).await {
             Ok(_) => 0,
             Err(e) => render_error(e),
