@@ -595,6 +595,10 @@ mod tests {
             token: Some("tok".into()),
             token_env: None,
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions { access, allowed_zones },
             validation_endpoints: vec![],
         }
