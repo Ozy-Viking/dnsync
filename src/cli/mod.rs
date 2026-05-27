@@ -12,11 +12,7 @@ use crate::control_plane::policy::PolicyRule;
 // ─── Top-level CLI ───────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(
-    name = "technitium-dns",
-    about = "Manage Technitium DNS Server — or run as an MCP server",
-    version
-)]
+#[command(name = "dns", about = "DNS Sync and Control with MCP", version)]
 pub struct Cli {
     /// Config file path (defaults to $XDG_CONFIG_HOME/dnsync/config.toml or ~/.config/dnsync/config.toml)
     #[arg(long, env = "DNSYNC_CONFIG")]
@@ -56,7 +52,7 @@ pub enum Command {
     #[command(subcommand)]
     Config(ConfigCmd),
 
-    /// Start the MCP stdio server (for use with Claude Desktop)
+    /// Start the MCP stdio server
     Mcp,
 
     /// Manage DNS zones

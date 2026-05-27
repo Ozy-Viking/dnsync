@@ -2,7 +2,7 @@
 name = "dnsync"
 version = "0.1.0"
 edition = "2024"
-description = "MCP server for Technitium DNS Server"
+description = "DNS Sync and Control with MCP"
 
 [[bin]]
 name = "dns"

@@ -188,6 +188,10 @@ pub fn run_add_wizard(existing_ids: &[String]) -> miette::Result<DnsServerConfig
         token,
         token_env,
         org_id,
+        cluster: None,
+        dns: None,
+        dot: None,
+        doh: None,
         mcp: McpPermissions {
             access,
             allowed_zones,

@@ -68,33 +68,59 @@ dns config add --id pg   --vendor pangolin    --org-id my-org --token-env PANGOL
 
 ```toml
 [[servers]]
-id = "home"
+id = "dns1"
 vendor = "technitium"
-base_url = "http://192.168.1.10:5380"   # or use base_url_env to read from an env var
-token_env = "DNSYNC_HOME_API_TOKEN"
+location = "local"
+cluster = "home-dns"
+base_url = "https://dns1-ui.hankin.io"   # or use base_url_env to read from an env var
+token_env = "DNSYNC_DNS1_API_TOKEN"
 
-[[servers.validation_endpoints]]
-name = "home-router"
-transport = "dns"
-address = "192.168.1.1"
-port = 53
+[servers.dns]
+enabled = true
+addr = "10.5.0.53:53"
 
-[[servers.validation_endpoints]]
-name = "cloudflare-doh"
-transport = "doh"
-url = "https://cloudflare-dns.com/dns-query"
-timeout_ms = 2000
+[servers.dot]
+enabled = true
+addr = "10.5.0.53:853"
+server_name = "dns1.hankin.io"
 
-[[servers.validation_endpoints]]
-name = "quad9-dot"
-transport = "dot"
-address = "9.9.9.9"
-port = 853
-tls_server_name = "dns.quad9.net"
+[servers.doh]
+enabled = true
+url = "https://dns1.hankin.io/dns-query"
 
 [servers.mcp]
-access = "read"
+access = ["read"]
 allowed_zones = ["example.com", "internal.lan"]
+
+[[servers]]
+id = "dns2"
+vendor = "technitium"
+location = "local"
+cluster = "home-dns"
+base_url = "https://dns2-ui.hankin.io"
+token_env = "DNSYNC_DNS2_API_TOKEN"
+
+[servers.dns]
+enabled = true
+addr = "10.5.161.84:53"
+
+[servers.dot]
+enabled = true
+addr = "10.5.161.84:853"
+server_name = "dns2.hankin.io"
+
+[servers.doh]
+enabled = true
+url = "https://dns2.hankin.io/dns-query"
+
+[clusters.home-dns]
+vendor = "technitium"
+members = ["dns1", "dns2"]
+write_policy = "primary_only"
+primary = "auto"
+catalog_zone = "auto"
+preferred_writer = "dns1"
+
 
 [[servers]]
 id = "lab"
@@ -103,7 +129,7 @@ base_url = "http://192.168.1.20:5380"
 token_env = "DNSYNC_LAB_API_TOKEN"
 
 [servers.mcp]
-access = "delete"
+access = ["delete"]
 allowed_zones = ["lab.example.com"]
 
 [[servers]]
@@ -123,12 +149,20 @@ Vendor defaults when no `base_url` is set:
 - `pangolin` → `https://api.pangolin.net/v1`
 - `cloudflare` → `https://api.cloudflare.com/client/v4`
 
-Validation endpoints are optional per-server DNS resolvers used by endpoint
-validation. Configure them with `[[servers.validation_endpoints]]`. Supported
-transports are `dns`, `doh`, and `dot`; DNS/DoT endpoints require `address`,
-while DoH endpoints require `url`. If no validation endpoints are configured,
-validation remains enabled but is skipped with reason
-`no_validation_endpoints_configured`.
+Per-server DNS transports are optional query endpoints used by validation today
+and by future benchmarking and direct record-search features. Configure them with
+`[servers.dns]`, `[servers.dot]`, and `[servers.doh]`. Plain DNS and DoT use
+`addr = "host:port"`; DoT can also set `server_name`; DoH uses
+`url = "https://.../dns-query"`.
+
+Logical clusters are optional and live under `[clusters.<id>]`. For Technitium,
+use `write_policy = "primary_only"` with `primary = "auto"` so dnsync can use
+live cluster discovery rather than trusting stale static primary/secondary roles.
+`preferred_writer` is an operator hint, not a substitute for live role checks.
+
+Legacy `[[servers.validation_endpoints]]` entries are still accepted for endpoint
+validation. If no transports or validation endpoints are configured, validation
+remains enabled but is skipped with reason `no_validation_endpoints_configured`.
 
 MCP permissions are applied per selected server. `access` controls the maximum
 permitted operation level (`read` = read-only, `write` = no deletes, `delete` =
