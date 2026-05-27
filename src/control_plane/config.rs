@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     env,
     net::IpAddr,
     path::{Path, PathBuf},
@@ -44,6 +44,79 @@ pub enum ValidationTransport {
     Dns,
     Doh,
     Dot,
+}
+
+/// Configured role for writes across a logical cluster.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterWritePolicy {
+    #[default]
+    PrimaryOnly,
+}
+
+/// Plain DNS query endpoint for a configured server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DnsTransportConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// DNS-over-TLS query endpoint for a configured server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DotTransportConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// DNS-over-HTTPS query endpoint for a configured server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DohTransportConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// Logical cluster policy shared by member servers.
+///
+/// `primary` and `preferred_writer` accept either a configured DNS server id or
+/// the special value `auto`, matched case-insensitively.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterConfig {
+    #[serde(default)]
+    pub vendor: VendorKind,
+    #[serde(default)]
+    pub members: Vec<String>,
+    #[serde(default)]
+    pub write_policy: ClusterWritePolicy,
+    /// Primary server id, or `auto` to discover it dynamically.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_zone: Option<String>,
+    /// Preferred writer server id, or `auto` to discover it dynamically.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_writer: Option<String>,
 }
 
 /// DNS endpoint used to validate imported or listed records.
@@ -124,6 +197,8 @@ impl std::str::FromStr for ValidationEndpointConfig {
 pub struct AppConfig {
     #[serde(default)]
     pub servers: Vec<DnsServerConfig>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub clusters: BTreeMap<String, ClusterConfig>,
 
     /// Named record-sync profiles (see `dns sync`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -176,6 +251,14 @@ pub struct DnsServerConfig {
     pub token_env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dns: Option<DnsTransportConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dot: Option<DotTransportConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doh: Option<DohTransportConfig>,
 
     #[serde(default, skip_serializing_if = "McpPermissions::is_default")]
     pub mcp: McpPermissions,
@@ -207,6 +290,14 @@ struct DnsServerConfigRaw {
     token_env: Option<String>,
     #[serde(default)]
     org_id: Option<String>,
+    #[serde(default)]
+    cluster: Option<String>,
+    #[serde(default)]
+    dns: Option<DnsTransportConfig>,
+    #[serde(default)]
+    dot: Option<DotTransportConfig>,
+    #[serde(default)]
+    doh: Option<DohTransportConfig>,
     #[serde(default)]
     mcp: McpPermissions,
     #[serde(default)]
@@ -258,6 +349,10 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             token: raw.token,
             token_env: raw.token_env,
             org_id: raw.org_id,
+            cluster: raw.cluster,
+            dns: raw.dns,
+            dot: raw.dot,
+            doh: raw.doh,
             mcp: McpPermissions {
                 access,
                 allowed_zones: zones,
@@ -317,9 +412,14 @@ impl AppConfig {
                 token: None,
                 token_env: Some("DNSYNC_TECHNITIUM_API_TOKEN".to_string()),
                 org_id: None,
+                cluster: None,
+                dns: None,
+                dot: None,
+                doh: None,
                 mcp: McpPermissions::default(),
                 validation_endpoints: Vec::new(),
             }],
+            clusters: BTreeMap::new(),
             sync: Vec::new(),
         }
     }
@@ -333,6 +433,7 @@ impl AppConfig {
         for server in &self.servers {
             append_server_entry(&mut doc, server);
         }
+        append_cluster_entries(&mut doc, &self.clusters);
         for profile in &self.sync {
             append_sync_entry(&mut doc, profile);
         }
@@ -352,6 +453,7 @@ impl AppConfig {
                     ..s.clone()
                 })
                 .collect(),
+            clusters: self.clusters.clone(),
             sync: self.sync.clone(),
         }
     }
@@ -416,8 +518,18 @@ impl AppConfig {
                     server.id
                 )));
             }
+            if let Some(cluster_id) = &server.cluster
+                && !self.clusters.contains_key(cluster_id)
+            {
+                return Err(Error::config(format!(
+                    "DNS server '{}' references unknown cluster '{}'",
+                    server.id, cluster_id
+                )));
+            }
+            validate_server_transports(server)?;
             validate_validation_endpoints(server)?;
         }
+        validate_clusters(&self.clusters, &ids)?;
 
         let mut sync_names = std::collections::HashSet::new();
         for profile in &self.sync {
@@ -489,6 +601,78 @@ fn validate_validation_endpoints(server: &DnsServerConfig) -> Result<()> {
                 )));
             }
             _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
+    if let Some(dns) = &server.dns
+        && dns.enabled
+        && dns
+            .addr
+            .as_deref()
+            .is_none_or(|addr| addr.trim().is_empty())
+    {
+        return Err(Error::config(format!(
+            "DNS server '{}' has enabled dns transport without addr",
+            server.id
+        )));
+    }
+
+    if let Some(dot) = &server.dot
+        && dot.enabled
+        && dot
+            .addr
+            .as_deref()
+            .is_none_or(|addr| addr.trim().is_empty())
+    {
+        return Err(Error::config(format!(
+            "DNS server '{}' has enabled dot transport without addr",
+            server.id
+        )));
+    }
+
+    if let Some(doh) = &server.doh
+        && doh.enabled
+        && doh.url.as_deref().is_none_or(|url| url.trim().is_empty())
+    {
+        return Err(Error::config(format!(
+            "DNS server '{}' has enabled doh transport without url",
+            server.id
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_clusters(
+    clusters: &BTreeMap<String, ClusterConfig>,
+    server_ids: &HashSet<String>,
+) -> Result<()> {
+    for (id, cluster) in clusters {
+        if id.trim().is_empty() {
+            return Err(Error::config("config contains a cluster with an empty id"));
+        }
+
+        for member in &cluster.members {
+            if !server_ids.contains(&member.to_lowercase()) {
+                return Err(Error::config(format!(
+                    "cluster '{id}' references unknown DNS server '{member}'"
+                )));
+            }
+        }
+
+        for field in [cluster.primary.as_ref(), cluster.preferred_writer.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if !field.eq_ignore_ascii_case("auto") && !server_ids.contains(&field.to_lowercase()) {
+                return Err(Error::config(format!(
+                    "cluster '{id}' references unknown DNS server '{field}'"
+                )));
+            }
         }
     }
 
@@ -633,6 +817,52 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         tbl["validation_endpoints"] = Item::ArrayOfTables(endpoints);
     }
 
+    if let Some(ref cluster) = server.cluster {
+        tbl["cluster"] = value(cluster.as_str());
+    }
+    if let Some(ref dns) = server.dns {
+        let mut dns_tbl = Table::new();
+        dns_tbl["enabled"] = value(dns.enabled);
+        if let Some(ref addr) = dns.addr {
+            dns_tbl["addr"] = value(addr.as_str());
+        }
+        if let Some(timeout_ms) = dns.timeout_ms {
+            dns_tbl["timeout_ms"] = value(timeout_ms as i64);
+        }
+        tbl["dns"] = Item::Table(dns_tbl);
+    }
+    if let Some(ref dot) = server.dot {
+        let mut dot_tbl = Table::new();
+        dot_tbl["enabled"] = value(dot.enabled);
+        if let Some(ref addr) = dot.addr {
+            dot_tbl["addr"] = value(addr.as_str());
+        }
+        if let Some(ref server_name) = dot.server_name {
+            dot_tbl["server_name"] = value(server_name.as_str());
+        }
+        if let Some(timeout_ms) = dot.timeout_ms {
+            dot_tbl["timeout_ms"] = value(timeout_ms as i64);
+        }
+        tbl["dot"] = Item::Table(dot_tbl);
+    }
+    if let Some(ref doh) = server.doh {
+        let mut doh_tbl = Table::new();
+        doh_tbl["enabled"] = value(doh.enabled);
+        if let Some(ref url) = doh.url {
+            doh_tbl["url"] = value(url.as_str());
+        }
+        if let Some(ref addr) = doh.addr {
+            doh_tbl["addr"] = value(addr.as_str());
+        }
+        if let Some(ref server_name) = doh.server_name {
+            doh_tbl["server_name"] = value(server_name.as_str());
+        }
+        if let Some(timeout_ms) = doh.timeout_ms {
+            doh_tbl["timeout_ms"] = value(timeout_ms as i64);
+        }
+        tbl["doh"] = Item::Table(doh_tbl);
+    }
+
     match doc.entry("servers") {
         toml_edit::Entry::Occupied(mut e) => {
             if let Some(aot) = e.get_mut().as_array_of_tables_mut() {
@@ -747,6 +977,49 @@ fn load_from_path(path: &Path) -> Result<AppConfig> {
     })?;
     config.validate()?;
     Ok(config)
+}
+
+fn append_cluster_entries(
+    doc: &mut toml_edit::DocumentMut,
+    clusters: &BTreeMap<String, ClusterConfig>,
+) {
+    use toml_edit::{Array, Item, Table, value};
+
+    if clusters.is_empty() {
+        return;
+    }
+
+    let mut clusters_tbl = Table::new();
+    clusters_tbl.decor_mut().set_prefix("\n");
+
+    for (id, cluster) in clusters {
+        let mut tbl = Table::new();
+        tbl["vendor"] = value(match cluster.vendor {
+            VendorKind::Technitium => "technitium",
+            VendorKind::Pangolin => "pangolin",
+            VendorKind::Cloudflare => "cloudflare",
+        });
+        let mut members = Array::new();
+        for member in &cluster.members {
+            members.push(member.as_str());
+        }
+        tbl["members"] = value(members);
+        tbl["write_policy"] = value(match cluster.write_policy {
+            ClusterWritePolicy::PrimaryOnly => "primary_only",
+        });
+        if let Some(ref primary) = cluster.primary {
+            tbl["primary"] = value(primary.as_str());
+        }
+        if let Some(ref catalog_zone) = cluster.catalog_zone {
+            tbl["catalog_zone"] = value(catalog_zone.as_str());
+        }
+        if let Some(ref preferred_writer) = cluster.preferred_writer {
+            tbl["preferred_writer"] = value(preferred_writer.as_str());
+        }
+        clusters_tbl[id] = Item::Table(tbl);
+    }
+
+    doc["clusters"] = Item::Table(clusters_tbl);
 }
 
 /// Write `contents` to `path` with owner-only permissions (0o600 on Unix).
@@ -1199,6 +1472,10 @@ mod tests {
             token: None,
             token_env: None,
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1217,6 +1494,10 @@ mod tests {
             token: None,
             token_env: None,
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1417,6 +1698,161 @@ mod tests {
     }
 
     #[test]
+    fn server_transport_blocks_roundtrip() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+                vendor = "technitium"
+                cluster = "home-dns"
+
+                [servers.dns]
+                enabled = true
+                addr = "10.5.0.53:53"
+                timeout_ms = 1500
+
+                [servers.dot]
+                enabled = true
+                addr = "10.5.0.53:853"
+                server_name = "dns1.hankin.io"
+
+                [servers.doh]
+                enabled = true
+                url = "https://dns1.hankin.io/dns-query"
+                addr = "10.5.0.53:443"
+                server_name = "dns1.hankin.io"
+
+                [clusters.home-dns]
+                members = ["dns1"]
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let rendered = cfg.render_toml().unwrap();
+        let reparsed: AppConfig = toml::from_str(&rendered).unwrap();
+        let server = reparsed.selected_server(None).unwrap();
+
+        assert_eq!(server.cluster.as_deref(), Some("home-dns"));
+        assert_eq!(
+            server.dns.as_ref().unwrap().addr.as_deref(),
+            Some("10.5.0.53:53")
+        );
+        assert_eq!(
+            server.dot.as_ref().unwrap().server_name.as_deref(),
+            Some("dns1.hankin.io")
+        );
+        assert_eq!(
+            server.doh.as_ref().unwrap().url.as_deref(),
+            Some("https://dns1.hankin.io/dns-query")
+        );
+        assert!(rendered.contains("[servers.dns]"));
+        assert!(rendered.contains("[servers.dot]"));
+        assert!(rendered.contains("[servers.doh]"));
+    }
+
+    #[test]
+    fn disabled_transport_blocks_can_omit_endpoints() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+
+                [servers.dns]
+                enabled = false
+
+                [servers.dot]
+                enabled = false
+
+                [servers.doh]
+                enabled = false
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let rendered = cfg.render_toml().unwrap();
+
+        assert!(rendered.contains("[servers.dns]"));
+        assert!(rendered.contains("enabled = false"));
+        assert!(!rendered.contains("addr = \"\""));
+        assert!(!rendered.contains("url = \"\""));
+    }
+
+    #[test]
+    fn cluster_config_roundtrip() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+                vendor = "technitium"
+                cluster = "home-dns"
+
+                [[servers]]
+                id = "dns2"
+                vendor = "technitium"
+                cluster = "home-dns"
+
+                [clusters.home-dns]
+                vendor = "technitium"
+                members = ["dns1", "dns2"]
+                write_policy = "primary_only"
+                primary = "auto"
+                catalog_zone = "auto"
+                preferred_writer = "dns1"
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let rendered = cfg.render_toml().unwrap();
+        let reparsed: AppConfig = toml::from_str(&rendered).unwrap();
+        let cluster = reparsed.clusters.get("home-dns").unwrap();
+
+        assert_eq!(cluster.members, ["dns1", "dns2"]);
+        assert_eq!(cluster.write_policy, ClusterWritePolicy::PrimaryOnly);
+        assert_eq!(cluster.primary.as_deref(), Some("auto"));
+        assert_eq!(cluster.catalog_zone.as_deref(), Some("auto"));
+        assert_eq!(cluster.preferred_writer.as_deref(), Some("dns1"));
+        assert!(rendered.contains("[clusters.home-dns]"));
+    }
+
+    #[test]
+    fn cluster_rejects_unknown_members() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+
+                [clusters.home-dns]
+                members = ["dns1", "dns2"]
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("unknown DNS server 'dns2'"));
+    }
+
+    #[test]
+    fn server_rejects_unknown_cluster_reference() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+                cluster = "missing"
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("DNS server 'dns1' references unknown cluster 'missing'")
+        );
+    }
+
+    #[test]
     fn config_rejects_invalid_validation_endpoint() {
         let cfg: AppConfig = toml::from_str(
             r#"
@@ -1513,6 +1949,10 @@ mod tests {
             token: None,
             token_env: Some("MY_API_TOKEN".to_string()),
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1542,6 +1982,10 @@ mod tests {
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1583,6 +2027,10 @@ mod tests {
             token: None,
             token_env: Some("LAB_TOKEN".to_string()),
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1619,6 +2067,10 @@ mod tests {
             token: None,
             token_env: None,
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1660,6 +2112,10 @@ mod tests {
             token: None,
             token_env: None,
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         }
@@ -1732,6 +2188,10 @@ mod tests {
             token: None,
             token_env: None,
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1749,6 +2209,10 @@ mod tests {
             token: None,
             token_env: None,
             org_id: None,
+            cluster: None,
+            dns: None,
+            dot: None,
+            doh: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1846,11 +2310,16 @@ mod tests {
         let rendered = config.render_toml().expect("should render");
         let reparsed: AppConfig =
             toml::from_str(&rendered).expect("rendered sync config should parse back");
-        reparsed.validate().expect("reparsed config should validate");
+        reparsed
+            .validate()
+            .expect("reparsed config should validate");
         assert_eq!(reparsed.sync.len(), 1);
         assert_eq!(reparsed.sync[0].name, "split");
         assert_eq!(
-            reparsed.sync[0].ip_map.get("203.0.113.10").map(String::as_str),
+            reparsed.sync[0]
+                .ip_map
+                .get("203.0.113.10")
+                .map(String::as_str),
             Some("192.168.1.10")
         );
     }

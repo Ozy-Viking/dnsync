@@ -147,6 +147,10 @@ async fn run(cli: Cli) -> i32 {
                         token,
                         token_env,
                         org_id,
+                        cluster: None,
+                        dns: None,
+                        dot: None,
+                        doh: None,
                         mcp: config::McpPermissions {
                             access,
                             allowed_zones: allow_zone,
