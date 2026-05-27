@@ -8,23 +8,33 @@ DoQ transports.
 
 ## Background — gap analysis
 
-`dns` today is an API client (Technitium / Pangolin / Cloudflare) and a sync
-tool. It can *list records as the provider sees them* (`dns record list`),
-but it cannot answer "what does this nameserver actually return for
-huly.hankin.io right now?" without leaving the tool. The closest existing
-machinery is `core::dns::validation`, which already wraps `hickory-resolver`
-for DNS / DoT / DoH endpoint probes — but it is locked inside the validation
-pipeline.
+`dns` today is an API client (Technitium / Pangolin / Cloudflare) and a
+sync tool. It can *list records as the provider sees them*
+(`dns record list`), but it cannot answer "what does this nameserver
+actually return for huly.hankin.io right now?" without leaving the tool.
+Two pieces of in-tree machinery are already close to that answer:
 
-Three gaps:
+- `core::dns::validation` wraps `hickory-resolver` for DNS / DoT / DoH
+  endpoint probes, but the builders are locked inside the validation
+  pipeline. The cluster-config work (PR #27) explicitly notes the
+  validation layer "is not used at runtime" today
+  (`docs/validation_endpoint_analysis.md`).
+- The cluster-config work added first-class **per-server transport
+  blocks**: `[servers.dns]`, `[servers.dot]`, `[servers.doh]` on each
+  `[[servers]]` entry — exactly the shape needed to answer "where does
+  dns1 listen for DNS queries?".
 
-1. **No user-facing resolver.** Users reach for `dig`, `kdig`, or `nslookup`
-   to verify what a server publishes. `dns` should answer that question
-   itself, reusing the resolver machinery already in-tree.
-2. **No transport coverage for DoQ.** `validation.rs` supports
-   `dns | doh | dot`. The user explicitly asked for DoQ.
-3. **No way to address an arbitrary resolver from the CLI.** Validation
-   endpoints are config-bound and tied to a specific API server.
+Three gaps remain:
+
+1. **No user-facing resolver.** Users reach for `dig`, `kdig`, or
+   `nslookup` to verify what a server publishes. `dns` should answer
+   that question itself, reusing the resolver machinery already in-tree.
+2. **No transport coverage for DoQ.** Neither the validation layer nor
+   the new transport blocks know about QUIC. The user explicitly asked
+   for DoQ.
+3. **No way to address an arbitrary resolver from the CLI.** Today every
+   configured DNS target is bound to a `[[servers]]` entry; ad-hoc
+   `@1.1.1.1`-style lookups have no path.
 
 ## `dns query`
 
@@ -35,7 +45,8 @@ prints it; never touches a vendor API.
 dns query huly.hankin.io                          # system resolver, A
 dns query huly.hankin.io -t AAAA                  # specific record type
 dns q huly.hankin.io                              # short alias
-dns query huly.hankin.io --server dns1            # named validation endpoint
+dns query huly.hankin.io --server dns1            # configured server entry
+dns query huly.hankin.io --server dns1 --transport dot
 dns query huly.hankin.io @1.1.1.1                 # ad-hoc plain DNS
 dns query huly.hankin.io --at tls://9.9.9.9       # ad-hoc DoT
 dns query huly.hankin.io --at https://cloudflare-dns.com/dns-query
@@ -46,20 +57,27 @@ dns query huly.hankin.io --json
 
 ### Behaviour
 
-- **Defaults to the host's resolver.** No `--server`, no `--at`, no `@host`
-  → `Resolver::builder_tokio()` is used. This reads `/etc/resolv.conf` on
-  Unix and the platform resolver elsewhere. No config file is required.
+- **Defaults to the host's resolver.** No `--server`, no `--at`, no
+  `@host` → `Resolver::builder_tokio()` is used. This reads
+  `/etc/resolv.conf` on Unix and the platform resolver elsewhere. No
+  config file is required.
 - **Read-only.** No vendor API call, no token, no network policy.
-- **One target per invocation.** `--server` and `@host`/`--at` are mutually
-  exclusive; supplying both is a parse error.
-- **Transport is auto-detected from the URL scheme.** `--transport` overrides
-  it. Schemes recognised: `udp://`, `tcp://`, `dns://` (plain), `tls://`,
-  `dot://` (DoT), `https://`, `doh://` (DoH), `quic://`, `doq://` (DoQ).
-- **Output is dig-flavoured.** Default is a compact table: name, type, TTL,
-  data. `--json` emits a stable JSON shape, `--short` prints only the data
-  column (one per line).
-- **TTL preserved as observed.** Unlike validation, this command shows the
-  resolver's TTL.
+- **One target per invocation.** `--server` and `@host`/`--at` are
+  mutually exclusive; supplying both is a parse error.
+- **`--server <ID>` selects a configured `[[servers]]` entry** and
+  queries it over whichever of its `[servers.dns|dot|doh|doq]` blocks
+  is appropriate. With `--transport`, the matching block is required;
+  without, the first enabled block in the precedence order
+  `doh → dot → dns → doq` is used.
+- **Transport is auto-detected from the URL scheme** for ad-hoc targets.
+  `--transport` overrides it. Schemes recognised: `udp://`, `tcp://`,
+  `dns://` (plain), `tls://`, `dot://` (DoT), `https://`, `doh://`
+  (DoH), `quic://`, `doq://` (DoQ).
+- **Output is dig-flavoured.** Default is a compact table: name, type,
+  TTL, data. `--json` emits a stable JSON shape, `--short` prints only
+  the data column (one per line).
+- **TTL preserved as observed.** Unlike validation, this command shows
+  the resolver's TTL.
 
 ### Flags
 
@@ -67,13 +85,13 @@ dns query huly.hankin.io --json
 |---|---|
 | `<DOMAIN>` | Required. Name to resolve. Bare labels are not auto-qualified — the user passes the FQDN. |
 | `-t, --type <RR>` | Record type, repeatable (default `A`). Accepts standard mnemonics: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`, `SOA`, `ANY`. |
-| `--server <NAME>` | Named entry from `[[servers.validation_endpoints]]`. Searched across all configured servers; name must be globally unique (loader validates this — see §Config below). |
+| `--server <ID>` | A configured `[[servers]]` entry. Matched case-insensitively against `server.id` (existing rule). |
 | `--at <ADDR>` | Ad-hoc resolver. `host[:port]` or `scheme://host[:port][/path]`. |
 | `@ADDR` (positional) | Sugar for `--at ADDR`. Following dig convention; can appear before or after the domain. |
-| `--transport <dns\|dot\|doh\|doq>` | Force the transport. Overrides scheme inference. Required when only an IP/host is given and a non-default transport is desired. |
+| `--transport <dns\|dot\|doh\|doq>` | With `--server`, force which block is used (errors if that block is missing or `enabled = false`). With `--at`/`@`, overrides scheme inference. |
 | `--port <u16>` | Override the port. Defaults: DNS 53, DoT 853, DoH 443, DoQ 853. |
 | `--tls-server-name <NAME>` | SNI / certificate name override for DoT, DoH, DoQ. |
-| `--timeout <MS>` | Per-attempt timeout (default 5000). |
+| `--timeout <MS>` | Per-attempt timeout (default 5000, overrides the block's `timeout_ms`). |
 | `--tcp` | Force TCP for plain DNS; ignored for other transports. |
 | `--short` | Print only the data column. Mirrors `dig +short`. |
 | `--json` | Emit structured output (see §Output). |
@@ -83,14 +101,19 @@ dns query huly.hankin.io --json
 - `--server` and (`--at` or `@addr`) are mutually exclusive (`clap`
   `conflicts_with_all`).
 - `--at` and `@addr` are mutually exclusive (use one).
-- `--transport`, `--port`, `--tls-server-name`, `--tcp` only apply with an
-  ad-hoc resolver. With `--server <NAME>` they are an error (the named entry
-  already specifies these).
-- The top-level `--token`, `--base-url`, `--config` flags are accepted but
-  unused; pass-through, no parse error (matches the existing
+- `--port`, `--tls-server-name`, `--tcp` only apply with an ad-hoc
+  resolver. With `--server <ID>` they are an error (the transport block
+  owns those values).
+- `--transport` is allowed with both `--server` and ad-hoc; with
+  `--server` it picks among that server's transport blocks.
+- `--server <id>` where `<id>` resolves to a cluster, not a server,
+  errors with "use `--server <member>` to pick one of <listed
+  members>". Cluster fan-out is a future feature.
+- The top-level `--token`, `--base-url`, `--config` flags are accepted
+  but unused; pass-through, no parse error (matches the existing
   `record list` behaviour).
-- The top-level `--server` is shadowed by the subcommand-level `--server`
-  for `query` (same pattern as `record list`).
+- The top-level `--server` is shadowed by the subcommand-level
+  `--server` for `query` (same pattern as `record list`).
 
 ### Output
 
@@ -145,159 +168,237 @@ huly.hankin.io.   A    300   192.168.1.43
 
 Mapped through the existing `core::error::Error::exit_code()`.
 
-## Config — reusing `[[servers.validation_endpoints]]`
+## Config — `[servers.dns|dot|doh|doq]` blocks
 
-The named-resolver list is not duplicated. Entries already configured for
-validation are queryable by `--server <NAME>`. Example, unchanged from
-today:
+The cluster-config work (PR #27) already added `[servers.dns]`,
+`[servers.dot]`, and `[servers.doh]` blocks to each `[[servers]]` entry.
+`dns query --server <ID>` reads those blocks directly — no new
+`[[servers.validation_endpoints]]` plumbing, no cross-server name lookup,
+no name-uniqueness invariant to add. Server IDs are already required
+unique (case-insensitive) by `AppConfig::validate`, so `--server dns1`
+is unambiguous.
+
+A new `[servers.doq]` block, modelled on `[servers.dot]`, adds the DoQ
+slot. Example (from `README.md`, with the new `doq` block added):
 
 ```toml
 [[servers]]
-id = "home"
+id = "dns1"
 vendor = "technitium"
-token_env = "DNSYNC_HOME_TOKEN"
+location = "local"
+cluster = "home-dns"
+base_url = "https://dns1-ui.hankin.io"
+token_env = "DNSYNC_DNS1_API_TOKEN"
 
-[[servers.validation_endpoints]]
-name = "dns1"                       # dns query foo.com --server dns1
-transport = "dns"
-address = "192.168.1.1"
-port = 53
+[servers.dns]
+enabled = true
+addr = "10.5.0.53:53"
 
-[[servers.validation_endpoints]]
-name = "cloudflare-doh"
-transport = "doh"
-url = "https://cloudflare-dns.com/dns-query"
+[servers.dot]
+enabled = true
+addr = "10.5.0.53:853"
+server_name = "dns1.hankin.io"
 
-[[servers.validation_endpoints]]
-name = "quad9-dot"
-transport = "dot"
-address = "9.9.9.9"
-port = 853
-tls_server_name = "dns.quad9.net"
+[servers.doh]
+enabled = true
+url = "https://dns1.hankin.io/dns-query"
 
-[[servers.validation_endpoints]]
-name = "adguard-doq"                # new: DoQ
-transport = "doq"
-address = "94.140.14.140"
-port = 853
-tls_server_name = "dns.adguard.com"
+[servers.doq]                       # new — opt-in `doq` build only
+enabled = true
+addr = "10.5.0.53:853"
+server_name = "dns1.hankin.io"
+
+[servers.mcp]
+access = ["read"]
+allowed_zones = ["example.com"]
 ```
+
+### Selection precedence
+
+For `--server <ID>` without `--transport`, the first enabled block in
+this order is used:
+
+`doh` → `dot` → `dns` → `doq`
+
+DoQ is last because it is not in default builds. Users with `--features
+doq` who want it first can pass `--transport doq` explicitly or, in a
+future iteration, set a per-server `preferred_transport`.
+
+With `--transport <X>`, the matching block must exist on the server and
+its `enabled` flag must be true; otherwise the command errors with the
+list of enabled blocks for that server.
+
+### Field mapping → resolver
+
+| Block | Required | Optional | Default port |
+|---|---|---|---|
+| `[servers.dns]` | `addr` (`host:port` or `host`) | `timeout_ms` | 53 |
+| `[servers.dot]` | `addr` | `server_name`, `timeout_ms` | 853 |
+| `[servers.doh]` | `url` | `addr` (IP override), `server_name`, `timeout_ms` | 443 |
+| `[servers.doq]` | `addr` | `server_name`, `timeout_ms` | 853 |
+
+`addr` is `host[:port]`. The query path parses host and port itself; the
+existing `validate_server_transports` only checks non-empty
+`addr`/`url`, which still applies.
 
 ### Config changes required
 
-1. Extend `ValidationTransport` with a `Doq` variant (`#[serde(rename =
-   "doq")]`). **The variant is always compiled in**, even on builds without
-   the `doq` Cargo feature — so configs that mention `transport = "doq"`
-   parse cleanly everywhere, and `--transport doq` is recognised by clap on
-   every build. Only the resolver-wiring path is feature-gated; see §DoQ
-   feature gating below. Update the `FromStr` parser in
-   `control_plane/config.rs` to accept `doq`. Update the validation error
-   message to list `doq`.
-2. Update `validate_validation_endpoints` so `doq` requires an `address`
-   (same as `dot`).
-3. Add a cross-server uniqueness check for `validation_endpoints[*].name`
-   in `AppConfig::validate`. Today names are not required unique across
-   servers; for `--server <NAME>` to be unambiguous, they must be. If a
-   conflict already exists in user configs, the error message should name
-   both servers so the user can rename one.
-4. Update `append_server_entry` in `control_plane/config.rs` to round-trip
-   the new `doq` value through `render_toml`.
+1. **Add `DoqTransportConfig`** to `src/control_plane/config.rs`,
+   mirroring `DotTransportConfig` (fields: `enabled`, `addr`,
+   `server_name`, `timeout_ms`). Always compiled in — only the resolver
+   wiring is feature-gated. See §DoQ feature gating below.
+2. **Add `pub doq: Option<DoqTransportConfig>`** to `DnsServerConfig`
+   and to its raw deserialization counterpart `DnsServerConfigRaw`, and
+   wire it through the `From<DnsServerConfigRaw>` impl. Add the same
+   `#[serde(skip_serializing_if = "Option::is_none")]` decoration the
+   other transport fields use.
+3. **Extend `validate_server_transports`** with a `doq` arm: enabled +
+   missing `addr` is an error, matching the `dot` arm exactly.
+4. **Extend `append_server_entry`** to round-trip `[servers.doq]`
+   through `render_toml` (copy the `dot` branch, swap the field set).
+5. **Update `cli::interactive::run_add_wizard`** if it prompts for
+   transport blocks — append a DoQ prompt with the same shape as DoT.
+   (Verify in code: as of the cluster PR, the wizard does not appear to
+   prompt for these blocks yet; if so, no change.)
+6. **`[[servers.validation_endpoints]]` is unchanged.** No DoQ variant
+   added to `ValidationTransport`. The legacy validation pipeline keeps
+   `dns | doh | dot` until the project decides what to do with it (the
+   in-tree analysis doc treats it as on a path to deprecation).
 
 ## Code layout
 
 The resolver-building code currently lives inline in
 `core/dns/validation.rs` (`resolver_config`, `plain_dns_name_server`,
 `dot_name_server`, `doh_name_server`, `classify_hickory_error`). It is
-already trait-shaped (`DnsEndpointResolver`).
+keyed on `ValidationEndpointConfig` — the legacy validation type, not
+the new per-server transport blocks. The query path needs to work from
+the new blocks, so the builders are extracted onto a small neutral
+target type.
 
 **Refactor first, add second.**
 
-1. **Extract** the resolver builders and the error classifier into a new
-   module `src/core/dns/resolver.rs`. Move:
-   - `resolver_config`
+1. **Introduce `ResolverTarget`** in a new module
+   `src/core/dns/resolver.rs`:
+
+   ```rust
+   pub struct ResolverTarget {
+       pub transport: ValidationTransport,   // re-used; gains a Doq variant
+       pub addr: Option<String>,             // "host:port" or "host"
+       pub url: Option<String>,              // DoH only
+       pub server_name: Option<String>,      // SNI for DoT/DoH/DoQ
+       pub timeout: Duration,
+   }
+   ```
+
+   Two `From`-impls (or factory fns) populate it:
+   - `ResolverTarget::from_server_transport(&DnsServerConfig,
+     ValidationTransport)` — pulls `addr`/`url`/`server_name`/`timeout_ms`
+     out of the matching `[servers.*]` block.
+   - `ResolverTarget::from_endpoint(&ValidationEndpointConfig)` — the
+     legacy path, preserves today's validation behaviour bit-for-bit.
+
+2. **Extract** the resolver builders and the error classifier into
+   `resolver.rs` and re-key them on `ResolverTarget`. Move:
+   - `resolver_config` → takes `&ResolverTarget`
    - `plain_dns_name_server`, `dot_name_server`, `doh_name_server`
-   - `endpoint_ip`, `tls_server_name`, `doh_url_parts`
+   - `endpoint_ip`, `tls_server_name`, `doh_url_parts` (operate on the
+     new target's `addr`/`url`/`server_name`)
    - `classify_hickory_error`
    - `HickoryDnsEndpointResolver` (the trait stays in `validation.rs`
      because it owns the `ObservedRecord` type)
 
-   `validation.rs` re-exports / uses them; behaviour and tests unchanged.
+   `validation.rs` keeps its public surface; internally it builds a
+   `ResolverTarget::from_endpoint(...)` before delegating. Behaviour and
+   tests unchanged.
 
-2. **Add `doq_name_server`** in the new module, **gated behind `#[cfg(feature
-   = "doq")]`**. Hickory 0.26 exposes
+3. **Extend `ValidationTransport` with a `Doq` variant.** Always
+   compiled in (so the enum is total and pattern matches on it stay
+   exhaustive). It is reused as the target-side enum in step 1; the
+   legacy `[[servers.validation_endpoints]]` `FromStr` parser does
+   *not* learn `doq` — only the new `[servers.doq]` block does.
+
+4. **Add `doq_name_server`** in `resolver.rs`, **gated behind
+   `#[cfg(feature = "doq")]`**. Hickory 0.26 exposes
    `ConnectionConfig::quic(server_name: Arc<str>) -> Self`
    (`hickory-resolver` `src/config.rs`, behind the internal `__quic`
    feature). Default port is 853 — RFC 9250 registers ALPN `doq` on the
-   same port as DoT. The function mirrors `dot_name_server`:
+   same port as DoT. Function mirrors `dot_name_server`:
 
    ```rust
    #[cfg(feature = "doq")]
    fn doq_name_server(
-       endpoint: &ValidationEndpointConfig,
+       target: &ResolverTarget,
    ) -> DnsEndpointResolverResult<NameServerConfig> {
-       let ip = endpoint_ip(endpoint)?;
-       let server_name = tls_server_name(endpoint)?.into();
+       let (ip, port) = parse_host_port(target.addr.as_deref(), 853)?;
+       let server_name = tls_server_name(target)?.into();
        let mut quic = ConnectionConfig::quic(server_name);
-       quic.port = endpoint.port.unwrap_or(853);
+       quic.port = port;
        Ok(NameServerConfig::new(ip, true, vec![quic]))
    }
    ```
 
-3. **Add a project Cargo feature `doq`** (non-default) and wire it to the
-   hickory `quic-ring` feature. See §DoQ feature gating below for the full
-   plumbing.
+5. **Add a project Cargo feature `doq`** (non-default) and wire it to
+   the hickory `quic-ring` feature. See §DoQ feature gating below.
 
-4. **Add `src/cli/query.rs`** with:
-   - `QueryArgs` (clap struct, see §Flags above)
-   - `AdHocResolver` value-parser: turns `@addr` / `--at addr` into a
-     `ValidationEndpointConfig`-shaped struct with scheme→transport
-     mapping.
+6. **Add `src/cli/query.rs`** with:
+   - `QueryArgs` (clap struct, see §Flags above).
+   - `AdHocTarget` value-parser: turns `@addr` / `--at addr` into a
+     `ResolverTarget` with scheme→transport mapping.
    - `pub async fn run_query(config: Option<&AppConfig>, args: QueryArgs) -> Result<i32>`
      that:
-     1. Builds an effective `ValidationEndpointConfig` from the source
-        (system / named / ad-hoc).
-     2. For the `system` case, calls `Resolver::builder_tokio()` directly
-        (no `ValidationEndpointConfig`).
-     3. For named / ad-hoc, calls
-        `HickoryDnsEndpointResolver::resolver_for_endpoint`.
-     4. Iterates the requested record types, collecting
+     1. Builds an effective `ResolverTarget` from the source
+        (system / `--server <ID>` / ad-hoc), or `None` for system.
+     2. For the system case, calls `Resolver::builder_tokio()` directly.
+     3. For `--server <ID>`: looks up
+        `app_config.selected_server(Some(id))`, then either uses
+        `--transport` to pick the block or runs the precedence
+        (`doh → dot → dns → doq`) over enabled blocks. Errors with a
+        helpful message if the picked block is disabled or absent.
+        Refuses if `<ID>` matches a cluster key
+        (`app_config.clusters.contains_key`).
+     4. For ad-hoc: parses scheme/host/port and applies
+        `--transport`/`--port`/`--tls-server-name`/`--timeout` overrides.
+     5. Calls `HickoryDnsEndpointResolver::resolver_for_target(&target,
+        timeout)` (renamed from `resolver_for_endpoint`).
+     6. Iterates the requested record types, collecting
         `ObservedRecord`s plus the wall-clock elapsed time.
-     5. Prints table / `--short` / `--json` per the flags.
+     7. Prints table / `--short` / `--json` per the flags.
 
-5. **Wire in `src/cli/mod.rs`**: new `Command::Query(QueryArgs)` variant
-   with `#[command(alias = "q")]`.
+7. **Wire in `src/cli/mod.rs`**: new `Command::Query(QueryArgs)`
+   variant with `#[command(alias = "q")]`.
 
-6. **Wire in `src/main.rs`**: dispatch `Command::Query` early — before the
-   `AppConfig::load` call that creates a starter config — so that
+8. **Wire in `src/main.rs`**: dispatch `Command::Query` early — before
+   the `AppConfig::load` call that creates a starter config — so that
    `dns query 1.1.1.1.in-addr.arpa @1.1.1.1` works on a machine with no
-   config file. Pass `AppConfig::load_if_exists(...)` so named-resolver
+   config file. Pass `AppConfig::load_if_exists(...)` so `--server <ID>`
    lookup still works when a config does exist.
 
-7. **Shell completions**: add a hidden `_resolvers` subcommand parallel to
-   `_servers`, printing each `validation_endpoints[*].name`. Update
-   `cli/completions.rs` to teach Bash / Zsh / Fish about
-   `--server <named>` for `query`.
+9. **Shell completions**: extend `cli/completions.rs` so `--server` on
+   `query` reuses the existing hidden `_servers` listing (server IDs,
+   same source the top-level `--server` already completes against). No
+   new hidden subcommand needed.
 
 ## Resolver selection logic
 
 ```text
-            no flags                          --server NAME                  --at ADDR / @ADDR
-                │                                  │                                  │
-                ▼                                  ▼                                  ▼
-   Resolver::builder_tokio()          search config.servers[*].             parse scheme → transport
-   (system resolver)                  validation_endpoints by name          parse addr / url / port
-                                      → ValidationEndpointConfig            apply --transport / --port /
-                                                                            --tls-server-name overrides
-                                                                            → ValidationEndpointConfig
-                │                                  │                                  │
-                └──────────────┬───────────────────┴──────────────────────────────────┘
-                               ▼
-                  HickoryDnsEndpointResolver::resolver_for_endpoint(ep, timeout)
-                  (system path skips this and uses the platform resolver directly)
-                               ▼
-                  For each --type, call resolver.lookup(fqdn, RR)
-                               ▼
-                          Render output
+        no flags                  --server <ID>                @ADDR / --at ADDR
+            │                            │                              │
+            ▼                            ▼                              ▼
+  Resolver::builder_tokio()    cfg.selected_server(Some(id))   parse scheme → transport
+  (system resolver)            → DnsServerConfig               parse addr / url / port
+                               pick transport block per        apply --transport / --port /
+                               --transport or precedence       --tls-server-name overrides
+                               (doh → dot → dns → doq)         → ResolverTarget
+                               → ResolverTarget
+            │                            │                              │
+            └────────────┬───────────────┴──────────────────────────────┘
+                         ▼
+            HickoryDnsEndpointResolver::resolver_for_target(&target, timeout)
+            (system path skips this and uses the platform resolver directly)
+                         ▼
+            For each --type, call resolver.lookup(fqdn, RR)
+                         ▼
+                   Render output
 ```
 
 ## Tests
@@ -307,17 +408,22 @@ Mostly mirror the `validation.rs` test layout.
 - **Pure config parsing** (synchronous, no network):
   - `query` URL scheme parsing → transport mapping (table-driven via
     `rstest::rstest`).
-  - `--server NAME` resolves against a multi-server config, error path
-    for unknown name and for ambiguous name (cross-server duplicate).
-  - Conflict detection for `--server` vs `--at`/`@`, and for transport
-    flags supplied alongside `--server`.
+  - `--server <ID>` resolves against a multi-server config: picks the
+    `[servers.doh]` block when present, falls back through DoT and DNS.
+  - `--server <ID> --transport doh` against a server with `doh.enabled
+    = false` errors with the list of enabled blocks.
+  - `--server <CLUSTER_ID>` (matches `app_config.clusters`) errors with
+    a "use a cluster member" message that lists `cluster.members`.
+  - Conflict detection for `--server` vs `--at`/`@`, and for `--port` /
+    `--tls-server-name` / `--tcp` supplied alongside `--server`.
 
 - **Resolver wiring** (unit-level, no sockets):
   - Reuse / extend `FakeDnsEndpointResolver` to back a `run_query` that
     accepts an injected resolver in tests.
   - Cover `noerror`, `nxdomain`, `servfail`, `timeout`, `tls_failure`,
     `doh_http_failure`, `unsupported_transport` → exit code mapping.
-  - `#[cfg(not(feature = "doq"))]` test asserts that a `doq` endpoint
+  - `#[cfg(not(feature = "doq"))]` test asserts that a `[servers.doq]`
+    block selected by `--transport doq` (or the precedence fallback)
     yields `UnsupportedTransport`.
   - `#[cfg(feature = "doq")]` test asserts the resolver-config branch
     chooses `doq_name_server` and returns a `NameServerConfig` whose
@@ -328,8 +434,12 @@ Mostly mirror the `validation.rs` test layout.
     field names: `query.name`, `resolver.kind`, `answers[].ttl`, …).
   - `--short` returns one line per answer.
 
-- **Round-trip**: TOML config containing a `doq` endpoint serialises and
-  re-parses identically (extend `config_validation_endpoint_roundtrip`).
+- **Round-trip**:
+  - Extend the existing `server_transport_blocks_roundtrip` test to
+    include `[servers.doq]` and assert the field set parses, renders,
+    and reparses identically.
+  - Add a `validate_rejects_doq_without_addr` test mirroring the
+    existing DoT/DoH negative-validation tests.
 
 - **Integration** (opt-in / `#[ignore]` by default): one live test
   against `1.1.1.1` for plain DNS and `https://cloudflare-dns.com/dns-query`
@@ -386,21 +496,24 @@ No new direct dependencies. `quinn` arrives transitively through
 
 | Symbol | Gate |
 |---|---|
-| `ValidationTransport::Doq` enum variant | always present (parses in configs and clap on every build) |
-| `ValidationTransport`'s clap `ValueEnum`/serde mapping for `doq` | always present |
+| `DoqTransportConfig` struct in `control_plane/config.rs` | always present (configs round-trip on every build) |
+| `pub doq: Option<DoqTransportConfig>` on `DnsServerConfig` and `DnsServerConfigRaw` | always present |
+| `[servers.doq]` round-trip in `append_server_entry` | always present |
+| `validate_server_transports` arm requiring `addr` when `doq.enabled` | always present |
+| `ValidationTransport::Doq` enum variant (used as the target-side transport tag in `ResolverTarget`) | always present |
+| `--transport doq` CLI parsing | always present |
 | `fn doq_name_server` in `core/dns/resolver.rs` | `#[cfg(feature = "doq")]` |
-| Match arm `ValidationTransport::Doq => doq_name_server(endpoint)?` in `resolver_config` | `#[cfg(feature = "doq")]` |
+| Match arm `ValidationTransport::Doq => doq_name_server(target)?` in `resolver_config` | `#[cfg(feature = "doq")]` |
 | Match arm on `#[cfg(not(feature = "doq"))]` returning `ValidationFailureKind::UnsupportedTransport` with a `tracing::warn!` recommending the `doq` build flag | `#[cfg(not(feature = "doq"))]` |
 | Default-port table (`853` for DoQ) | always present |
-| `validate_validation_endpoints` requirement that `doq` endpoints have an `address` | always present (configs validate the same on either build) |
-| `--transport doq` CLI parsing | always present |
-| Test `validation_resolver_doq_succeeds` (live or fake-backed) | `#[cfg(feature = "doq")]` |
-| Test `validation_resolver_doq_unsupported_without_feature` | `#[cfg(not(feature = "doq"))]` |
+| Test `resolver_doq_succeeds` (live or fake-backed) | `#[cfg(feature = "doq")]` |
+| Test `resolver_doq_unsupported_without_feature` | `#[cfg(not(feature = "doq"))]` |
 
 ### Runtime behaviour without the feature
 
-A config file containing a `transport = "doq"` endpoint parses and
-validates on every build. Issuing a query that uses it on a build without
+A config file containing a `[servers.doq]` block parses and validates on
+every build. Issuing a `dns query --server <id> --transport doq` (or
+selecting that block through the precedence fallback) on a build without
 `doq` returns `ValidationFailureKind::UnsupportedTransport` (already in
 the enum, no new variant). The CLI maps that to exit code `2` with the
 message:
