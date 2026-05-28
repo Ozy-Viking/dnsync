@@ -599,6 +599,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions { access, allowed_zones },
             validation_endpoints: vec![],
         }

@@ -218,6 +218,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         dns: None,
         dot: None,
         doh: None,
+        doq: None,
         mcp: McpPermissions {
             access,
             allowed_zones,

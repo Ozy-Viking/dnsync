@@ -35,7 +35,7 @@ use clap::Parser;
 use rmcp::ServiceExt;
 use tracing_subscriber::{EnvFilter, fmt};
 
-use cli::{Cli, Command, ConfigCmd};
+use cli::{Cli, Command, ConfigCmd, ServerEndpointCmd};
 use error::{Error, Result};
 use policy::Policy;
 #[cfg(any(
@@ -169,6 +169,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
                         dns: None,
                         dot: None,
                         doh: None,
+                        doq: None,
                         mcp: config::McpPermissions {
                             access,
                             allowed_zones: allow_zone,
@@ -177,6 +178,62 @@ async fn run_inner(cli: Cli) -> Result<()> {
                     }
                 };
                 let path = config::add_server(cli.config, server)?;
+                println!("Updated config file: {}", path.display());
+                Ok(())
+            }
+
+            ConfigCmd::Server { server_id, endpoint } => {
+                let update = match endpoint {
+                    ServerEndpointCmd::Dns { addr, timeout_ms, disable, clear } => {
+                        config::EndpointUpdate::Dns(if clear {
+                            None
+                        } else {
+                            Some(config::DnsTransportConfig {
+                                enabled: !disable,
+                                addr,
+                                timeout_ms,
+                            })
+                        })
+                    }
+                    ServerEndpointCmd::Dot { addr, server_name, timeout_ms, disable, clear } => {
+                        config::EndpointUpdate::Dot(if clear {
+                            None
+                        } else {
+                            Some(config::DotTransportConfig {
+                                enabled: !disable,
+                                addr,
+                                server_name,
+                                timeout_ms,
+                            })
+                        })
+                    }
+                    ServerEndpointCmd::Doh { url, addr, server_name, timeout_ms, disable, clear } => {
+                        config::EndpointUpdate::Doh(if clear {
+                            None
+                        } else {
+                            Some(config::DohTransportConfig {
+                                enabled: !disable,
+                                url,
+                                addr,
+                                server_name,
+                                timeout_ms,
+                            })
+                        })
+                    }
+                    ServerEndpointCmd::Doq { addr, server_name, timeout_ms, disable, clear } => {
+                        config::EndpointUpdate::Doq(if clear {
+                            None
+                        } else {
+                            Some(config::DoqTransportConfig {
+                                enabled: !disable,
+                                addr,
+                                server_name,
+                                timeout_ms,
+                            })
+                        })
+                    }
+                };
+                let path = config::update_server_endpoint(cli.config, &server_id, update)?;
                 println!("Updated config file: {}", path.display());
                 Ok(())
             }
