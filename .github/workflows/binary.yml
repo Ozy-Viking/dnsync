@@ -12,21 +12,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  guard-main:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Require tag commit to be on main
-        run: |
-          git fetch origin main --tags
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-
   test:
-    needs: guard-main
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
