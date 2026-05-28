@@ -18,6 +18,7 @@ technitium = []
 pangolin = []
 cloudflare = []
 unifi = []
+doq = ["hickory-resolver/quic-ring"]
 
 [dependencies]
 rmcp = { version = "1.7", features = ["server", "transport-io"] }

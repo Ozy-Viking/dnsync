@@ -803,6 +803,8 @@ dependencies = [
  "idna",
  "ipnet",
  "jni",
+ "pin-project-lite",
+ "quinn",
  "rand 0.10.1",
  "rustls",
  "rustls-platform-verifier",
@@ -851,6 +853,7 @@ dependencies = [
  "ndk-context",
  "once_cell",
  "parking_lot",
+ "quinn",
  "rand 0.10.1",
  "resolv-conf",
  "rustls",
@@ -2624,6 +2627,7 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
+ "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",

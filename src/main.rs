@@ -169,6 +169,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
                         dns: None,
                         dot: None,
                         doh: None,
+                        doq: None,
                         mcp: config::McpPermissions {
                             access,
                             allowed_zones: allow_zone,

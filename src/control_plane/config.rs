@@ -98,6 +98,25 @@ pub struct DohTransportConfig {
     pub timeout_ms: Option<u64>,
 }
 
+/// DNS-over-QUIC query endpoint for a configured server.
+///
+/// Parsed and round-tripped on every build so configs are portable.
+/// The actual resolver wiring is gated behind the `doq` Cargo feature;
+/// without it, attempts to query this endpoint return
+/// `ValidationFailureKind::UnsupportedTransport`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DoqTransportConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
 /// Logical cluster policy shared by member servers.
 ///
 /// `primary` and `preferred_writer` accept either a configured DNS server id or
@@ -261,6 +280,8 @@ pub struct DnsServerConfig {
     pub dot: Option<DotTransportConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doh: Option<DohTransportConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doq: Option<DoqTransportConfig>,
 
     #[serde(default, skip_serializing_if = "McpPermissions::is_default")]
     pub mcp: McpPermissions,
@@ -300,6 +321,8 @@ struct DnsServerConfigRaw {
     dot: Option<DotTransportConfig>,
     #[serde(default)]
     doh: Option<DohTransportConfig>,
+    #[serde(default)]
+    doq: Option<DoqTransportConfig>,
     #[serde(default)]
     mcp: McpPermissions,
     #[serde(default)]
@@ -355,6 +378,7 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             dns: raw.dns,
             dot: raw.dot,
             doh: raw.doh,
+            doq: raw.doq,
             mcp: McpPermissions {
                 access,
                 allowed_zones: zones,
@@ -418,6 +442,7 @@ impl AppConfig {
                 dns: None,
                 dot: None,
                 doh: None,
+                doq: None,
                 mcp: McpPermissions::default(),
                 validation_endpoints: Vec::new(),
             }],
@@ -646,6 +671,19 @@ fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
         )));
     }
 
+    if let Some(doq) = &server.doq
+        && doq.enabled
+        && doq
+            .addr
+            .as_deref()
+            .is_none_or(|addr| addr.trim().is_empty())
+    {
+        return Err(Error::config(format!(
+            "DNS server '{}' has enabled doq transport without addr",
+            server.id
+        )));
+    }
+
     Ok(())
 }
 
@@ -864,6 +902,20 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
             doh_tbl["timeout_ms"] = value(timeout_ms as i64);
         }
         tbl["doh"] = Item::Table(doh_tbl);
+    }
+    if let Some(ref doq) = server.doq {
+        let mut doq_tbl = Table::new();
+        doq_tbl["enabled"] = value(doq.enabled);
+        if let Some(ref addr) = doq.addr {
+            doq_tbl["addr"] = value(addr.as_str());
+        }
+        if let Some(ref server_name) = doq.server_name {
+            doq_tbl["server_name"] = value(server_name.as_str());
+        }
+        if let Some(timeout_ms) = doq.timeout_ms {
+            doq_tbl["timeout_ms"] = value(timeout_ms as i64);
+        }
+        tbl["doq"] = Item::Table(doq_tbl);
     }
 
     match doc.entry("servers") {
@@ -1482,6 +1534,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1504,6 +1557,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1728,6 +1782,12 @@ mod tests {
                 addr = "10.5.0.53:443"
                 server_name = "dns1.hankin.io"
 
+                [servers.doq]
+                enabled = true
+                addr = "10.5.0.53:853"
+                server_name = "dns1.hankin.io"
+                timeout_ms = 2000
+
                 [clusters.home-dns]
                 members = ["dns1"]
             "#,
@@ -1752,9 +1812,52 @@ mod tests {
             server.doh.as_ref().unwrap().url.as_deref(),
             Some("https://dns1.hankin.io/dns-query")
         );
+        let doq = server.doq.as_ref().unwrap();
+        assert!(doq.enabled);
+        assert_eq!(doq.addr.as_deref(), Some("10.5.0.53:853"));
+        assert_eq!(doq.server_name.as_deref(), Some("dns1.hankin.io"));
+        assert_eq!(doq.timeout_ms, Some(2000));
         assert!(rendered.contains("[servers.dns]"));
         assert!(rendered.contains("[servers.dot]"));
         assert!(rendered.contains("[servers.doh]"));
+        assert!(rendered.contains("[servers.doq]"));
+    }
+
+    #[test]
+    fn validate_rejects_doq_without_addr() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+
+                [servers.doq]
+                enabled = true
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("enabled doq transport without addr"),
+            "unexpected error: {err}",
+        );
+    }
+
+    #[test]
+    fn disabled_doq_block_does_not_require_addr() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+
+                [servers.doq]
+                enabled = false
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
     }
 
     #[test]
@@ -1959,6 +2062,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1992,6 +2096,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2037,6 +2142,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2077,6 +2183,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2122,6 +2229,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         }
@@ -2198,6 +2306,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2219,6 +2328,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
