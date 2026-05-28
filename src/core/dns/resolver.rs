@@ -71,6 +71,8 @@ pub struct ResolverTarget {
     pub url: Option<String>,
     /// SNI / certificate name override for DoT/DoH/DoQ.
     pub server_name: Option<String>,
+    /// Plain DNS should use TCP only. Ignored for encrypted transports.
+    pub tcp_only: bool,
     pub timeout: Duration,
 }
 
@@ -88,6 +90,7 @@ impl ResolverTarget {
             port: endpoint.port,
             url: endpoint.url.clone(),
             server_name: endpoint.tls_server_name.clone(),
+            tcp_only: false,
             timeout: Duration::from_millis(endpoint.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
         }
     }
@@ -114,6 +117,7 @@ impl ResolverTarget {
                     port,
                     url: None,
                     server_name: None,
+                    tcp_only: false,
                     timeout: Duration::from_millis(block.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
                 }
             }),
@@ -126,6 +130,7 @@ impl ResolverTarget {
                     port,
                     url: None,
                     server_name: block.server_name.clone(),
+                    tcp_only: false,
                     timeout: Duration::from_millis(block.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
                 }
             }),
@@ -138,6 +143,7 @@ impl ResolverTarget {
                     port,
                     url: block.url.clone(),
                     server_name: block.server_name.clone(),
+                    tcp_only: false,
                     timeout: Duration::from_millis(block.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
                 }
             }),
@@ -150,6 +156,7 @@ impl ResolverTarget {
                     port,
                     url: None,
                     server_name: block.server_name.clone(),
+                    tcp_only: false,
                     timeout: Duration::from_millis(block.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)),
                 }
             }),
@@ -218,9 +225,7 @@ pub fn build_resolver(
         .map_err(|err| classify_hickory_error(target.transport, &err.to_string()))
 }
 
-fn plain_dns_name_server(
-    target: &ResolverTarget,
-) -> DnsEndpointResolverResult<NameServerConfig> {
+fn plain_dns_name_server(target: &ResolverTarget) -> DnsEndpointResolverResult<NameServerConfig> {
     let ip = target_ip(target)?;
     let port = target.port.unwrap_or(53);
     let mut udp = ConnectionConfig::udp();
@@ -228,7 +233,12 @@ fn plain_dns_name_server(
     let mut tcp = ConnectionConfig::tcp();
     tcp.port = port;
 
-    Ok(NameServerConfig::new(ip, true, vec![udp, tcp]))
+    let connections = if target.tcp_only {
+        vec![tcp]
+    } else {
+        vec![udp, tcp]
+    };
+    Ok(NameServerConfig::new(ip, true, connections))
 }
 
 fn dot_name_server(target: &ResolverTarget) -> DnsEndpointResolverResult<NameServerConfig> {
@@ -317,11 +327,16 @@ fn doh_url_parts(target: &ResolverTarget) -> DnsEndpointResolverResult<(&str, &s
     let (authority, path) = without_scheme
         .split_once('/')
         .unwrap_or((without_scheme, "dns-query"));
-    let host = authority
+    let authority = authority
         .rsplit_once('@')
-        .map_or(authority, |(_, host_port)| host_port)
-        .split_once(':')
-        .map_or(authority, |(host, _)| host);
+        .map_or(authority, |(_, host_port)| host_port);
+    let host = if let Some(stripped) = authority.strip_prefix('[') {
+        stripped.split_once(']').map_or(authority, |(host, _)| host)
+    } else {
+        authority
+            .split_once(':')
+            .map_or(authority, |(host, _)| host)
+    };
 
     if host.trim().is_empty() {
         return Err(ValidationFailureKind::MalformedResponse);
@@ -375,9 +390,7 @@ fn split_host_port(addr: Option<&str>) -> (Option<String>, Option<u16>) {
 
     if let Some(stripped) = raw.strip_prefix('[') {
         if let Some((host, rest)) = stripped.split_once(']') {
-            let port = rest
-                .strip_prefix(':')
-                .and_then(|p| p.parse::<u16>().ok());
+            let port = rest.strip_prefix(':').and_then(|p| p.parse::<u16>().ok());
             return (Some(host.to_string()), port);
         }
         return (Some(raw.to_string()), None);
@@ -474,7 +487,9 @@ mod tests {
         assert_eq!(target.host.as_deref(), Some("10.5.0.53"));
         assert_eq!(target.port, Some(53));
         assert_eq!(target.timeout, Duration::from_millis(1500));
-        assert!(matches!(target.kind, ResolverKind::Named { ref server_id } if server_id == "dns1"));
+        assert!(
+            matches!(target.kind, ResolverKind::Named { ref server_id } if server_id == "dns1")
+        );
     }
 
     #[test]
@@ -507,13 +522,22 @@ mod tests {
     #[test]
     fn is_enabled_on_reflects_block_state() {
         let server = server_with_blocks();
-        assert!(ResolverTarget::is_enabled_on(&server, ValidationTransport::Dns));
-        assert!(ResolverTarget::is_enabled_on(&server, ValidationTransport::Dot));
+        assert!(ResolverTarget::is_enabled_on(
+            &server,
+            ValidationTransport::Dns
+        ));
+        assert!(ResolverTarget::is_enabled_on(
+            &server,
+            ValidationTransport::Dot
+        ));
         assert!(!ResolverTarget::is_enabled_on(
             &server,
             ValidationTransport::Doh
         ));
-        assert!(ResolverTarget::is_enabled_on(&server, ValidationTransport::Doq));
+        assert!(ResolverTarget::is_enabled_on(
+            &server,
+            ValidationTransport::Doq
+        ));
 
         let mut without_doq = server_with_blocks();
         without_doq.doq = None;

@@ -80,6 +80,7 @@ impl DnsEndpointResolver for HickoryDnsEndpointResolver {
             Ok(vec![ObservedRecord {
                 name: fqdn.to_string(),
                 record_type: record_type.to_ascii_uppercase(),
+                ttl: lookup.answers().iter().map(|record| record.ttl).min(),
                 values: lookup
                     .answers()
                     .iter()
@@ -427,6 +428,8 @@ pub struct ExpectedRecord {
 pub struct ObservedRecord {
     pub name: String,
     pub record_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<u32>,
     pub values: Vec<String>,
 }
 
@@ -808,6 +811,7 @@ mod tests {
         let expected = vec![ObservedRecord {
             name: "www.example.com".to_string(),
             record_type: "A".to_string(),
+            ttl: None,
             values: vec!["192.0.2.10".to_string()],
         }];
         let resolver = FakeDnsEndpointResolver::with_records(expected.clone());
@@ -926,6 +930,7 @@ mod tests {
             .map(|record| ObservedRecord {
                 name: record.name.clone(),
                 record_type: record.record_type.clone(),
+                ttl: None,
                 values: record.values.clone(),
             })
             .collect::<Vec<_>>();
@@ -959,11 +964,13 @@ mod tests {
             ObservedRecord {
                 name: "example.test".to_string(),
                 record_type: "A".to_string(),
+                ttl: None,
                 values: vec!["192.0.2.99".to_string()],
             },
             ObservedRecord {
                 name: "extra.example.test".to_string(),
                 record_type: "AAAA".to_string(),
+                ttl: None,
                 values: vec!["2001:db8::99".to_string()],
             },
         ];
@@ -1012,6 +1019,7 @@ mod tests {
         let observed = vec![ObservedRecord {
             name: "example.test.".to_string(),
             record_type: "a".to_string(),
+            ttl: Some(999),
             values: vec!["192.0.2.10".to_string()],
         }];
 
@@ -1071,26 +1079,31 @@ mod tests {
             ObservedRecord {
                 name: "WWW.EXAMPLE.TEST.".to_string(),
                 record_type: "cname".to_string(),
+                ttl: None,
                 values: vec!["example.test".to_string()],
             },
             ObservedRecord {
                 name: "example.test".to_string(),
                 record_type: "TXT".to_string(),
+                ttl: None,
                 values: vec!["\"dnsync-\" \"validation-test\"".to_string()],
             },
             ObservedRecord {
                 name: "example.test".to_string(),
                 record_type: "MX".to_string(),
+                ttl: None,
                 values: vec!["10 mail.example.test".to_string()],
             },
             ObservedRecord {
                 name: "example.test".to_string(),
                 record_type: "NS".to_string(),
+                ttl: None,
                 values: vec!["ns1.example.test".to_string()],
             },
             ObservedRecord {
                 name: "_sip._tcp.example.test".to_string(),
                 record_type: "SRV".to_string(),
+                ttl: None,
                 values: vec!["10 20 5060 sip.example.test".to_string()],
             },
         ];

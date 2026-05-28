@@ -14,10 +14,7 @@ use std::{fmt::Write, time::Duration, time::Instant};
 
 use clap::Args;
 use hickory_resolver::{
-    Resolver,
-    config::ResolverOpts,
-    net::runtime::TokioRuntimeProvider,
-    proto::rr::RecordType,
+    Resolver, config::ResolverOpts, net::runtime::TokioRuntimeProvider, proto::rr::RecordType,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -26,9 +23,7 @@ use crate::{
     control_plane::config::{AppConfig, DnsServerConfig, ValidationTransport},
     core::{
         dns::{
-            resolver::{
-                ResolverKind, ResolverTarget, build_resolver, classify_hickory_error,
-            },
+            resolver::{ResolverKind, ResolverTarget, build_resolver, classify_hickory_error},
             validation::{ObservedRecord, ValidationFailureKind},
         },
         error::{Error, Result},
@@ -253,10 +248,7 @@ pub async fn run_query(config: Option<AppConfig>, args: QueryArgs) -> Result<i32
 /// transport results without printing anything. Shared between the
 /// CLI runner and the MCP `dns_resolve` tool so behaviour stays in
 /// parity by construction.
-pub async fn execute_query(
-    config: Option<AppConfig>,
-    args: QueryArgs,
-) -> Result<QueryOutcome> {
+pub async fn execute_query(config: Option<AppConfig>, args: QueryArgs) -> Result<QueryOutcome> {
     let (domain, ad_hoc_from_positional) = split_targets(&args.targets)?;
     let mut effective = args;
     if let Some(at) = ad_hoc_from_positional {
@@ -271,8 +263,7 @@ pub async fn execute_query(
     validate_cli_rules(&effective)?;
 
     let record_types = parse_record_types(&effective.r#type)?;
-    let default_timeout =
-        Duration::from_millis(effective.timeout.unwrap_or(DEFAULT_TIMEOUT_MS));
+    let default_timeout = Duration::from_millis(effective.timeout.unwrap_or(DEFAULT_TIMEOUT_MS));
 
     let plan = build_query_plan(config.as_ref(), &effective, default_timeout)?;
 
@@ -319,9 +310,7 @@ fn split_targets(positionals: &[String]) -> Result<(String, Option<String>)> {
     for raw in positionals {
         if let Some(rest) = raw.strip_prefix('@') {
             if at.is_some() {
-                return Err(Error::parse(
-                    "only one `@ADDR` positional is accepted",
-                ));
+                return Err(Error::parse("only one `@ADDR` positional is accepted"));
             }
             if rest.is_empty() {
                 return Err(Error::parse("`@ADDR` is missing an address after `@`"));
@@ -371,16 +360,14 @@ fn validate_cli_rules(args: &QueryArgs) -> Result<()> {
         ));
     }
 
-    if args.at.is_some()
-        && (args.dns as u8 + args.dot as u8 + args.doh as u8 + args.doq as u8) > 1
+    if args.at.is_some() && (args.dns as u8 + args.dot as u8 + args.doh as u8 + args.doq as u8) > 1
     {
         return Err(Error::parse(
             "with `--at`/`@ADDR`, at most one of --dns/--dot/--doh/--doq is accepted",
         ));
     }
 
-    if args.server.is_some()
-        && (args.port.is_some() || args.tls_server_name.is_some() || args.tcp)
+    if args.server.is_some() && (args.port.is_some() || args.tls_server_name.is_some() || args.tcp)
     {
         return Err(Error::parse(
             "`--port` / `--tls-server-name` / `--tcp` only apply to ad-hoc resolvers (`--at` / `@ADDR`); for `--server`, the transport block owns those values",
@@ -428,13 +415,19 @@ struct PlanTarget {
     url: Option<String>,
     host_for_json: Option<String>,
     port_for_json: Option<u16>,
+    timeout: Duration,
     skip_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub enum TargetKind {
-    System { display: String },
-    Named { server_id: String, cluster: Option<String> },
+    System {
+        display: String,
+    },
+    Named {
+        server_id: String,
+        cluster: Option<String>,
+    },
     AdHoc,
 }
 
@@ -452,7 +445,7 @@ fn build_query_plan(
     build_system_plan(args, timeout)
 }
 
-fn build_system_plan(_args: &QueryArgs, _timeout: Duration) -> Result<QueryPlan> {
+fn build_system_plan(_args: &QueryArgs, timeout: Duration) -> Result<QueryPlan> {
     let display = system_resolver_display();
     // System path uses Resolver::builder_tokio() directly; we don't
     // construct a ResolverTarget. Encode that with a synthetic
@@ -471,6 +464,7 @@ fn build_system_plan(_args: &QueryArgs, _timeout: Duration) -> Result<QueryPlan>
             url: None,
             host_for_json: None,
             port_for_json: None,
+            timeout,
             skip_reason: Some("__system__".to_string()),
         }],
     })
@@ -527,6 +521,15 @@ fn build_named_plan(
     let server = cfg.selected_server(Some(server_id))?;
     let mut transports = chosen_transports(args);
     transports.sort_by_key(|t| precedence_index(*t));
+    if !args.all
+        && !has_explicit_transport(args)
+        && let Some(best) = transports
+            .iter()
+            .copied()
+            .find(|transport| ResolverTarget::is_enabled_on(server, *transport))
+    {
+        transports = vec![best];
+    }
 
     let mut plan_targets = Vec::new();
     for transport in transports {
@@ -539,6 +542,7 @@ fn build_named_plan(
                 transport,
                 server,
                 "block not configured or disabled",
+                timeout,
             ));
             continue;
         }
@@ -550,6 +554,7 @@ fn build_named_plan(
                 transport,
                 server,
                 "block not configured",
+                timeout,
             ));
             continue;
         };
@@ -562,8 +567,8 @@ fn build_named_plan(
                 target.timeout = timeout;
             }
         }
-        let (label, extras, url, host_for_json, port_for_json) =
-            describe_target(&target);
+        let (label, extras, url, host_for_json, port_for_json) = describe_target(&target);
+        let target_timeout = target.timeout;
         plan_targets.push(PlanTarget {
             transport,
             target: Some(target),
@@ -572,6 +577,7 @@ fn build_named_plan(
             url,
             host_for_json,
             port_for_json,
+            timeout: target_timeout,
             skip_reason: None,
         });
     }
@@ -589,21 +595,31 @@ fn skipped_plan_target(
     transport: ValidationTransport,
     server: &DnsServerConfig,
     reason: &str,
+    timeout: Duration,
 ) -> PlanTarget {
     PlanTarget {
         transport,
         target: None,
-        target_label: format!("—  (no [servers.{}] on {})", transport_word(transport), server.id),
+        target_label: format!(
+            "—  (no [servers.{}] on {})",
+            transport_word(transport),
+            server.id
+        ),
         extras: Vec::new(),
         url: None,
         host_for_json: None,
         port_for_json: None,
+        timeout,
         skip_reason: Some(reason.to_string()),
     }
 }
 
+fn has_explicit_transport(args: &QueryArgs) -> bool {
+    args.dns || args.dot || args.doh || args.doq
+}
+
 fn chosen_transports(args: &QueryArgs) -> Vec<ValidationTransport> {
-    let any_explicit = args.dns || args.dot || args.doh || args.doq;
+    let any_explicit = has_explicit_transport(args);
     if args.all {
         return TRANSPORT_PRECEDENCE.to_vec();
     }
@@ -628,11 +644,7 @@ fn chosen_transports(args: &QueryArgs) -> Vec<ValidationTransport> {
     out
 }
 
-fn build_ad_hoc_plan(
-    at: &str,
-    args: &QueryArgs,
-    timeout: Duration,
-) -> Result<QueryPlan> {
+fn build_ad_hoc_plan(at: &str, args: &QueryArgs, timeout: Duration) -> Result<QueryPlan> {
     let parsed = parse_ad_hoc(at)?;
     let forced = forced_transport_from_flags(args);
     let transport = match (parsed.transport, forced) {
@@ -652,6 +664,7 @@ fn build_ad_hoc_plan(
         port: args.port.or(parsed.port),
         url: parsed.url.clone(),
         server_name: args.tls_server_name.clone(),
+        tcp_only: transport == ValidationTransport::Dns && args.tcp,
         timeout,
     };
     if let Some(override_ms) = args.timeout {
@@ -659,6 +672,7 @@ fn build_ad_hoc_plan(
     }
 
     let (label, extras, url, host_for_json, port_for_json) = describe_target(&target);
+    let target_timeout = target.timeout;
     Ok(QueryPlan {
         kind: TargetKind::AdHoc,
         targets: vec![PlanTarget {
@@ -669,6 +683,7 @@ fn build_ad_hoc_plan(
             url,
             host_for_json,
             port_for_json,
+            timeout: target_timeout,
             skip_reason: None,
         }],
     })
@@ -778,7 +793,13 @@ fn split_addr(raw: &str) -> Result<(String, Option<u16>)> {
 
 fn describe_target(
     target: &ResolverTarget,
-) -> (String, Vec<(String, String)>, Option<String>, Option<String>, Option<u16>) {
+) -> (
+    String,
+    Vec<(String, String)>,
+    Option<String>,
+    Option<String>,
+    Option<u16>,
+) {
     let mut extras: Vec<(String, String)> = Vec::new();
     let (label, url_for_json, host_for_json, port_for_json) = match target.transport {
         ValidationTransport::Doh => {
@@ -842,11 +863,7 @@ fn transport_word(t: ValidationTransport) -> &'static str {
     }
 }
 
-async fn run_block(
-    plan: PlanTarget,
-    record_types: &[String],
-    domain: &str,
-) -> QueryResultBlock {
+async fn run_block(plan: PlanTarget, record_types: &[String], domain: &str) -> QueryResultBlock {
     let started = Instant::now();
     let asked_types = record_types.to_vec();
     let queried_name = domain.to_string();
@@ -868,7 +885,7 @@ async fn run_block(
 
     // System path: special-case.
     if plan.skip_reason.as_deref() == Some("__system__") {
-        let resolver = match build_system_resolver(Duration::from_millis(DEFAULT_TIMEOUT_MS)) {
+        let resolver = match build_system_resolver(plan.timeout) {
             Ok(r) => r,
             Err(status) => return finish(status, Vec::new()),
         };
@@ -890,7 +907,10 @@ async fn run_block(
     // gives only a hostname. Resolve it via the system resolver before
     // building the DoH resolver.
     if target.transport == ValidationTransport::Doh
-        && target.host.as_deref().is_none_or(|h| h.parse::<std::net::IpAddr>().is_err())
+        && target
+            .host
+            .as_deref()
+            .is_none_or(|h| h.parse::<std::net::IpAddr>().is_err())
         && let Some(ref url) = target.url
     {
         match bootstrap_doh_host(url, target.timeout).await {
@@ -920,10 +940,12 @@ async fn bootstrap_doh_host(
         return Ok(ip.to_string());
     }
     let resolver = build_system_resolver(timeout)?;
-    let lookup = resolver
-        .lookup_ip(host)
-        .await
-        .map_err(|e| QueryStatus::from(classify_hickory_error(ValidationTransport::Doh, &e.to_string())))?;
+    let lookup = resolver.lookup_ip(host).await.map_err(|e| {
+        QueryStatus::from(classify_hickory_error(
+            ValidationTransport::Doh,
+            &e.to_string(),
+        ))
+    })?;
     // Prefer IPv4: many container/CI environments have no IPv6
     // outbound. Fall back to whatever the system returned first if no
     // IPv4 is present.
@@ -938,11 +960,16 @@ async fn bootstrap_doh_host(
 fn extract_doh_host(url: &str) -> Option<&str> {
     let after_scheme = url.strip_prefix("https://").unwrap_or(url);
     let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
-    let host = authority
+    let authority = authority
         .rsplit_once('@')
-        .map_or(authority, |(_, host_port)| host_port)
-        .split_once(':')
-        .map_or(authority, |(host, _)| host);
+        .map_or(authority, |(_, host_port)| host_port);
+    let host = if let Some(stripped) = authority.strip_prefix('[') {
+        stripped.split_once(']').map_or(authority, |(host, _)| host)
+    } else {
+        authority
+            .split_once(':')
+            .map_or(authority, |(host, _)| host)
+    };
     if host.is_empty() { None } else { Some(host) }
 }
 
@@ -952,18 +979,14 @@ fn build_system_resolver(
     let mut opts = ResolverOpts::default();
     opts.timeout = timeout;
     opts.attempts = 1;
-    let builder = Resolver::builder_tokio()
-        .map_err(|e| {
-            tracing::debug!(%e, "could not load system resolver");
-            QueryStatus::MalformedResponse
-        })?;
-    builder
-        .with_options(opts)
-        .build()
-        .map_err(|e| {
-            tracing::debug!(%e, "system resolver build failed");
-            QueryStatus::MalformedResponse
-        })
+    let builder = Resolver::builder_tokio().map_err(|e| {
+        tracing::debug!(%e, "could not load system resolver");
+        QueryStatus::MalformedResponse
+    })?;
+    builder.with_options(opts).build().map_err(|e| {
+        tracing::debug!(%e, "system resolver build failed");
+        QueryStatus::MalformedResponse
+    })
 }
 
 async fn lookup_all(
@@ -982,8 +1005,12 @@ async fn lookup_all(
         };
         match resolver.lookup(domain, rr_type).await {
             Ok(lookup) => {
-                let values: Vec<String> =
-                    lookup.answers().iter().map(|r| r.data.to_string()).collect();
+                let ttl = lookup.answers().iter().map(|r| r.ttl).min();
+                let values: Vec<String> = lookup
+                    .answers()
+                    .iter()
+                    .map(|r| r.data.to_string())
+                    .collect();
                 if values.is_empty() {
                     // Empty answer set for that type — treat as no data
                     // (NoError but no records emitted for this type).
@@ -991,6 +1018,7 @@ async fn lookup_all(
                     all_records.push(ObservedRecord {
                         name: domain.to_string(),
                         record_type: rr_name.clone(),
+                        ttl,
                         values,
                     });
                 }
@@ -1088,7 +1116,7 @@ fn expand_rows(block: &QueryResultBlock, _multi_type: bool) -> Vec<Row> {
             rows.push(Row {
                 name: trim_trailing_dot(&record.name).to_string(),
                 rr_type: record.record_type.clone(),
-                ttl: None,
+                ttl: record.ttl.map(|ttl| ttl.to_string()),
                 data: value.clone(),
             });
         }
@@ -1115,7 +1143,10 @@ fn print_rows(rows: &[Row], multi_type: bool) {
     for row in rows {
         let mut line = String::new();
         let _ = write!(&mut line, "{:<name_w$}", row.name);
-        if multi_type || ttl_w > 0 || rows.iter().any(|r| r.ttl.is_some()) || !row.rr_type.is_empty()
+        if multi_type
+            || ttl_w > 0
+            || rows.iter().any(|r| r.ttl.is_some())
+            || !row.rr_type.is_empty()
         {
             let _ = write!(&mut line, "  {:<type_w$}", row.rr_type);
         }
@@ -1190,6 +1221,8 @@ struct JsonAnswer {
     #[serde(rename = "type")]
     rr_type: String,
     data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<u32>,
 }
 
 fn print_json(
@@ -1263,6 +1296,7 @@ fn build_json_value(
                         name: trim_trailing_dot(&r.name).to_string(),
                         rr_type: r.record_type.clone(),
                         data: v.clone(),
+                        ttl: r.ttl,
                     })
                 })
                 .collect(),
@@ -1336,11 +1370,7 @@ mod tests {
     #[test]
     fn split_targets_rejects_extra_positional() {
         assert!(
-            split_targets(&[
-                "huly.hankin.io".to_string(),
-                "extra.example".to_string(),
-            ])
-            .is_err()
+            split_targets(&["huly.hankin.io".to_string(), "extra.example".to_string(),]).is_err()
         );
     }
 
@@ -1358,12 +1388,8 @@ mod tests {
 
     #[test]
     fn parse_record_types_uppercases_and_dedups() {
-        let types = parse_record_types(&[
-            "a".to_string(),
-            "AAAA".to_string(),
-            "A".to_string(),
-        ])
-        .unwrap();
+        let types =
+            parse_record_types(&["a".to_string(), "AAAA".to_string(), "A".to_string()]).unwrap();
         assert_eq!(types, vec!["A".to_string(), "AAAA".to_string()]);
     }
 
@@ -1458,7 +1484,10 @@ mod tests {
     fn parse_ad_hoc_https_scheme_carries_url() {
         let p = parse_ad_hoc("https://cloudflare-dns.com/dns-query").unwrap();
         assert_eq!(p.transport, Some(ValidationTransport::Doh));
-        assert_eq!(p.url.as_deref(), Some("https://cloudflare-dns.com/dns-query"));
+        assert_eq!(
+            p.url.as_deref(),
+            Some("https://cloudflare-dns.com/dns-query")
+        );
     }
 
     #[test]
@@ -1503,10 +1532,7 @@ mod tests {
 
     #[test]
     fn clap_parses_multiple_transport_flags() {
-        let args = parse(&[
-            "huly.hankin.io", "--server", "dns1", "--dot", "--doh",
-        ])
-        .unwrap();
+        let args = parse(&["huly.hankin.io", "--server", "dns1", "--dot", "--doh"]).unwrap();
         assert!(args.dot);
         assert!(args.doh);
         assert!(!args.dns);
@@ -1527,19 +1553,34 @@ mod tests {
     fn forced_transport_picks_in_precedence_order() {
         let mut args = QueryArgs::default();
         args.doh = true;
-        assert_eq!(forced_transport_from_flags(&args), Some(ValidationTransport::Doh));
+        assert_eq!(
+            forced_transport_from_flags(&args),
+            Some(ValidationTransport::Doh)
+        );
         let mut args = QueryArgs::default();
         args.doq = true;
-        assert_eq!(forced_transport_from_flags(&args), Some(ValidationTransport::Doq));
+        assert_eq!(
+            forced_transport_from_flags(&args),
+            Some(ValidationTransport::Doq)
+        );
         let args = QueryArgs::default();
         assert_eq!(forced_transport_from_flags(&args), None);
     }
 
     #[test]
     fn worst_status_picks_higher_severity() {
-        assert_eq!(worst(QueryStatus::NoError, QueryStatus::NxDomain), QueryStatus::NxDomain);
-        assert_eq!(worst(QueryStatus::NxDomain, QueryStatus::NoError), QueryStatus::NxDomain);
-        assert_eq!(worst(QueryStatus::Timeout, QueryStatus::NxDomain), QueryStatus::Timeout);
+        assert_eq!(
+            worst(QueryStatus::NoError, QueryStatus::NxDomain),
+            QueryStatus::NxDomain
+        );
+        assert_eq!(
+            worst(QueryStatus::NxDomain, QueryStatus::NoError),
+            QueryStatus::NxDomain
+        );
+        assert_eq!(
+            worst(QueryStatus::Timeout, QueryStatus::NxDomain),
+            QueryStatus::Timeout
+        );
     }
 
     #[test]

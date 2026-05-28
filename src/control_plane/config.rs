@@ -188,9 +188,10 @@ impl std::str::FromStr for ValidationEndpointConfig {
             Some("dns") => ValidationTransport::Dns,
             Some("doh") => ValidationTransport::Doh,
             Some("dot") => ValidationTransport::Dot,
+            Some("doq") => ValidationTransport::Doq,
             Some(other) => {
                 return Err(format!(
-                    "unsupported validation endpoint transport '{other}'; expected dns, doh, or dot"
+                    "unsupported validation endpoint transport '{other}'; expected dns, doh, dot, or doq"
                 ));
             }
             None => return Err("validation endpoint must use name:transport:address".to_string()),
@@ -616,7 +617,7 @@ fn validate_validation_endpoints(server: &DnsServerConfig) -> Result<()> {
         }
 
         match endpoint.transport {
-            ValidationTransport::Dns | ValidationTransport::Dot
+            ValidationTransport::Dns | ValidationTransport::Dot | ValidationTransport::Doq
                 if endpoint.address.trim().is_empty() =>
             {
                 return Err(Error::config(format!(

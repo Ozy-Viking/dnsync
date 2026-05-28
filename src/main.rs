@@ -102,7 +102,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
         // Query runs before AppConfig::load so an absent config file is not
         // an error (the system-resolver path works without one). We still
         // honour an explicit `--config` by going through `load_if_exists`.
-        let config = config::AppConfig::load_if_exists(cli.config).ok().flatten();
+        let config = config::AppConfig::load_if_exists(cli.config)?;
         let exit = cli::query::run_query(config, query_args).await?;
         std::process::exit(exit);
     }

@@ -401,10 +401,12 @@ existing `validate_server_transports` only checks non-empty
    transport blocks — append a DoQ prompt with the same shape as DoT.
    (Verify in code: as of the cluster PR, the wizard does not appear to
    prompt for these blocks yet; if so, no change.)
-6. **`[[servers.validation_endpoints]]` is unchanged.** No DoQ variant
-   added to `ValidationTransport`. The legacy validation pipeline keeps
-   `dns | doh | dot` until the project decides what to do with it (the
-   in-tree analysis doc treats it as on a path to deprecation).
+6. **`[[servers.validation_endpoints]]` remains on the legacy pipeline.**
+   `ValidationTransport` gains a `Doq` variant for the new `[servers.doq]`
+   blocks and `ValidationEndpointConfig::from_str` also accepts `doq` so TOML
+   and CLI-style validation endpoint shorthands stay consistent. The resolver
+   path still feature-gates DoQ and reports unsupported transport when the
+   `doq` Cargo feature is disabled.
 
 ## Code layout
 
@@ -455,8 +457,8 @@ target type.
 3. **Extend `ValidationTransport` with a `Doq` variant.** Always
    compiled in (so the enum is total and pattern matches on it stay
    exhaustive). It is reused as the target-side enum in step 1; the
-   legacy `[[servers.validation_endpoints]]` `FromStr` parser does
-   *not* learn `doq` — only the new `[servers.doq]` block does.
+   legacy `[[servers.validation_endpoints]]` `FromStr` parser also learns
+   `doq` so serialized configs and shorthand inputs agree.
 
 4. **Add `doq_name_server`** in `resolver.rs`, **gated behind
    `#[cfg(feature = "doq")]`**. Hickory 0.26 exposes
