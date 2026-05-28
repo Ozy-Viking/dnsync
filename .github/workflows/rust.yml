@@ -15,10 +15,10 @@ env:
 jobs:
   rust-ci:
     name: Rust CI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -26,6 +26,7 @@ jobs:
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:
+        key: rust-ci
         cache-on-failure: true
 
     - name: Build
