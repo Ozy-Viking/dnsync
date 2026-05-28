@@ -1,8 +1,10 @@
 [package]
 name = "dnsync"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "DNS Sync and Control with MCP"
+repository = "https://github.com/Ozy-Viking/dnsync"
+license = "MIT"
 
 [[bin]]
 name = "dns"
@@ -13,12 +15,13 @@ name = "dnslib"
 path = "src/lib.rs"
 
 [features]
-default = ["technitium", "pangolin", "cloudflare", "unifi"]
+default = ["technitium", "pangolin", "cloudflare", "unifi", "pihole"]
 technitium = []
 pangolin = []
 cloudflare = []
 unifi = []
 doq = ["hickory-resolver/quic-ring"]
+pihole = []
 
 [dependencies]
 rmcp = { version = "1.7", features = ["server", "transport-io"] }
@@ -57,3 +60,8 @@ http = "1"
 opt-level = 3
 lto = true
 strip = true
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/dnsync-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"

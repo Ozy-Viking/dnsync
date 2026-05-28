@@ -2,10 +2,11 @@
     feature = "technitium",
     feature = "pangolin",
     feature = "cloudflare",
-    feature = "unifi"
+    feature = "unifi",
+    feature = "pihole"
 )))]
 compile_error!(
-    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, `cloudflare`, or `unifi`."
+    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, `cloudflare`, `unifi`, or `pihole`."
 );
 
 pub mod cli;

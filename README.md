@@ -88,6 +88,13 @@ server_name = "dns1.hankin.io"
 enabled = true
 url = "https://dns1.hankin.io/dns-query"
 
+# DoQ (DNS-over-QUIC, port 853) — planned; configuration is accepted but
+# the transport is not yet wired into validation/benchmarking.
+[servers.doq]
+enabled = true
+addr = "10.5.0.53:853"
+server_name = "dns1.hankin.io"
+
 [servers.mcp]
 access = ["read"]
 allowed_zones = ["example.com", "internal.lan"]

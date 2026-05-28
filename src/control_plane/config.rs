@@ -16,6 +16,7 @@ pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
 pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
 pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
 pub const UNIFI_DEFAULT_BASE_URL: &str = "https://192.168.1.1/proxy/network/integration/v1";
+pub const PIHOLE_DEFAULT_BASE_URL: &str = "http://pi.hole";
 
 /// Supported DNS vendor backends.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -26,6 +27,7 @@ pub enum VendorKind {
     Pangolin,
     Cloudflare,
     Unifi,
+    Pihole,
 }
 
 /// Whether the DNS server is on a local network or an external/cloud service.
@@ -777,6 +779,156 @@ pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<Path
     Ok(path)
 }
 
+/// Specifies which transport endpoint on a server to create, replace, or remove.
+///
+/// `None` removes the transport block entirely. `Some(config)` creates or replaces it.
+pub enum EndpointUpdate {
+    Dns(Option<DnsTransportConfig>),
+    Dot(Option<DotTransportConfig>),
+    Doh(Option<DohTransportConfig>),
+    Doq(Option<DoqTransportConfig>),
+}
+
+/// Update a single transport endpoint on an existing server entry in the config file.
+///
+/// The server is matched by ID (case-insensitive). Existing file content — including
+/// comments and formatting — is preserved; only the targeted transport sub-table is
+/// added, replaced, or removed.
+pub fn update_server_endpoint(
+    path: Option<PathBuf>,
+    server_id: &str,
+    update: EndpointUpdate,
+) -> Result<PathBuf> {
+    let Some(path) = path.or_else(default_config_path) else {
+        return Err(Error::config(
+            "could not determine a default config path; pass --config <path>",
+        ));
+    };
+
+    // Validate via the serde types first so we catch bad values early.
+    let mut config = load_from_path(&path)?;
+    let pos = config
+        .servers
+        .iter()
+        .position(|s| s.id.eq_ignore_ascii_case(server_id))
+        .ok_or_else(|| {
+            Error::config(format!(
+                "config does not define a DNS server named '{server_id}'"
+            ))
+        })?;
+    match &update {
+        EndpointUpdate::Dns(cfg) => config.servers[pos].dns = cfg.clone(),
+        EndpointUpdate::Dot(cfg) => config.servers[pos].dot = cfg.clone(),
+        EndpointUpdate::Doh(cfg) => config.servers[pos].doh = cfg.clone(),
+        EndpointUpdate::Doq(cfg) => config.servers[pos].doq = cfg.clone(),
+    }
+    config.validate()?;
+
+    // Read the raw file so toml_edit can preserve comments and formatting.
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?;
+    let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e| {
+        Error::config(format!(
+            "could not parse config file '{}': {e}",
+            path.display()
+        ))
+    })?;
+
+    let servers = doc
+        .get_mut("servers")
+        .and_then(|v| v.as_array_of_tables_mut())
+        .ok_or_else(|| Error::config("config file has no [[servers]] entries"))?;
+
+    let server_tbl = servers
+        .iter_mut()
+        .find(|tbl| {
+            tbl.get("id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id.eq_ignore_ascii_case(server_id))
+        })
+        .ok_or_else(|| {
+            Error::config(format!(
+                "config does not define a DNS server named '{server_id}'"
+            ))
+        })?;
+
+    use toml_edit::{Item, Table, value};
+
+    match update {
+        EndpointUpdate::Dns(None) => {
+            server_tbl.remove("dns");
+        }
+        EndpointUpdate::Dns(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["dns"] = Item::Table(tbl);
+        }
+        EndpointUpdate::Dot(None) => {
+            server_tbl.remove("dot");
+        }
+        EndpointUpdate::Dot(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ref sn) = cfg.server_name {
+                tbl["server_name"] = value(sn.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["dot"] = Item::Table(tbl);
+        }
+        EndpointUpdate::Doh(None) => {
+            server_tbl.remove("doh");
+        }
+        EndpointUpdate::Doh(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref url) = cfg.url {
+                tbl["url"] = value(url.as_str());
+            }
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ref sn) = cfg.server_name {
+                tbl["server_name"] = value(sn.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["doh"] = Item::Table(tbl);
+        }
+        EndpointUpdate::Doq(None) => {
+            server_tbl.remove("doq");
+        }
+        EndpointUpdate::Doq(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ref sn) = cfg.server_name {
+                tbl["server_name"] = value(sn.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["doq"] = Item::Table(tbl);
+        }
+    }
+
+    write_private_file(&path, &doc.to_string())?;
+    Ok(path)
+}
+
 /// Append a `[[servers]]` entry to a toml_edit document without touching
 /// any existing content.
 fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfig) {
@@ -792,6 +944,7 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
         VendorKind::Pangolin => "pangolin",
         VendorKind::Cloudflare => "cloudflare",
         VendorKind::Unifi => "unifi",
+        VendorKind::Pihole => "pihole",
     });
     if let Some(loc) = server.location {
         tbl["location"] = value(match loc {
@@ -1061,6 +1214,7 @@ fn append_cluster_entries(
             VendorKind::Pangolin => "pangolin",
             VendorKind::Cloudflare => "cloudflare",
             VendorKind::Unifi => "unifi",
+            VendorKind::Pihole => "pihole",
         });
         let mut members = Array::new();
         for member in &cluster.members {
@@ -1168,6 +1322,7 @@ impl DnsServerConfig {
             VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
             VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
             VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
+            VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
         });
         if url_is_local(url).await {
             ServerLocation::Local
@@ -1186,6 +1341,7 @@ impl DnsServerConfig {
                 VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL.to_string(),
                 VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL.to_string(),
                 VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL.to_string(),
+                VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL.to_string(),
             })
     }
 

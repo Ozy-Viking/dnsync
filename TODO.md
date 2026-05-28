@@ -5,9 +5,9 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 
 ## Docs First
 
-- [x] Create `docs/architecture.md` to define module boundaries.
-- [x] Create `docs/vendor-mapping.md` to document Technitium mapping.
-- [x] Create `docs/adr/0001-general-dns-control-plane.md` to record the architecture decision.
+- [ ] Create `docs/architecture.md` to define module boundaries. _(not yet created — file is missing from `docs/`)_
+- [ ] Create `docs/vendor-mapping.md` to document Technitium mapping. _(not yet created — file is missing from `docs/`)_
+- [ ] Create `docs/adr/0001-general-dns-control-plane.md` to record the architecture decision. _(not yet created — `docs/adr/` directory does not exist)_
 - [x] Use the docs as the source of truth for implementation phases.
 - [x] Add initial `technitium` vendor feature flag.
 - [x] Rename the importable library crate to `dnslib` while keeping the binary as `dns`.
@@ -60,3 +60,12 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 - [ ] Optional: a future `dns query --compare` flag that diffs answers
   across multiple resolvers (extends the existing `record list --all`
   idea to the query side).
+- [ ] Wire DoQ (DNS-over-QUIC, port 853) into the validation transport layer
+      so all four transports mandated by `agents.md` (DNS, DoT, DoH, DoQ) are
+      end-to-end testable.
+
+## CLI / MCP Parity (bugs, per `agents.md`)
+
+- [ ] Add MCP `sync` tool that mirrors the `dns sync` CLI surface
+      (profiles, `--from`/`--to`/`--zone`/`--map`, dry-run by default, `--apply`).
+- [ ] Add MCP `diff` tool to ship alongside any future `dns diff` CLI command.

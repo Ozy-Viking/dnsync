@@ -51,10 +51,11 @@ need to be listed per-feature.
 
 ```toml
 [features]
-default = ["technitium", "pangolin", "newvendor"]
+default = ["technitium", "pangolin", "cloudflare", "newvendor"]
 
 technitium = []
 pangolin = []
+cloudflare = []
 newvendor = []
 ```
 
@@ -75,6 +76,7 @@ pub enum VendorKind {
     #[default]
     Technitium,
     Pangolin,
+    Cloudflare,
     NewVendor,
 }
 ```
@@ -106,6 +108,7 @@ Add match arms in `resolved_base_url()` and `resolved_location()` on `DnsServerC
 .unwrap_or_else(|| match self.vendor {
     VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
     VendorKind::Pangolin   => PANGOLIN_DEFAULT_BASE_URL.to_string(),
+    VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL.to_string(),
     VendorKind::NewVendor  => NEWVENDOR_DEFAULT_BASE_URL.to_string(),
 })
 
@@ -113,6 +116,7 @@ Add match arms in `resolved_base_url()` and `resolved_location()` on `DnsServerC
 let url = self.base_url.as_deref().unwrap_or(match self.vendor {
     VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
     VendorKind::Pangolin   => PANGOLIN_DEFAULT_BASE_URL,
+    VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
     VendorKind::NewVendor  => NEWVENDOR_DEFAULT_BASE_URL,
 });
 ```
@@ -123,6 +127,7 @@ Add a match arm in `append_server_entry()` for TOML serialisation:
 tbl["vendor"] = value(match server.vendor {
     VendorKind::Technitium => "technitium",
     VendorKind::Pangolin   => "pangolin",
+    VendorKind::Cloudflare => "cloudflare",
     VendorKind::NewVendor  => "newvendor",
 });
 ```
@@ -490,12 +495,19 @@ pub struct VendorCapabilities {
     pub cache: bool,
     pub access_lists: bool,
     pub settings: bool,
+    pub stats: bool,
     pub zone_import: bool,
 }
 ```
 
 Set each boolean to `true` only for operations you fully implement. Capabilities must reflect
 actual behaviour, not aspirational support.
+
+`stats` is a first-class capability alongside zones/records/cache: a vendor that
+exposes per-server statistics (query counts, top clients, cache hit rate, etc.)
+must set `stats: true` and back it with a working `StatsRead` implementation.
+Vendors without a stats endpoint set `stats: false` and return
+`Error::unsupported("VendorName", "stats")` from `get_stats`.
 
 Example for Pangolin (read-only):
 
@@ -506,6 +518,7 @@ VendorCapabilities {
     cache: false,
     access_lists: false,
     settings: true,
+    stats: false,
     zone_import: false,
 }
 ```
@@ -645,13 +658,13 @@ Update every `#[cfg(any(feature = "technitium", feature = "pangolin"))]` guard t
 the new feature:
 
 ```rust
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "newvendor"))]
+#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare", feature = "newvendor"))]
 ```
 
 Update the `compile_error!` guard:
 
 ```rust
-#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "newvendor")))]
+#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "cloudflare", feature = "newvendor")))]
 compile_error!("No DNS vendor feature is enabled...");
 ```
 
