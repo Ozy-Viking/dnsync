@@ -48,6 +48,11 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 - [x] Plan the `dns query` subcommand (`docs/dns-query-command.md`).
 - [x] Add the `doq` Cargo feature gating `hickory-resolver/quic-ring`.
 - [x] Add `[servers.doq]` transport block; round-trip + validate.
+- [ ] Add provider-level default resolver transports for external providers
+  such as Cloudflare, with DNS/DoT/DoH/DoQ defaults that can still be
+  overridden per config. Future providers should be able to declare their
+  transport defaults in one place instead of requiring every config to repeat
+  standard public resolver endpoints.
 - [x] Extract resolver builders onto a neutral `ResolverTarget` shared
   between validation and query paths; add DoQ behind `#[cfg]`.
 - [x] Ship the `dns query` (alias `q`) CLI subcommand: system / named /
