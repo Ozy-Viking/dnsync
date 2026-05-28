@@ -1005,6 +1005,7 @@ fn append_cluster_entries(
             VendorKind::Pangolin => "pangolin",
             VendorKind::Cloudflare => "cloudflare",
             VendorKind::Unifi => "unifi",
+            VendorKind::Pihole => "pihole",
         });
         let mut members = Array::new();
         for member in &cluster.members {
