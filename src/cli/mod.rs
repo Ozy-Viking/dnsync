@@ -209,13 +209,17 @@ pub enum ConfigCmd {
 
     /// Set or clear a DNS query endpoint on an existing server entry.
     ///
-    /// Example: dns config server myserver dns --addr 10.0.0.1:53
+    /// Run with no arguments to enter interactive setup.
+    /// Example (non-interactive): dns config server myserver dns --addr 10.0.0.1:53
     Server {
-        /// ID of the server to update (case-insensitive)
-        server_id: String,
+        /// ID of the server to update (case-insensitive).
+        /// Omit to be prompted interactively.
+        server_id: Option<String>,
 
+        /// Endpoint type and options.
+        /// Omit to be prompted interactively.
         #[command(subcommand)]
-        endpoint: ServerEndpointCmd,
+        endpoint: Option<ServerEndpointCmd>,
     },
 }
 

@@ -183,58 +183,50 @@ async fn run_inner(cli: Cli) -> Result<()> {
             }
 
             ConfigCmd::Server { server_id, endpoint } => {
-                let update = match endpoint {
-                    ServerEndpointCmd::Dns { addr, timeout_ms, disable, clear } => {
-                        config::EndpointUpdate::Dns(if clear {
-                            None
-                        } else {
-                            Some(config::DnsTransportConfig {
-                                enabled: !disable,
-                                addr,
-                                timeout_ms,
-                            })
-                        })
+                match endpoint {
+                    Some(endpoint) => {
+                        // Non-interactive path: all arguments supplied on the command line.
+                        let id = server_id.ok_or_else(|| {
+                            Error::parse(
+                                "server_id is required when specifying an endpoint subcommand; \
+                                 run `dns config server` with no arguments for interactive setup",
+                            )
+                        })?;
+                        let update = build_endpoint_update(endpoint);
+                        let path = config::update_server_endpoint(cli.config, &id, update)?;
+                        println!("Updated config file: {}", path.display());
                     }
-                    ServerEndpointCmd::Dot { addr, server_name, timeout_ms, disable, clear } => {
-                        config::EndpointUpdate::Dot(if clear {
-                            None
+                    None => {
+                        // Interactive path: pick server (if needed) then configure an endpoint.
+                        let cfg = config::AppConfig::load_if_exists(cli.config.clone())?
+                            .ok_or_else(|| {
+                                Error::config(
+                                    "no config file found; run `dns config init` or \
+                                     `dns config add` first",
+                                )
+                            })?;
+
+                        if cfg.servers.is_empty() {
+                            return Err(Error::config(
+                                "config file defines no servers; add one with `dns config add`",
+                            ));
+                        }
+
+                        let resolved_id = if let Some(ref id) = server_id {
+                            id.clone()
+                        } else if cfg.servers.len() == 1 {
+                            cfg.servers[0].id.clone()
                         } else {
-                            Some(config::DotTransportConfig {
-                                enabled: !disable,
-                                addr,
-                                server_name,
-                                timeout_ms,
-                            })
-                        })
+                            cli::interactive::run_server_picker(&cfg.servers)?
+                        };
+
+                        let server = cfg.selected_server(Some(&resolved_id))?;
+                        let update = cli::interactive::run_server_wizard(server)?;
+                        let path =
+                            config::update_server_endpoint(cli.config, &resolved_id, update)?;
+                        println!("Updated config file: {}", path.display());
                     }
-                    ServerEndpointCmd::Doh { url, addr, server_name, timeout_ms, disable, clear } => {
-                        config::EndpointUpdate::Doh(if clear {
-                            None
-                        } else {
-                            Some(config::DohTransportConfig {
-                                enabled: !disable,
-                                url,
-                                addr,
-                                server_name,
-                                timeout_ms,
-                            })
-                        })
-                    }
-                    ServerEndpointCmd::Doq { addr, server_name, timeout_ms, disable, clear } => {
-                        config::EndpointUpdate::Doq(if clear {
-                            None
-                        } else {
-                            Some(config::DoqTransportConfig {
-                                enabled: !disable,
-                                addr,
-                                server_name,
-                                timeout_ms,
-                            })
-                        })
-                    }
-                };
-                let path = config::update_server_endpoint(cli.config, &server_id, update)?;
-                println!("Updated config file: {}", path.display());
+                }
                 Ok(())
             }
         };
@@ -377,6 +369,59 @@ async fn run_inner(cli: Cli) -> Result<()> {
     )?;
 
     run_with_client(cli, client, policy).await
+}
+
+fn build_endpoint_update(endpoint: ServerEndpointCmd) -> config::EndpointUpdate {
+    match endpoint {
+        ServerEndpointCmd::Dns { addr, timeout_ms, disable, clear } => {
+            config::EndpointUpdate::Dns(if clear {
+                None
+            } else {
+                Some(config::DnsTransportConfig {
+                    enabled: !disable,
+                    addr,
+                    timeout_ms,
+                })
+            })
+        }
+        ServerEndpointCmd::Dot { addr, server_name, timeout_ms, disable, clear } => {
+            config::EndpointUpdate::Dot(if clear {
+                None
+            } else {
+                Some(config::DotTransportConfig {
+                    enabled: !disable,
+                    addr,
+                    server_name,
+                    timeout_ms,
+                })
+            })
+        }
+        ServerEndpointCmd::Doh { url, addr, server_name, timeout_ms, disable, clear } => {
+            config::EndpointUpdate::Doh(if clear {
+                None
+            } else {
+                Some(config::DohTransportConfig {
+                    enabled: !disable,
+                    url,
+                    addr,
+                    server_name,
+                    timeout_ms,
+                })
+            })
+        }
+        ServerEndpointCmd::Doq { addr, server_name, timeout_ms, disable, clear } => {
+            config::EndpointUpdate::Doq(if clear {
+                None
+            } else {
+                Some(config::DoqTransportConfig {
+                    enabled: !disable,
+                    addr,
+                    server_name,
+                    timeout_ms,
+                })
+            })
+        }
+    }
 }
 
 /// Start an MCP (MCP-over-stdio) server using the provided CLI options and optional app configuration.
