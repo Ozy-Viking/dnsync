@@ -3,6 +3,7 @@ pub mod cache;
 pub mod capabilities;
 pub mod logs;
 pub mod records;
+pub mod resolver;
 pub mod responses;
 pub mod service;
 pub mod settings;

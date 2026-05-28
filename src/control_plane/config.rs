@@ -39,13 +39,19 @@ pub enum ServerLocation {
     External,
 }
 
-/// Transport used to query a validation endpoint.
+/// Transport used to query a DNS endpoint.
+///
+/// `Doq` is always available as a tag for `[servers.doq]` blocks and as a
+/// CLI flag for the `dns query` subcommand, but the resolver path is
+/// gated behind the `doq` Cargo feature; without it, queries over DoQ
+/// return `ValidationFailureKind::UnsupportedTransport`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ValidationTransport {
     Dns,
     Doh,
     Dot,
+    Doq,
 }
 
 /// Configured role for writes across a logical cluster.
@@ -836,6 +842,7 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
                 ValidationTransport::Dns => "dns",
                 ValidationTransport::Doh => "doh",
                 ValidationTransport::Dot => "dot",
+                ValidationTransport::Doq => "doq",
             });
             if !endpoint.address.is_empty() {
                 endpoint_tbl["address"] = value(endpoint.address.as_str());

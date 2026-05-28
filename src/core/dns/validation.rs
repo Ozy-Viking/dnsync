@@ -3,21 +3,17 @@
 //! This module contains stable serializable data shapes and resolver endpoint
 //! abstractions. Record comparison logic lives in later validation layers.
 
-use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
+use std::{future::Future, time::Duration};
 
-use hickory_resolver::{
-    Resolver,
-    config::{ConnectionConfig, NameServerConfig, ResolverConfig, ResolverOpts},
-    net::runtime::TokioRuntimeProvider,
-    proto::rr::RecordType,
-};
+use hickory_resolver::{Resolver, net::runtime::TokioRuntimeProvider, proto::rr::RecordType};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    control_plane::config::{ValidationEndpointConfig, ValidationTransport},
+    control_plane::config::ValidationEndpointConfig,
     core::dns::{
         records::RecordData,
+        resolver::{ResolverTarget, build_resolver, classify_hickory_error},
         responses::{AnyRecordData, ListRecordsResponse, ZoneRecord},
     },
 };
@@ -49,18 +45,16 @@ pub struct HickoryDnsEndpointResolver;
 
 impl HickoryDnsEndpointResolver {
     /// Build a production Hickory resolver for one validation endpoint.
+    ///
+    /// Delegates to [`build_resolver`] via a [`ResolverTarget`] derived
+    /// from the legacy endpoint shape; behaviour is unchanged.
     pub fn resolver_for_endpoint(
         endpoint: &ValidationEndpointConfig,
         timeout: Duration,
     ) -> DnsEndpointResolverResult<Resolver<TokioRuntimeProvider>> {
-        let mut opts = ResolverOpts::default();
-        opts.timeout = timeout;
-        opts.attempts = 1;
-
-        Resolver::builder_with_config(resolver_config(endpoint)?, TokioRuntimeProvider::default())
-            .with_options(opts)
-            .build()
-            .map_err(|err| classify_hickory_error(endpoint.transport, &err.to_string()))
+        let mut target = ResolverTarget::from_endpoint(endpoint);
+        target.timeout = timeout;
+        build_resolver(&target)
     }
 }
 
@@ -93,136 +87,6 @@ impl DnsEndpointResolver for HickoryDnsEndpointResolver {
                     .collect(),
             }])
         }
-    }
-}
-
-fn resolver_config(
-    endpoint: &ValidationEndpointConfig,
-) -> DnsEndpointResolverResult<ResolverConfig> {
-    let name_server = match endpoint.transport {
-        ValidationTransport::Dns => plain_dns_name_server(endpoint)?,
-        ValidationTransport::Dot => dot_name_server(endpoint)?,
-        ValidationTransport::Doh => doh_name_server(endpoint)?,
-    };
-
-    Ok(ResolverConfig::from_parts(
-        None,
-        Vec::new(),
-        vec![name_server],
-    ))
-}
-
-fn plain_dns_name_server(
-    endpoint: &ValidationEndpointConfig,
-) -> DnsEndpointResolverResult<NameServerConfig> {
-    let ip = endpoint_ip(endpoint)?;
-    let port = endpoint.port.unwrap_or(53);
-    let mut udp = ConnectionConfig::udp();
-    udp.port = port;
-    let mut tcp = ConnectionConfig::tcp();
-    tcp.port = port;
-
-    Ok(NameServerConfig::new(ip, true, vec![udp, tcp]))
-}
-
-fn dot_name_server(
-    endpoint: &ValidationEndpointConfig,
-) -> DnsEndpointResolverResult<NameServerConfig> {
-    let ip = endpoint_ip(endpoint)?;
-    let server_name = tls_server_name(endpoint)?.into();
-    let mut tls = ConnectionConfig::tls(server_name);
-    tls.port = endpoint.port.unwrap_or(853);
-
-    Ok(NameServerConfig::new(ip, true, vec![tls]))
-}
-
-fn doh_name_server(
-    endpoint: &ValidationEndpointConfig,
-) -> DnsEndpointResolverResult<NameServerConfig> {
-    let (host, path) = doh_url_parts(endpoint)?;
-    let ip = if endpoint.address.trim().is_empty() {
-        host.parse::<IpAddr>()
-            .map_err(|_| ValidationFailureKind::MalformedResponse)?
-    } else {
-        endpoint_ip(endpoint)?
-    };
-    let server_name = endpoint
-        .tls_server_name
-        .as_deref()
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or(host)
-        .to_string();
-    let mut https = ConnectionConfig::https(Arc::from(server_name), Some(Arc::from(path)));
-    https.port = endpoint.port.unwrap_or(443);
-
-    Ok(NameServerConfig::new(ip, true, vec![https]))
-}
-
-fn endpoint_ip(endpoint: &ValidationEndpointConfig) -> DnsEndpointResolverResult<IpAddr> {
-    endpoint
-        .address
-        .parse::<IpAddr>()
-        .map_err(|_| ValidationFailureKind::MalformedResponse)
-}
-
-fn tls_server_name(endpoint: &ValidationEndpointConfig) -> DnsEndpointResolverResult<String> {
-    endpoint
-        .tls_server_name
-        .as_deref()
-        .filter(|name| !name.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| (!endpoint.address.trim().is_empty()).then(|| endpoint.address.clone()))
-        .ok_or(ValidationFailureKind::MalformedResponse)
-}
-
-fn doh_url_parts(endpoint: &ValidationEndpointConfig) -> DnsEndpointResolverResult<(&str, &str)> {
-    let url = endpoint
-        .url
-        .as_deref()
-        .ok_or(ValidationFailureKind::MalformedResponse)?;
-    let without_scheme = url
-        .strip_prefix("https://")
-        .ok_or(ValidationFailureKind::DohHttpFailure)?;
-    let (authority, path) = without_scheme
-        .split_once('/')
-        .unwrap_or((without_scheme, "dns-query"));
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host_port)| host_port)
-        .split_once(':')
-        .map_or(authority, |(host, _)| host);
-
-    if host.trim().is_empty() {
-        return Err(ValidationFailureKind::MalformedResponse);
-    }
-
-    Ok((
-        host,
-        if path.is_empty() {
-            "/dns-query"
-        } else {
-            &url[url.len() - path.len() - 1..]
-        },
-    ))
-}
-
-fn classify_hickory_error(transport: ValidationTransport, error: &str) -> ValidationFailureKind {
-    let error = error.to_ascii_lowercase();
-
-    if error.contains("timed out") || error.contains("timeout") {
-        ValidationFailureKind::Timeout
-    } else if error.contains("nxdomain") || error.contains("no records found") {
-        ValidationFailureKind::Nxdomain
-    } else if error.contains("servfail") || error.contains("server failure") {
-        ValidationFailureKind::Servfail
-    } else if error.contains("refused") {
-        ValidationFailureKind::Refused
-    } else if matches!(transport, ValidationTransport::Dot) || error.contains("tls") {
-        ValidationFailureKind::TlsFailure
-    } else if matches!(transport, ValidationTransport::Doh) || error.contains("http") {
-        ValidationFailureKind::DohHttpFailure
-    } else {
-        ValidationFailureKind::MalformedResponse
     }
 }
 
@@ -733,6 +597,7 @@ impl ValidationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control_plane::config::ValidationTransport;
     use crate::core::dns::responses::{ZoneInfo, ZoneRecords};
     use rstest::{fixture, rstest};
     use serde_json::{Value, json};
