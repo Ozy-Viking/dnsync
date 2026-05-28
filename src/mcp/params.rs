@@ -120,3 +120,59 @@ pub struct StatsParams {
     /// LastHour, LastDay, LastWeek, LastMonth, LastYear (default: LastDay)
     pub stats_type: Option<String>,
 }
+
+// ─── Resolve params ────────────────────────────────────────────────────────
+
+/// Parameters for `dns_resolve` — the MCP equivalent of `dns query`.
+///
+/// At most one of `server_id` / `at` should be set; if both are omitted
+/// the host's system resolver is used. Transport selection mirrors the
+/// CLI: leave `transports` empty and `all_transports` unset to let the
+/// server pick the first enabled block (precedence: doh → dot → dns →
+/// doq); supply a list of transports to fan out across those; or set
+/// `all_transports = true` (requires `server_id`) to query every
+/// enabled block.
+#[derive(Deserialize, JsonSchema)]
+pub struct ResolveParams {
+    /// Name to resolve (FQDN).
+    pub domain: String,
+
+    /// Record types to look up (default: ["A"]). Standard mnemonics:
+    /// A, AAAA, CNAME, MX, TXT, NS, SRV, CAA, PTR, SOA, ANY.
+    #[serde(default)]
+    pub types: Option<Vec<String>>,
+
+    /// A configured [[servers]] entry to query. Matched case-
+    /// insensitively against `server.id`. Mutually exclusive with `at`.
+    #[serde(default)]
+    pub server_id: Option<String>,
+
+    /// Ad-hoc resolver. `host[:port]` or
+    /// `scheme://host[:port][/path]` (udp/tcp/dns/tls/dot/https/doh/
+    /// quic/doq). Mutually exclusive with `server_id`.
+    #[serde(default)]
+    pub at: Option<String>,
+
+    /// Subset of ["dns","dot","doh","doq"] to query. Empty means
+    /// "single best" (precedence pick) for `server_id`, or the
+    /// scheme-implied transport for `at`. Multiple values fan out.
+    #[serde(default)]
+    pub transports: Option<Vec<String>>,
+
+    /// Equivalent to specifying every transport flag. Requires
+    /// `server_id`. Mutually exclusive with non-empty `transports`.
+    #[serde(default)]
+    pub all_transports: Option<bool>,
+
+    /// Override port for ad-hoc targets only.
+    #[serde(default)]
+    pub port: Option<u16>,
+
+    /// SNI override for ad-hoc DoT/DoH/DoQ.
+    #[serde(default)]
+    pub tls_server_name: Option<String>,
+
+    /// Per-attempt timeout in milliseconds (default 5000).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}

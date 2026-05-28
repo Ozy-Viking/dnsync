@@ -231,8 +231,34 @@ impl From<ValidationFailureKind> for QueryStatus {
 /// Output goes to stdout; errors that prevent any query from running
 /// (parse-time invariants, unknown `--server`) return `Err`.
 pub async fn run_query(config: Option<AppConfig>, args: QueryArgs) -> Result<i32> {
+    let outcome = execute_query(config, args.clone()).await?;
+
+    if args.json {
+        print_json(
+            &outcome.domain,
+            &outcome.record_types,
+            &outcome.target_kind,
+            &outcome.blocks,
+        );
+    } else if args.short {
+        print_short(&outcome.blocks);
+    } else {
+        print_table(&outcome.blocks, &outcome.record_types);
+    }
+
+    Ok(exit_code_for(&outcome.blocks))
+}
+
+/// Programmatic entry point — runs a query and returns the per-
+/// transport results without printing anything. Shared between the
+/// CLI runner and the MCP `dns_resolve` tool so behaviour stays in
+/// parity by construction.
+pub async fn execute_query(
+    config: Option<AppConfig>,
+    args: QueryArgs,
+) -> Result<QueryOutcome> {
     let (domain, ad_hoc_from_positional) = split_targets(&args.targets)?;
-    let mut effective = args.clone();
+    let mut effective = args;
     if let Some(at) = ad_hoc_from_positional {
         if effective.at.is_some() {
             return Err(Error::parse(
@@ -255,15 +281,35 @@ pub async fn run_query(config: Option<AppConfig>, args: QueryArgs) -> Result<i32
         blocks.push(run_block(plan_target, &record_types, &domain).await);
     }
 
-    if effective.json {
-        print_json(&domain, &record_types, &plan.kind, &blocks);
-    } else if effective.short {
-        print_short(&blocks);
-    } else {
-        print_table(&blocks, &record_types);
-    }
+    Ok(QueryOutcome {
+        domain,
+        record_types,
+        target_kind: plan.kind,
+        blocks,
+    })
+}
 
-    Ok(exit_code_for(&blocks))
+/// Result of `execute_query` — everything needed to render output or
+/// shape a JSON response for the MCP tool.
+#[derive(Debug, Clone)]
+pub struct QueryOutcome {
+    pub domain: String,
+    pub record_types: Vec<String>,
+    pub target_kind: TargetKind,
+    pub blocks: Vec<QueryResultBlock>,
+}
+
+impl QueryOutcome {
+    /// Render the same JSON shape `dns query --json` emits. Used by
+    /// the MCP `dns_resolve` tool to keep CLI/MCP parity.
+    pub fn to_json(&self) -> serde_json::Value {
+        build_json_value(
+            &self.domain,
+            &self.record_types,
+            &self.target_kind,
+            &self.blocks,
+        )
+    }
 }
 
 /// Split the positionals into a single domain plus an optional `@addr`.
@@ -386,7 +432,7 @@ struct PlanTarget {
 }
 
 #[derive(Debug, Clone)]
-enum TargetKind {
+pub enum TargetKind {
     System { display: String },
     Named { server_id: String, cluster: Option<String> },
     AdHoc,
@@ -1152,6 +1198,22 @@ fn print_json(
     kind: &TargetKind,
     blocks: &[QueryResultBlock],
 ) {
+    let value = build_json_value(domain, record_types, kind, blocks);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+    );
+}
+
+/// Produce the stable JSON shape `dns query --json` emits, without
+/// printing. Reused by the MCP `dns_resolve` tool so CLI and MCP
+/// return identical structured payloads.
+fn build_json_value(
+    domain: &str,
+    record_types: &[String],
+    kind: &TargetKind,
+    blocks: &[QueryResultBlock],
+) -> serde_json::Value {
     let target = match kind {
         TargetKind::System { display } => JsonTarget {
             kind: "system",
@@ -1215,10 +1277,7 @@ fn print_json(
         target,
         results,
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!(out)).unwrap_or_else(|_| "{}".to_string())
-    );
+    json!(out)
 }
 
 // ───── Tests ─────────────────────────────────────────────────────────────────
