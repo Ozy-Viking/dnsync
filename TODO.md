@@ -54,7 +54,7 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
   ad-hoc targets, DoH bootstrap, dig-style table + `--short` + `--json`,
   fan-out with `--all` and per-transport flags.
 - [x] Ship the `dns_resolve` MCP tool with the same engine and JSON shape.
-- [ ] Document `dns query` in the README (examples + `[servers.doq]`).
+- [x] Document `dns query` in the README (examples + `[servers.doq]`).
 - [ ] Shell completion for `--server` on `dns query` (currently picks up
   the `_servers` hidden subcommand automatically — verify per shell).
 - [ ] Optional: a future `dns query --compare` flag that diffs answers
