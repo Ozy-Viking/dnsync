@@ -3,8 +3,8 @@ use inquire::{InquireError, MultiSelect, Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, McpPermissions, PANGOLIN_DEFAULT_BASE_URL,
-    ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, UNIFI_DEFAULT_BASE_URL, ValidationEndpointConfig,
-    VendorKind,
+    PIHOLE_DEFAULT_BASE_URL, ServerLocation, TECHNITIUM_DEFAULT_BASE_URL, UNIFI_DEFAULT_BASE_URL,
+    ValidationEndpointConfig, VendorKind,
 };
 use crate::control_plane::policy::PolicyRule;
 use crate::core::error::{Error, Result};
@@ -43,6 +43,10 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
                 kind: VendorKind::Unifi,
                 label: "unifi",
             },
+            VendorChoice {
+                kind: VendorKind::Pihole,
+                label: "pihole",
+            },
         ];
         Select::new("Vendor:", choices)
             .prompt()
@@ -55,6 +59,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
         VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
         VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
+        VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
     };
 
     let base_url = optional_text(

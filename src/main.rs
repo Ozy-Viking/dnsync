@@ -2,17 +2,19 @@
     feature = "technitium",
     feature = "pangolin",
     feature = "cloudflare",
-    feature = "unifi"
+    feature = "unifi",
+    feature = "pihole"
 )))]
 compile_error!(
-    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, `cloudflare`, or `unifi`."
+    "No DNS vendor feature is enabled. Enable at least one vendor feature, such as `technitium`, `pangolin`, `cloudflare`, `unifi`, or `pihole`."
 );
 
 #[cfg(not(any(
     feature = "technitium",
     feature = "pangolin",
     feature = "cloudflare",
-    feature = "unifi"
+    feature = "unifi",
+    feature = "pihole"
 )))]
 fn main() {}
 
@@ -20,7 +22,8 @@ fn main() {}
     feature = "technitium",
     feature = "pangolin",
     feature = "cloudflare",
-    feature = "unifi"
+    feature = "unifi",
+    feature = "pihole"
 ))]
 use dnslib::{
     cli::{self, RecordCmd, ZoneCmd},
@@ -42,7 +45,8 @@ use policy::Policy;
     feature = "technitium",
     feature = "pangolin",
     feature = "cloudflare",
-    feature = "unifi"
+    feature = "unifi",
+    feature = "pihole"
 ))]
 use server::DnsServer;
 
@@ -50,7 +54,8 @@ use server::DnsServer;
     feature = "technitium",
     feature = "pangolin",
     feature = "cloudflare",
-    feature = "unifi"
+    feature = "unifi",
+    feature = "pihole"
 ))]
 #[tokio::main]
 async fn main() -> miette::Result<()> {
@@ -66,30 +71,6 @@ async fn main() -> miette::Result<()> {
     Ok(())
 }
 
-/// Dispatches CLI commands and performs the requested operation.
-///
-/// This function interprets the parsed `Cli` command, handles early-exit subcommands (completions,
-/// server id listing, and config subcommands), loads the application configuration for other
-/// commands, and dispatches to specialized handlers (MCP server, record listing across servers,
-/// zone transfer, sync, or single-server command execution). `Error::UserCancelled` is caught
-/// here and rendered as a clean exit; all other errors propagate to `main()` for miette to render.
-///
-/// # Returns
-///
-/// `Ok(())` on success, `Err(Error)` on failure. The caller (`main`) returns a
-/// `miette::Result<()>`, so miette will format and print the diagnostic.
-///
-/// # Examples
-///
-/// ```no_run
-/// // Run the CLI dispatcher with a prepared `cli`.
-/// // The example is `no_run` because constructing a full `Cli` in a doctest depends on the
-/// // surrounding application context.
-/// # async fn doc() -> miette::Result<()> {
-/// let cli = /* build or parse Cli here */;
-/// run(cli).await?;
-/// # Ok(()) }
-/// ```
 async fn run(cli: Cli) -> Result<()> {
     match run_inner(cli).await {
         Ok(()) => Ok(()),
@@ -322,32 +303,6 @@ async fn run_inner(cli: Cli) -> Result<()> {
     run_with_client(cli, client, policy).await
 }
 
-/// Start an MCP (MCP-over-stdio) server using the provided CLI options and optional app configuration.
-///
-/// The function validates that no per-call credentials or server selection flags (`--token`, `--base-url`, `--server`) were supplied;
-/// if any are present it returns `Err(Error::Parse { .. })` so the caller's miette pipeline can render the diagnostic. It then
-/// constructs a `DnsServer` from the provided or default configuration and runs it over stdin/stdout. Startup or transport
-/// failures are wrapped in `Error::Mcp { .. }` and propagated.
-///
-/// # Returns
-///
-/// `Ok(())` on a clean shutdown, `Err(Error)` on validation, startup, or transport failure.
-///
-/// # Examples
-///
-/// ```no_run
-/// # async fn doc() -> miette::Result<()> {
-/// # use dnsync_main::{run_mcp, Cli, AppConfig};
-/// let cli = Cli { token: None, base_url: None, servers: vec![], access: None, allow_zone: vec![], config: None, ..Default::default() };
-/// run_mcp(cli, None).await?;
-/// # Ok(()) }
-/// ```
-#[cfg(any(
-    feature = "technitium",
-    feature = "pangolin",
-    feature = "cloudflare",
-    feature = "unifi"
-))]
 async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
     if cli.token.is_some() || cli.base_url.is_some() || !cli.servers.is_empty() {
         return Err(Error::parse(
@@ -371,26 +326,6 @@ async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
     Ok(())
 }
 
-/// Dispatches non-MCP CLI commands to the runner using the provided DNS client.
-///
-/// # Returns
-///
-/// `Ok(())` on success, `Err(Error)` propagated from the runner on failure.
-///
-/// # Examples
-///
-/// ```no_run
-/// # async fn doc() -> miette::Result<()> {
-/// // Assume `client` implements `DnsService` and `cli`/`policy` are prepared.
-/// run_with_client(cli, client, policy).await?;
-/// # Ok(()) }
-/// ```
-#[cfg(any(
-    feature = "technitium",
-    feature = "pangolin",
-    feature = "cloudflare",
-    feature = "unifi"
-))]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     cli: Cli,
     client: C,
@@ -405,12 +340,6 @@ async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     }
 }
 
-#[cfg(any(
-    feature = "technitium",
-    feature = "pangolin",
-    feature = "cloudflare",
-    feature = "unifi"
-))]
 async fn run_zone_transfer(
     app_config: Option<&config::AppConfig>,
     zone: &str,
@@ -460,22 +389,10 @@ async fn run_zone_transfer(
     Ok(())
 }
 
-#[cfg(any(
-    feature = "technitium",
-    feature = "pangolin",
-    feature = "cloudflare",
-    feature = "unifi"
-))]
 async fn server_export_zone(server: &config::DnsServerConfig, zone: &str) -> Result<String> {
     VendorClient::export_zone_for_server(server, zone).await
 }
 
-#[cfg(any(
-    feature = "technitium",
-    feature = "pangolin",
-    feature = "cloudflare",
-    feature = "unifi"
-))]
 async fn server_import_zone(
     server: &config::DnsServerConfig,
     zone: &str,
