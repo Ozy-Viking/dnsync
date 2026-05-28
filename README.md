@@ -88,6 +88,13 @@ server_name = "dns1.hankin.io"
 enabled = true
 url = "https://dns1.hankin.io/dns-query"
 
+# DoQ (DNS-over-QUIC, port 853) — planned; configuration is accepted but
+# the transport is not yet wired into validation/benchmarking.
+[servers.doq]
+enabled = true
+addr = "10.5.0.53:853"
+server_name = "dns1.hankin.io"
+
 [servers.mcp]
 access = ["read"]
 allowed_zones = ["example.com", "internal.lan"]
@@ -165,10 +172,15 @@ Vendor defaults when no `base_url` is set:
 - `cloudflare` → `https://api.cloudflare.com/client/v4`
 
 Per-server DNS transports are optional query endpoints used by validation today
-and by future benchmarking and direct record-search features. Configure them with
-`[servers.dns]`, `[servers.dot]`, and `[servers.doh]`. Plain DNS and DoT use
-`addr = "host:port"`; DoT can also set `server_name`; DoH uses
-`url = "https://.../dns-query"`.
+and by future benchmarking and direct record-search features. The four supported
+transports are **DNS**, **DoT**, **DoH**, and **DoQ**. Configure them with
+`[servers.dns]`, `[servers.dot]`, `[servers.doh]`, and `[servers.doq]`. Plain DNS
+and DoT use `addr = "host:port"`; DoT and DoQ can also set `server_name`; DoH
+uses `url = "https://.../dns-query"`.
+
+> **DoQ status:** DoQ (DNS-over-QUIC, port 853) is a first-class transport per
+> the project mandate but is **planned / in-progress** — configuration is
+> accepted, end-to-end validation wiring is still landing.
 
 Logical clusters are optional and live under `[clusters.<id>]`. For Technitium,
 use `write_policy = "primary_only"` with `primary = "auto"` so dnsync can use
