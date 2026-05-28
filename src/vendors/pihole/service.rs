@@ -74,13 +74,13 @@ impl ZoneRead for PiholeClient {
 
         let mut records: Vec<ZoneRecord> = Vec::new();
 
-        let domain_lc = domain.to_ascii_lowercase();
+        let domain_lc = domain.trim_end_matches('.').to_ascii_lowercase();
         let domain_suffix = format!(".{domain_lc}");
 
         if let Some(arr) = dns_data.get("dns").and_then(|d| d.as_array()) {
             for entry in arr {
                 let host = entry.get("host").and_then(|h| h.as_str()).unwrap_or("");
-                let host_lc = host.to_ascii_lowercase();
+                let host_lc = host.trim_end_matches('.').to_ascii_lowercase();
                 if domain.is_empty()
                     || host_lc == domain_lc
                     || (options.all_subdomains && host_lc.ends_with(&domain_suffix))
@@ -93,7 +93,7 @@ impl ZoneRead for PiholeClient {
         if let Some(arr) = cname_data.get("cnames").and_then(|c| c.as_array()) {
             for entry in arr {
                 let cname_domain = entry.get("domain").and_then(|d| d.as_str()).unwrap_or("");
-                let cname_lc = cname_domain.to_ascii_lowercase();
+                let cname_lc = cname_domain.trim_end_matches('.').to_ascii_lowercase();
                 if domain.is_empty()
                     || cname_lc == domain_lc
                     || (options.all_subdomains && cname_lc.ends_with(&domain_suffix))
