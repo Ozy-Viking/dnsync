@@ -382,6 +382,7 @@ fn prompt_dns_config(existing: Option<&DnsTransportConfig>) -> Result<DnsTranspo
         .prompt()
         .map_err(wizard_err)?;
 
+    let addr = addr.trim().to_string();
     Ok(DnsTransportConfig {
         enabled,
         addr: Some(addr).filter(|a| !a.is_empty()),
@@ -417,6 +418,7 @@ fn prompt_dot_config(existing: Option<&DotTransportConfig>) -> Result<DotTranspo
         .prompt()
         .map_err(wizard_err)?;
 
+    let addr = addr.trim().to_string();
     Ok(DotTransportConfig {
         enabled,
         addr: Some(addr).filter(|a| !a.is_empty()),
@@ -492,6 +494,7 @@ fn prompt_doq_config(existing: Option<&DoqTransportConfig>) -> Result<DoqTranspo
         .prompt()
         .map_err(wizard_err)?;
 
+    let addr = addr.trim().to_string();
     Ok(DoqTransportConfig {
         enabled,
         addr: Some(addr).filter(|a| !a.is_empty()),
@@ -600,7 +603,8 @@ fn optional_text(label: &str, help: &str, default: Option<&str>) -> Result<Optio
         builder = builder.with_default(d);
     }
     let val = builder.prompt().map_err(wizard_err)?;
-    Ok(if val.is_empty() { None } else { Some(val) })
+    let val = val.trim();
+    Ok(if val.is_empty() { None } else { Some(val.to_string()) })
 }
 
 fn optional_u64(label: &str, help: &str, current: Option<u64>) -> Result<Option<u64>> {
