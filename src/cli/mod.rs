@@ -1,5 +1,6 @@
 pub mod completions;
 pub mod interactive;
+pub mod query;
 pub mod records;
 pub mod runner;
 
@@ -62,6 +63,12 @@ pub enum Command {
     /// Manage DNS records
     #[command(subcommand)]
     Record(RecordCmd),
+
+    /// Resolve a name directly against the system, a configured server, or any
+    /// ad-hoc nameserver. Supports DNS, DoT, DoH, and (with `--features doq`)
+    /// DoQ transports.
+    #[command(alias = "q")]
+    Query(query::QueryArgs),
 
     /// Sync records between two configured servers, optionally remapping IPs
     Sync {

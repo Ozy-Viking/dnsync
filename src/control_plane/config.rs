@@ -41,13 +41,19 @@ pub enum ServerLocation {
     External,
 }
 
-/// Transport used to query a validation endpoint.
+/// Transport used to query a DNS endpoint.
+///
+/// `Doq` is always available as a tag for `[servers.doq]` blocks and as a
+/// CLI flag for the `dns query` subcommand, but the resolver path is
+/// gated behind the `doq` Cargo feature; without it, queries over DoQ
+/// return `ValidationFailureKind::UnsupportedTransport`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ValidationTransport {
     Dns,
     Doh,
     Dot,
+    Doq,
 }
 
 /// Configured role for writes across a logical cluster.
@@ -101,6 +107,11 @@ pub struct DohTransportConfig {
 }
 
 /// DNS-over-QUIC query endpoint for a configured server.
+///
+/// Parsed and round-tripped on every build so configs are portable.
+/// The actual resolver wiring is gated behind the `doq` Cargo feature;
+/// without it, attempts to query this endpoint return
+/// `ValidationFailureKind::UnsupportedTransport`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DoqTransportConfig {
@@ -177,9 +188,10 @@ impl std::str::FromStr for ValidationEndpointConfig {
             Some("dns") => ValidationTransport::Dns,
             Some("doh") => ValidationTransport::Doh,
             Some("dot") => ValidationTransport::Dot,
+            Some("doq") => ValidationTransport::Doq,
             Some(other) => {
                 return Err(format!(
-                    "unsupported validation endpoint transport '{other}'; expected dns, doh, or dot"
+                    "unsupported validation endpoint transport '{other}'; expected dns, doh, dot, or doq"
                 ));
             }
             None => return Err("validation endpoint must use name:transport:address".to_string()),
@@ -605,7 +617,7 @@ fn validate_validation_endpoints(server: &DnsServerConfig) -> Result<()> {
         }
 
         match endpoint.transport {
-            ValidationTransport::Dns | ValidationTransport::Dot
+            ValidationTransport::Dns | ValidationTransport::Dot | ValidationTransport::Doq
                 if endpoint.address.trim().is_empty() =>
             {
                 return Err(Error::config(format!(
@@ -984,6 +996,7 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
                 ValidationTransport::Dns => "dns",
                 ValidationTransport::Doh => "doh",
                 ValidationTransport::Dot => "dot",
+                ValidationTransport::Doq => "doq",
             });
             if !endpoint.address.is_empty() {
                 endpoint_tbl["address"] = value(endpoint.address.as_str());
@@ -1933,6 +1946,12 @@ mod tests {
                 addr = "10.5.0.53:443"
                 server_name = "dns1.hankin.io"
 
+                [servers.doq]
+                enabled = true
+                addr = "10.5.0.53:853"
+                server_name = "dns1.hankin.io"
+                timeout_ms = 2000
+
                 [clusters.home-dns]
                 members = ["dns1"]
             "#,
@@ -1957,9 +1976,52 @@ mod tests {
             server.doh.as_ref().unwrap().url.as_deref(),
             Some("https://dns1.hankin.io/dns-query")
         );
+        let doq = server.doq.as_ref().unwrap();
+        assert!(doq.enabled);
+        assert_eq!(doq.addr.as_deref(), Some("10.5.0.53:853"));
+        assert_eq!(doq.server_name.as_deref(), Some("dns1.hankin.io"));
+        assert_eq!(doq.timeout_ms, Some(2000));
         assert!(rendered.contains("[servers.dns]"));
         assert!(rendered.contains("[servers.dot]"));
         assert!(rendered.contains("[servers.doh]"));
+        assert!(rendered.contains("[servers.doq]"));
+    }
+
+    #[test]
+    fn validate_rejects_doq_without_addr() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+
+                [servers.doq]
+                enabled = true
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("enabled doq transport without addr"),
+            "unexpected error: {err}",
+        );
+    }
+
+    #[test]
+    fn disabled_doq_block_does_not_require_addr() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "dns1"
+
+                [servers.doq]
+                enabled = false
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
     }
 
     #[test]

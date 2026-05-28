@@ -17,7 +17,8 @@ use crate::{
         params::*,
         tools::{
             access_lists, cache as cache_tools, records as record_tools,
-            settings as settings_tools, stats as stats_tools, zones as zone_tools,
+            resolve as resolve_tools, settings as settings_tools, stats as stats_tools,
+            zones as zone_tools,
         },
     },
     vendors::runtime::VendorClient,
@@ -833,6 +834,33 @@ impl DnsServer {
         tracing::info!(tool = "dns_get_settings", "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         settings_tools::handle_get_settings(&client, &policy).await
+    }
+
+    // ── Direct DNS resolution (mirrors `dns query`) ───────────────────────
+
+    /// Resolve a name directly via the system resolver, a configured
+    /// `[[servers]]` entry, or any ad-hoc nameserver. Supports DNS,
+    /// DoT, DoH, and (with the `doq` Cargo feature) DoQ.
+    ///
+    /// Mirrors the `dns query` CLI subcommand and returns the same
+    /// stable JSON shape (`query`, `target`, `results` array — one
+    /// entry per transport). When `all_transports = true` or
+    /// `transports` lists multiple entries, the tool fans out across
+    /// every requested block in precedence order doh → dot → dns →
+    /// doq; the response's `results` length reflects the actual
+    /// transports queried.
+    #[tool(description = "Resolve a name directly against the system resolver, a configured \
+    `[[servers]]` entry (via `server_id`), or any ad-hoc nameserver (via `at`). Supports DNS, \
+    DoT, DoH, and (with the `doq` build feature) DoQ. When `server_id` is given, transport \
+    selection follows `transports` / `all_transports`; otherwise the scheme on `at` chooses, \
+    or the system resolver is used. Returns the same JSON shape as `dns query --json` — a \
+    `results` array with one entry per transport queried.")]
+    async fn dns_resolve(
+        &self,
+        Parameters(p): Parameters<ResolveParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_resolve", "MCP tool invoked");
+        resolve_tools::handle_resolve(&self.config, &self.cli_access, &self.cli_allow_zone, p).await
     }
 }
 

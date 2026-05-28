@@ -109,7 +109,8 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         | Command::Config(_)
         | Command::Completions { .. }
         | Command::ServerIds
-        | Command::Sync { .. } => {
+        | Command::Sync { .. }
+        | Command::Query(_) => {
             unreachable!()
         }
     };
@@ -159,6 +160,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         Command::Mcp => unreachable!("handled in main"),
         Command::Config(_) => unreachable!("handled in main"),
         Command::Sync { .. } => unreachable!("handled in main"),
+        Command::Query(_) => unreachable!("handled in main"),
         Command::Record(RecordCmd::List { .. }) => unreachable!("handled above"),
 
         Command::Zone(cmd) => match cmd {

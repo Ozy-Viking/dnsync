@@ -42,6 +42,24 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 - [x] Preserve current MCP tool behavior after restructuring.
 - [ ] Update tests to match the new module boundaries.
 - [x] Run formatting, tests, and build after each implementation phase.
+
+## Direct DNS resolution (dns query / dns_resolve)
+
+- [x] Plan the `dns query` subcommand (`docs/dns-query-command.md`).
+- [x] Add the `doq` Cargo feature gating `hickory-resolver/quic-ring`.
+- [x] Add `[servers.doq]` transport block; round-trip + validate.
+- [x] Extract resolver builders onto a neutral `ResolverTarget` shared
+  between validation and query paths; add DoQ behind `#[cfg]`.
+- [x] Ship the `dns query` (alias `q`) CLI subcommand: system / named /
+  ad-hoc targets, DoH bootstrap, dig-style table + `--short` + `--json`,
+  fan-out with `--all` and per-transport flags.
+- [x] Ship the `dns_resolve` MCP tool with the same engine and JSON shape.
+- [x] Document `dns query` in the README (examples + `[servers.doq]`).
+- [ ] Shell completion for `--server` on `dns query` (currently picks up
+  the `_servers` hidden subcommand automatically — verify per shell).
+- [ ] Optional: a future `dns query --compare` flag that diffs answers
+  across multiple resolvers (extends the existing `record list --all`
+  idea to the query side).
 - [ ] Wire DoQ (DNS-over-QUIC, port 853) into the validation transport layer
       so all four transports mandated by `agents.md` (DNS, DoT, DoH, DoQ) are
       end-to-end testable.

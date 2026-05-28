@@ -20,6 +20,7 @@ technitium = []
 pangolin = []
 cloudflare = []
 unifi = []
+doq = ["hickory-resolver/quic-ring"]
 pihole = []
 
 [dependencies]

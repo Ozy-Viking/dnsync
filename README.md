@@ -171,16 +171,14 @@ Vendor defaults when no `base_url` is set:
 - `pangolin` → `https://api.pangolin.net/v1`
 - `cloudflare` → `https://api.cloudflare.com/client/v4`
 
-Per-server DNS transports are optional query endpoints used by validation today
-and by future benchmarking and direct record-search features. The four supported
-transports are **DNS**, **DoT**, **DoH**, and **DoQ**. Configure them with
-`[servers.dns]`, `[servers.dot]`, `[servers.doh]`, and `[servers.doq]`. Plain DNS
-and DoT use `addr = "host:port"`; DoT and DoQ can also set `server_name`; DoH
-uses `url = "https://.../dns-query"`.
-
-> **DoQ status:** DoQ (DNS-over-QUIC, port 853) is a first-class transport per
-> the project mandate but is **planned / in-progress** — configuration is
-> accepted, end-to-end validation wiring is still landing.
+Per-server DNS transports are optional query endpoints, used by `dns query`
+(see below), endpoint validation, and future benchmarking. Configure them with
+`[servers.dns]`, `[servers.dot]`, `[servers.doh]`, and `[servers.doq]`. Plain
+DNS, DoT, and DoQ use `addr = "host:port"`; DoT and DoQ can also set
+`server_name`; DoH uses `url = "https://.../dns-query"`. The DoQ transport
+requires the build feature `--features doq`; configs that mention it still
+parse on default builds, but `dns query` returns `unsupported_transport` when
+actually attempting QUIC.
 
 Logical clusters are optional and live under `[clusters.<id>]`. For Technitium,
 use `write_policy = "primary_only"` with `primary = "auto"` so dnsync can use
@@ -325,6 +323,61 @@ normalizes them into the same shape used by other vendors. `--use-local-ip`
 optionally resolves A/AAAA record names with Hickory and prefers a
 private/local address when one is visible; without the flag, provider API
 values are preserved exactly.
+
+### Query
+
+`dns query` (alias `dns q`) resolves a name directly — dig-style, no vendor
+API involved. By default it uses the host's system resolver; pass `--server
+<ID>` to query a configured `[[servers]]` entry through its `[servers.dns|
+dot|doh|doq]` blocks, or `--at <ADDR>` / `@ADDR` for an ad-hoc nameserver.
+
+```bash
+dns q huly.hankin.io                              # system resolver, A record
+dns q huly.hankin.io -t AAAA                      # specific record type
+dns q huly.hankin.io --server dns1                # configured entry, best transport
+dns q huly.hankin.io --server dns1 --dot          # force DoT
+dns q huly.hankin.io --server dns1 --dot --doh    # fan out across two
+dns q huly.hankin.io --server dns1 --all          # every enabled block
+dns q huly.hankin.io @1.1.1.1                     # ad-hoc plain DNS
+dns q huly.hankin.io --at tls://9.9.9.9           # ad-hoc DoT
+dns q huly.hankin.io --at https://cloudflare-dns.com/dns-query
+dns q huly.hankin.io --at quic://dns.adguard.com  # DoQ (needs --features doq)
+dns q huly.hankin.io --short                      # answers only, one per line
+dns q huly.hankin.io --json                       # stable JSON shape
+```
+
+Output starts with an `@` header line — target, transport, optional
+`key=value` extras (e.g. `sni=dns1.hankin.io`), elapsed milliseconds —
+then a column-aligned table of `name type ttl data` rows. Multiple
+transports print one block per transport in precedence order `doh →
+dot → dns → doq`, separated by blank lines. Non-`noerror` results (
+NXDOMAIN, TIMEOUT, …) render as a single row with the queried name on
+the left and the status word where the data would be.
+
+`--server` selects a configured entry; transport flags pick which
+block(s) to query. Without any flag the first enabled block in
+precedence order is used. `--all` is best-effort: it queries every
+configured-and-enabled block on the target, so a server with two
+configured transports prints two blocks rather than erroring. Explicit
+`--<transport>` against a missing or disabled block emits a `skipped`
+row but keeps the other transports running.
+
+DoQ is gated behind the `doq` Cargo feature (not in default builds):
+
+```bash
+cargo install --features doq dnsync     # build a binary that speaks DoQ
+cargo install --all-features dnsync     # everything, including DoQ
+```
+
+On a default build, `[servers.doq]` blocks and `--doq` / `--at doq://`
+still parse; the actual query returns `unsupported_transport` with a
+clear "rebuild with --features doq" hint.
+
+Exit code: `0` on `noerror`, `1` on `nxdomain`, `2` on failures
+(servfail/refused/timeout/tls/http/unsupported/malformed). For
+multi-transport runs the worst result wins; implicit `--all` skips
+don't affect the exit. The MCP equivalent is the `dns_resolve` tool,
+which takes the same parameters and returns the same JSON shape.
 
 ### Sync
 
