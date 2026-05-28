@@ -117,6 +117,15 @@ async fn run_inner(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
+    if let Command::Query(query_args) = cli.command {
+        // Query runs before AppConfig::load so an absent config file is not
+        // an error (the system-resolver path works without one). We still
+        // honour an explicit `--config` by going through `load_if_exists`.
+        let config = config::AppConfig::load_if_exists(cli.config).ok().flatten();
+        let exit = cli::query::run_query(config, query_args).await?;
+        std::process::exit(exit);
+    }
+
     if let Command::Config(config_cmd) = cli.command {
         return match config_cmd {
             ConfigCmd::Init { force } => {
