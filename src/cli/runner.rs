@@ -103,7 +103,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             AllowedCmd::Add { .. } => "allowed add",
             AllowedCmd::Delete { .. } => "allowed delete",
         },
-        Command::Settings => "settings",
+        Command::Settings { .. } => "settings",
         Command::Logs { .. } => "logs",
         Command::Mcp
         | Command::Config(_)
@@ -233,7 +233,13 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             AllowedCmd::Delete { domain } => access_lists::delete_allowed(client, &domain).await?,
         },
 
-        Command::Settings => settings::get_settings(client).await?,
+        Command::Settings { show_secrets } => {
+            if show_secrets {
+                settings::get_settings_unredacted(client).await?
+            } else {
+                settings::get_settings(client).await?
+            }
+        }
 
         Command::Logs { lines, start, end, level } => {
             let lines_vec = logs::get_logs(client, LogsOptions {
