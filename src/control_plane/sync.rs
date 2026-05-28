@@ -92,7 +92,9 @@ pub async fn run_sync(
                 .iter()
                 .find(|p| p.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| {
-                    Error::config(format!("config does not define a sync profile named '{name}'"))
+                    Error::config(format!(
+                        "config does not define a sync profile named '{name}'"
+                    ))
                 })?,
         ),
         None => None,
@@ -166,7 +168,9 @@ pub async fn run_sync(
         render_table(from_id, to_id, &plans, apply);
     }
 
-    let has_changes = plans.iter().any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
+    let has_changes = plans
+        .iter()
+        .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
     if !apply || !has_changes {
         return Ok(());
     }
@@ -181,7 +185,23 @@ async fn plan_zone(
     zone: &str,
     ip_map: &HashMap<IpAddr, IpAddr>,
 ) -> Result<ZonePlan> {
-    let opts = ListRecordsOptions::default();
+    plan_zone_with_clients(from_client, to_client, zone, ip_map).await
+}
+
+async fn plan_zone_with_clients<F, T>(
+    from_client: &F,
+    to_client: &T,
+    zone: &str,
+    ip_map: &HashMap<IpAddr, IpAddr>,
+) -> Result<ZonePlan>
+where
+    F: ZoneRead + ?Sized,
+    T: ZoneRead + ?Sized,
+{
+    let opts = ListRecordsOptions {
+        all_subdomains: true,
+        ..ListRecordsOptions::default()
+    };
 
     let source = from_client
         .list_records(zone, Some(zone), opts)
@@ -241,10 +261,19 @@ fn collect_records(
                 Some(map) => apply_ip_map(rd, map),
                 None => rd,
             };
+            let fqdn = resolve_fqdn(&record.name, Some(zone));
+            if fqdn.eq_ignore_ascii_case(zone) && rd.type_name() == "NS" {
+                skipped += 1;
+                continue;
+            }
             out.push(PlannedRecord {
-                fqdn: resolve_fqdn(&record.name, Some(zone)),
+                fqdn,
                 rtype: rd.type_name().to_string(),
-                ttl: if record.ttl == 0 { DEFAULT_TTL } else { record.ttl },
+                ttl: if record.ttl == 0 {
+                    DEFAULT_TTL
+                } else {
+                    record.ttl
+                },
                 record: rd,
             });
         }
@@ -315,6 +344,13 @@ fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
 
 /// Apply the planned changes to the destination, reporting per-record outcomes.
 async fn apply_plans(to_client: &VendorClient, plans: &[ZonePlan]) -> Result<()> {
+    apply_plans_with_client(to_client, plans).await
+}
+
+async fn apply_plans_with_client<C>(to_client: &C, plans: &[ZonePlan]) -> Result<()>
+where
+    C: RecordWrite + ?Sized,
+{
     let mut applied = 0;
     let mut failures = 0;
 
@@ -480,9 +516,7 @@ fn render_table(from_id: &str, to_id: &str, plans: &[ZonePlan], apply: bool) {
          {skipped} skipped (not syncable)."
     );
     if untouched > 0 {
-        println!(
-            "{untouched} destination record(s) absent from the source were left untouched."
-        );
+        println!("{untouched} destination record(s) absent from the source were left untouched.");
     }
     if adds + deletes == 0 {
         println!("Already in sync — nothing to do.");
@@ -532,7 +566,10 @@ fn render_json(from_id: &str, to_id: &str, plans: &[ZonePlan], apply: bool) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::dns::responses::{ZoneInfo, ZoneRecord, ZoneRecords};
     use rstest::rstest;
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
 
     fn ip_map(pairs: &[(&str, &str)]) -> HashMap<IpAddr, IpAddr> {
         pairs
@@ -549,6 +586,116 @@ mod tests {
             record: RecordData::A {
                 ip: ip.parse().unwrap(),
             },
+        }
+    }
+
+    fn zone_info(name: &str) -> ZoneInfo {
+        ZoneInfo {
+            id: Some(name.to_string()),
+            name: name.to_string(),
+            zone_type: "Primary".to_string(),
+            disabled: false,
+            dnssec_status: None,
+        }
+    }
+
+    fn zone_record(name: &str, record_type: &str, ttl: u32, data: Value) -> ZoneRecord {
+        let mut record = ZoneRecord {
+            name: name.to_string(),
+            record_type: record_type.to_string(),
+            ttl,
+            disabled: false,
+            comments: String::new(),
+            expiry_ttl: 0,
+            data,
+            parsed: None,
+        };
+        record.parsed = record.typed();
+        record
+    }
+
+    fn sync_test_response(zone: &str, records: Vec<ZoneRecord>) -> ListRecordsResponse {
+        ListRecordsResponse {
+            zones: vec![ZoneRecords {
+                zone: zone_info(zone),
+                records,
+            }],
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakeZoneRead {
+        response: ListRecordsResponse,
+        calls: Arc<Mutex<Vec<(String, Option<String>, ListRecordsOptions)>>>,
+    }
+
+    impl FakeZoneRead {
+        fn new(response: ListRecordsResponse) -> Self {
+            Self {
+                response,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl ZoneRead for FakeZoneRead {
+        async fn list_zones(&self, _page: u32, _per_page: u32) -> Result<Value> {
+            Ok(json!({ "response": { "zones": [] } }))
+        }
+
+        async fn list_records(
+            &self,
+            domain: &str,
+            zone: Option<&str>,
+            options: ListRecordsOptions,
+        ) -> Result<ListRecordsResponse> {
+            self.calls.lock().unwrap().push((
+                domain.to_string(),
+                zone.map(ToOwned::to_owned),
+                options,
+            ));
+            Ok(self.response.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeRecordWrite {
+        adds: Mutex<Vec<(String, String, u32, RecordData)>>,
+        deletes: Mutex<Vec<(String, String, Vec<(String, String)>)>>,
+    }
+
+    impl RecordWrite for FakeRecordWrite {
+        async fn add_record(
+            &self,
+            zone: &str,
+            domain: &str,
+            ttl: u32,
+            record: &RecordData,
+        ) -> Result<Value> {
+            self.adds.lock().unwrap().push((
+                zone.to_string(),
+                domain.to_string(),
+                ttl,
+                record.clone(),
+            ));
+            Ok(json!({ "status": "ok" }))
+        }
+
+        async fn delete_record(
+            &self,
+            zone: &str,
+            domain: &str,
+            type_params: &[(&str, String)],
+        ) -> Result<Value> {
+            self.deletes.lock().unwrap().push((
+                zone.to_string(),
+                domain.to_string(),
+                type_params
+                    .iter()
+                    .map(|(key, value)| ((*key).to_string(), value.clone()))
+                    .collect(),
+            ));
+            Ok(json!({ "status": "ok" }))
         }
     }
 
@@ -609,6 +756,122 @@ mod tests {
             &map,
         );
         assert!(matches!(mapped, RecordData::Cname { .. }));
+    }
+
+    // ── plan/apply ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn plan_zone_lists_entire_zone_and_includes_child_records() {
+        let zone = "dnsync-sync-test.example";
+        let source = FakeZoneRead::new(sync_test_response(
+            zone,
+            vec![
+                zone_record(zone, "SOA", 3600, json!({})),
+                zone_record(zone, "NS", 3600, json!({ "nameServer": "dns1.hankin.io" })),
+                zone_record(
+                    &format!("www.{zone}"),
+                    "A",
+                    3600,
+                    json!({ "ipAddress": "203.0.113.10" }),
+                ),
+                zone_record(
+                    &format!("api.{zone}"),
+                    "CNAME",
+                    3600,
+                    json!({ "cname": format!("www.{zone}") }),
+                ),
+            ],
+        ));
+        let dest = FakeZoneRead::new(sync_test_response(
+            zone,
+            vec![
+                zone_record(zone, "SOA", 3600, json!({})),
+                zone_record(zone, "NS", 3600, json!({ "nameServer": "dns2.hankin.io" })),
+            ],
+        ));
+
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new())
+            .await
+            .unwrap();
+
+        assert!(source.calls.lock().unwrap()[0].2.all_subdomains);
+        assert!(dest.calls.lock().unwrap()[0].2.all_subdomains);
+        assert_eq!(plan.adds.len(), 2);
+        assert!(plan.adds.iter().any(|r| {
+            r.fqdn == format!("www.{zone}")
+                && r.rtype == "A"
+                && value_display(&r.record) == "203.0.113.10"
+        }));
+        assert!(plan.adds.iter().any(|r| {
+            r.fqdn == format!("api.{zone}")
+                && r.rtype == "CNAME"
+                && value_display(&r.record) == format!("www.{zone}")
+        }));
+        assert_eq!(plan.skipped, 2);
+    }
+
+    #[tokio::test]
+    async fn apply_writes_missing_child_records_to_destination() {
+        let zone = "dnsync-sync-test.example";
+        let writer = FakeRecordWrite::default();
+        let plan = ZonePlan {
+            zone: zone.to_string(),
+            adds: vec![
+                PlannedRecord {
+                    fqdn: format!("www.{zone}"),
+                    rtype: "A".to_string(),
+                    ttl: 3600,
+                    record: RecordData::A {
+                        ip: "203.0.113.10".parse().unwrap(),
+                    },
+                },
+                PlannedRecord {
+                    fqdn: format!("api.{zone}"),
+                    rtype: "CNAME".to_string(),
+                    ttl: 3600,
+                    record: RecordData::Cname {
+                        target: format!("www.{zone}"),
+                    },
+                },
+            ],
+            deletes: vec![],
+            unchanged: 0,
+            untouched: 0,
+            skipped: 0,
+        };
+
+        apply_plans_with_client(&writer, &[plan]).await.unwrap();
+
+        let adds = writer.adds.lock().unwrap();
+        assert_eq!(adds.len(), 2);
+        assert_eq!(adds[0].0, zone);
+        assert_eq!(adds[0].1, format!("www.{zone}"));
+        assert!(matches!(adds[0].3, RecordData::A { .. }));
+        assert_eq!(adds[1].1, format!("api.{zone}"));
+        assert!(matches!(adds[1].3, RecordData::Cname { .. }));
+    }
+
+    #[tokio::test]
+    async fn plan_zone_applies_ip_mapping_to_child_address_records() {
+        let zone = "dnsync-sync-test.example";
+        let source = FakeZoneRead::new(sync_test_response(
+            zone,
+            vec![zone_record(
+                &format!("www.{zone}"),
+                "A",
+                3600,
+                json!({ "ipAddress": "203.0.113.10" }),
+            )],
+        ));
+        let dest = FakeZoneRead::new(sync_test_response(zone, vec![]));
+        let map = ip_map(&[("203.0.113.10", "192.0.2.10")]);
+
+        let plan = plan_zone_with_clients(&source, &dest, zone, &map)
+            .await
+            .unwrap();
+
+        assert_eq!(plan.adds.len(), 1);
+        assert_eq!(value_display(&plan.adds[0].record), "192.0.2.10");
     }
 
     // ── parse_ip_pair ─────────────────────────────────────────────────────────
@@ -698,10 +961,7 @@ mod tests {
     fn diff_never_prunes_destination_only_names() {
         let diff = diff_records(
             vec![a("a.example.com", "1.1.1.1")],
-            vec![
-                a("a.example.com", "1.1.1.1"),
-                a("b.example.com", "2.2.2.2"),
-            ],
+            vec![a("a.example.com", "1.1.1.1"), a("b.example.com", "2.2.2.2")],
         );
         assert_eq!(diff.adds.len(), 0);
         assert_eq!(diff.deletes.len(), 0);
