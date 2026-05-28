@@ -210,6 +210,117 @@ pub enum ConfigCmd {
         #[arg(long = "validation-endpoint", value_name = "NAME:TRANSPORT:ADDRESS")]
         validation_endpoints: Vec<crate::control_plane::config::ValidationEndpointConfig>,
     },
+
+    /// Set or clear a DNS query endpoint on an existing server entry.
+    ///
+    /// Run with no arguments to enter interactive setup.
+    /// Example (non-interactive): dns config server myserver dns --addr 10.0.0.1:53
+    Server {
+        /// ID of the server to update (case-insensitive).
+        /// Omit to be prompted interactively.
+        server_id: Option<String>,
+
+        /// Endpoint type and options.
+        /// Omit to be prompted interactively.
+        #[command(subcommand)]
+        endpoint: Option<ServerEndpointCmd>,
+    },
+}
+
+/// Transport endpoint subcommands for `config server`.
+#[derive(Subcommand)]
+pub enum ServerEndpointCmd {
+    /// Set or clear the plain DNS (port 53) endpoint
+    Dns {
+        /// Host:port for the DNS server (e.g. 10.0.0.1:53)
+        #[arg(long)]
+        addr: Option<String>,
+
+        /// Timeout for DNS queries in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+
+        /// Mark the endpoint as disabled (default: enabled)
+        #[arg(long)]
+        disable: bool,
+
+        /// Remove the entire [servers.dns] block from the config
+        #[arg(long)]
+        clear: bool,
+    },
+
+    /// Set or clear the DNS-over-TLS (DoT, port 853) endpoint
+    Dot {
+        /// Host:port for the DoT server (e.g. 10.0.0.1:853)
+        #[arg(long)]
+        addr: Option<String>,
+
+        /// TLS SNI server name (defaults to the hostname in --addr)
+        #[arg(long)]
+        server_name: Option<String>,
+
+        /// Timeout for DoT queries in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+
+        /// Mark the endpoint as disabled (default: enabled)
+        #[arg(long)]
+        disable: bool,
+
+        /// Remove the entire [servers.dot] block from the config
+        #[arg(long)]
+        clear: bool,
+    },
+
+    /// Set or clear the DNS-over-HTTPS (DoH) endpoint
+    Doh {
+        /// Full HTTPS URL for the DoH resolver (e.g. https://dns.example.com/dns-query)
+        #[arg(long)]
+        url: Option<String>,
+
+        /// Host:port to connect to (overrides the address resolved from --url)
+        #[arg(long)]
+        addr: Option<String>,
+
+        /// TLS SNI server name
+        #[arg(long)]
+        server_name: Option<String>,
+
+        /// Timeout for DoH queries in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+
+        /// Mark the endpoint as disabled (default: enabled)
+        #[arg(long)]
+        disable: bool,
+
+        /// Remove the entire [servers.doh] block from the config
+        #[arg(long)]
+        clear: bool,
+    },
+
+    /// Set or clear the DNS-over-QUIC (DoQ) endpoint
+    Doq {
+        /// Host:port for the DoQ server (e.g. 10.0.0.1:853)
+        #[arg(long)]
+        addr: Option<String>,
+
+        /// TLS SNI server name (defaults to the hostname in --addr)
+        #[arg(long)]
+        server_name: Option<String>,
+
+        /// Timeout for DoQ queries in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+
+        /// Mark the endpoint as disabled (default: enabled)
+        #[arg(long)]
+        disable: bool,
+
+        /// Remove the entire [servers.doq] block from the config
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 // ─── Zone subcommands ────────────────────────────────────────────────────────

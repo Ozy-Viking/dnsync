@@ -100,6 +100,20 @@ pub struct DohTransportConfig {
     pub timeout_ms: Option<u64>,
 }
 
+/// DNS-over-QUIC query endpoint for a configured server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DoqTransportConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
 /// Logical cluster policy shared by member servers.
 ///
 /// `primary` and `preferred_writer` accept either a configured DNS server id or
@@ -263,6 +277,8 @@ pub struct DnsServerConfig {
     pub dot: Option<DotTransportConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doh: Option<DohTransportConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doq: Option<DoqTransportConfig>,
 
     #[serde(default, skip_serializing_if = "McpPermissions::is_default")]
     pub mcp: McpPermissions,
@@ -302,6 +318,8 @@ struct DnsServerConfigRaw {
     dot: Option<DotTransportConfig>,
     #[serde(default)]
     doh: Option<DohTransportConfig>,
+    #[serde(default)]
+    doq: Option<DoqTransportConfig>,
     #[serde(default)]
     mcp: McpPermissions,
     #[serde(default)]
@@ -357,6 +375,7 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             dns: raw.dns,
             dot: raw.dot,
             doh: raw.doh,
+            doq: raw.doq,
             mcp: McpPermissions {
                 access,
                 allowed_zones: zones,
@@ -420,6 +439,7 @@ impl AppConfig {
                 dns: None,
                 dot: None,
                 doh: None,
+                doq: None,
                 mcp: McpPermissions::default(),
                 validation_endpoints: Vec::new(),
             }],
@@ -648,6 +668,19 @@ fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
         )));
     }
 
+    if let Some(doq) = &server.doq
+        && doq.enabled
+        && doq
+            .addr
+            .as_deref()
+            .is_none_or(|addr| addr.trim().is_empty())
+    {
+        return Err(Error::config(format!(
+            "DNS server '{}' has enabled doq transport without addr",
+            server.id
+        )));
+    }
+
     Ok(())
 }
 
@@ -731,6 +764,156 @@ pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<Path
     append_server_entry(&mut doc, &server);
 
     ensure_config_dir(&path)?;
+    write_private_file(&path, &doc.to_string())?;
+    Ok(path)
+}
+
+/// Specifies which transport endpoint on a server to create, replace, or remove.
+///
+/// `None` removes the transport block entirely. `Some(config)` creates or replaces it.
+pub enum EndpointUpdate {
+    Dns(Option<DnsTransportConfig>),
+    Dot(Option<DotTransportConfig>),
+    Doh(Option<DohTransportConfig>),
+    Doq(Option<DoqTransportConfig>),
+}
+
+/// Update a single transport endpoint on an existing server entry in the config file.
+///
+/// The server is matched by ID (case-insensitive). Existing file content — including
+/// comments and formatting — is preserved; only the targeted transport sub-table is
+/// added, replaced, or removed.
+pub fn update_server_endpoint(
+    path: Option<PathBuf>,
+    server_id: &str,
+    update: EndpointUpdate,
+) -> Result<PathBuf> {
+    let Some(path) = path.or_else(default_config_path) else {
+        return Err(Error::config(
+            "could not determine a default config path; pass --config <path>",
+        ));
+    };
+
+    // Validate via the serde types first so we catch bad values early.
+    let mut config = load_from_path(&path)?;
+    let pos = config
+        .servers
+        .iter()
+        .position(|s| s.id.eq_ignore_ascii_case(server_id))
+        .ok_or_else(|| {
+            Error::config(format!(
+                "config does not define a DNS server named '{server_id}'"
+            ))
+        })?;
+    match &update {
+        EndpointUpdate::Dns(cfg) => config.servers[pos].dns = cfg.clone(),
+        EndpointUpdate::Dot(cfg) => config.servers[pos].dot = cfg.clone(),
+        EndpointUpdate::Doh(cfg) => config.servers[pos].doh = cfg.clone(),
+        EndpointUpdate::Doq(cfg) => config.servers[pos].doq = cfg.clone(),
+    }
+    config.validate()?;
+
+    // Read the raw file so toml_edit can preserve comments and formatting.
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?;
+    let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e| {
+        Error::config(format!(
+            "could not parse config file '{}': {e}",
+            path.display()
+        ))
+    })?;
+
+    let servers = doc
+        .get_mut("servers")
+        .and_then(|v| v.as_array_of_tables_mut())
+        .ok_or_else(|| Error::config("config file has no [[servers]] entries"))?;
+
+    let server_tbl = servers
+        .iter_mut()
+        .find(|tbl| {
+            tbl.get("id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id.eq_ignore_ascii_case(server_id))
+        })
+        .ok_or_else(|| {
+            Error::config(format!(
+                "config does not define a DNS server named '{server_id}'"
+            ))
+        })?;
+
+    use toml_edit::{Item, Table, value};
+
+    match update {
+        EndpointUpdate::Dns(None) => {
+            server_tbl.remove("dns");
+        }
+        EndpointUpdate::Dns(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["dns"] = Item::Table(tbl);
+        }
+        EndpointUpdate::Dot(None) => {
+            server_tbl.remove("dot");
+        }
+        EndpointUpdate::Dot(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ref sn) = cfg.server_name {
+                tbl["server_name"] = value(sn.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["dot"] = Item::Table(tbl);
+        }
+        EndpointUpdate::Doh(None) => {
+            server_tbl.remove("doh");
+        }
+        EndpointUpdate::Doh(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref url) = cfg.url {
+                tbl["url"] = value(url.as_str());
+            }
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ref sn) = cfg.server_name {
+                tbl["server_name"] = value(sn.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["doh"] = Item::Table(tbl);
+        }
+        EndpointUpdate::Doq(None) => {
+            server_tbl.remove("doq");
+        }
+        EndpointUpdate::Doq(Some(cfg)) => {
+            let mut tbl = Table::new();
+            tbl["enabled"] = value(cfg.enabled);
+            if let Some(ref addr) = cfg.addr {
+                tbl["addr"] = value(addr.as_str());
+            }
+            if let Some(ref sn) = cfg.server_name {
+                tbl["server_name"] = value(sn.as_str());
+            }
+            if let Some(ms) = cfg.timeout_ms {
+                tbl["timeout_ms"] = value(ms as i64);
+            }
+            server_tbl["doq"] = Item::Table(tbl);
+        }
+    }
+
     write_private_file(&path, &doc.to_string())?;
     Ok(path)
 }
@@ -867,6 +1050,20 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
             doh_tbl["timeout_ms"] = value(timeout_ms as i64);
         }
         tbl["doh"] = Item::Table(doh_tbl);
+    }
+    if let Some(ref doq) = server.doq {
+        let mut doq_tbl = Table::new();
+        doq_tbl["enabled"] = value(doq.enabled);
+        if let Some(ref addr) = doq.addr {
+            doq_tbl["addr"] = value(addr.as_str());
+        }
+        if let Some(ref server_name) = doq.server_name {
+            doq_tbl["server_name"] = value(server_name.as_str());
+        }
+        if let Some(timeout_ms) = doq.timeout_ms {
+            doq_tbl["timeout_ms"] = value(timeout_ms as i64);
+        }
+        tbl["doq"] = Item::Table(doq_tbl);
     }
 
     match doc.entry("servers") {
@@ -1488,6 +1685,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1510,6 +1708,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1965,6 +2164,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -1998,6 +2198,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2043,6 +2244,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2083,6 +2285,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2128,6 +2331,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         }
@@ -2204,6 +2408,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
@@ -2225,6 +2430,7 @@ mod tests {
             dns: None,
             dot: None,
             doh: None,
+            doq: None,
             mcp: McpPermissions::default(),
             validation_endpoints: Vec::new(),
         };
