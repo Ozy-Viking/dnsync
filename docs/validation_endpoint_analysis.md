@@ -28,18 +28,24 @@ CLI Add / Interactive Wizard
 
 **Files involved:**
 
-- `/home/zack/Coding/dnsync/src/control_plane/config.rs` - Defines `ValidationEndpointConfig`, TOML deserialization, config validation
-- `/home/zack/Coding/dnsync/src/main.rs` - Wires CLI config-add flows
-- `/home/zack/Coding/dnsync/src/cli/mod.rs` - Declares `--validation-endpoint` CLI flag
-- `/home/zack/Coding/dnsync/src/cli/interactive.rs` - Interactive wizard path
+- `src/control_plane/config.rs` - Defines `ValidationEndpointConfig`, TOML deserialization, config validation
+- `src/main.rs` - Wires CLI config-add flows
+- `src/cli/mod.rs` - Declares `--validation-endpoint` CLI flag
+- `src/cli/interactive.rs` - Interactive wizard path
 
 ### Runtime Call Graphs (Where Validation Endpoints Are NOT Used)
 
 #### Record Listing/Query Path
 
+> **Note on `cli::runner`:** the call graphs below describe the **pre-refactor**
+> dispatch via `cli::runner::run()`. Per `docs/function-placement-guide.md`,
+> `runner` is slated for removal and command dispatch is moving into per-command
+> modules; once that lands, replace `cli::runner::run()` in these graphs with
+> the new dispatcher entry points.
+
 ```text
-CLI: dns records list example.com
-    → main.rs → cli::runner::run()
+CLI: dns record list example.com
+    → main.rs → cli::runner::run()  (pre-refactor; runner slated for removal)
     → mcp::tools::records::handle_list_records()  (MCP path)
     OR
     → core::dns::records::query::list_records_for_query()
@@ -51,15 +57,15 @@ CLI: dns records list example.com
 
 **Files involved:**
 
-- `/home/zack/Coding/dnsync/src/core/dns/records/query.rs` - Record-list/query routing
-- `/home/zack/Coding/dnsync/src/mcp/tools/records.rs` - MCP record-list handler
-- `/home/zack/Coding/dnsync/src/vendors/*/service.rs` - Vendor-specific implementations
+- `src/core/dns/records/query.rs` - Record-list/query routing
+- `src/mcp/tools/records.rs` - MCP record-list handler
+- `src/vendors/*/service.rs` - Vendor-specific implementations
 
 #### Zone Import Path
 
 ```text
-CLI: dns zones import example.com zone.file
-    → main.rs → cli::runner::run()
+CLI: dns zone import example.com zone.file
+    → main.rs → cli::runner::run()  (pre-refactor; runner slated for removal)
     → mcp::tools::zones::handle_import_zone_file()  (MCP path)
     OR
     → core::dns::zones::import_zone_file()
@@ -69,14 +75,14 @@ CLI: dns zones import example.com zone.file
 
 **Files involved:**
 
-- `/home/zack/Coding/dnsync/src/core/dns/zones.rs` - Zone import/export logic
-- `/home/zack/Coding/dnsync/src/mcp/tools/zones.rs` - MCP zone-import handler
-- `/home/zack/Coding/dnsync/src/vendors/*/service.rs` - Vendor-specific implementations
+- `src/core/dns/zones.rs` - Zone import/export logic
+- `src/mcp/tools/zones.rs` - MCP zone-import handler
+- `src/vendors/*/service.rs` - Vendor-specific implementations
 
 #### Zone Transfer Path
 
 ```text
-CLI: dns zones transfer example.com
+CLI: dns zone transfer example.com
     → main.rs
         → VendorClient::export_zone_for_server()  ← EXPORT
         → VendorClient::import_zone_for_server()  ← IMPORT
@@ -84,14 +90,20 @@ CLI: dns zones transfer example.com
 
 ### Validation Endpoint Layer (Currently Unused at Runtime)
 
-Defined in `/home/zack/Coding/dnsync/src/core/dns/validation.rs`:
+Defined in `src/core/dns/validation.rs`:
 
 - `HickoryDnsEndpointResolver::query_endpoint()` - Builds Hickory resolvers
-- `resolver_for_endpoint()` → transport-specific builders:
+- `resolver_for_endpoint()` → transport-specific builders, one per supported transport:
   - `plain_dns_name_server()` (UDP+TCP, port 53)
   - `dot_name_server()` (TLS, port 853)
   - `doh_name_server()` (HTTPS, port 443, path `/dns-query`)
+  - `doq_name_server()` (QUIC, port 853) — **planned**; transport is enumerated
+    here for parity with the project mandate but is not yet wired
 - `ValidationReport` types - `disabled()`, `skipped_no_endpoints()`, success/failure reports
+
+Per the project mandate (`agents.md`), all **four** transports — DNS, DoT, DoH,
+and DoQ — are first-class. The first three are implemented today; DoQ is in
+progress.
 
 **Key observation:** No CLI/MCP/vendor code calls `HickoryDnsEndpointResolver::query_endpoint()` or related validation functions.
 
@@ -99,8 +111,8 @@ Defined in `/home/zack/Coding/dnsync/src/core/dns/validation.rs`:
 
 ### Validation Endpoint Configuration Shape
 
-- Required: `name`, `transport` (`dns`/`doh`/`dot`)
-- DNS/DoT: require nonempty `address`
+- Required: `name`, `transport` (`dns`/`dot`/`doh`/`doq`; `doq` is planned)
+- DNS/DoT/DoQ: require nonempty `address`
 - DoH: require nonempty `url`
 - Optional fields: `port`, `tls_server_name`, `timeout_ms`
 - CLI shorthand: `name:transport:address` (DoH treats 3rd segment as `url`, others as `address`)
@@ -111,6 +123,7 @@ Defined in `/home/zack/Coding/dnsync/src/core/dns/validation.rs`:
 - **DNS**: UDP+TCP name servers, port 53
 - **DoT**: TLS only, port 853, server name from `tls_server_name` or `address`
 - **DoH**: HTTPS only, port 443, default path `/dns-query`, server name from `tls_server_name` or URL host
+- **DoQ**: QUIC, port 853, server name from `tls_server_name` or `address` — **planned**, not yet wired
 - **Validation timeout**: Defaults to 5000 ms
 
 ### Enabled Flag Behavior
