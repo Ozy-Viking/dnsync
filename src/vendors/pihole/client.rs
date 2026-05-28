@@ -19,6 +19,7 @@ pub struct PiholeClient {
 
 impl PiholeClient {
     pub fn new(base_url: String, password: ApiToken) -> Result<Self> {
+        let base_url = base_url.trim_end_matches('/').to_string();
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -162,6 +163,12 @@ impl PiholeClient {
 
 async fn parse_response(resp: Response) -> Result<Value> {
     let status = resp.status();
+
+    // 204 No Content (successful DELETE operations return no body)
+    if status == reqwest::StatusCode::NO_CONTENT {
+        return Ok(serde_json::json!({}));
+    }
+
     let body: Value = resp.json().await.map_err(|e| {
         if e.is_decode() {
             Error::InvalidJson(e)
@@ -216,6 +223,27 @@ mod tests {
     fn client_builds_successfully() {
         let client = make_client();
         assert_eq!(client.base_url, "http://pi.hole");
+    }
+
+    #[test]
+    fn trailing_slash_stripped_from_base_url() {
+        let client = PiholeClient::new(
+            "http://pi.hole/".to_string(),
+            crate::core::secret::ApiToken::new("pass"),
+        )
+        .unwrap();
+        assert_eq!(client.base_url, "http://pi.hole");
+    }
+
+    #[tokio::test]
+    async fn no_content_response_returns_empty_object() {
+        let resp = http::Response::builder()
+            .status(204)
+            .body("".to_string())
+            .map(reqwest::Response::from)
+            .unwrap();
+        let val = parse_response(resp).await.unwrap();
+        assert!(val.is_object());
     }
 
     #[tokio::test]

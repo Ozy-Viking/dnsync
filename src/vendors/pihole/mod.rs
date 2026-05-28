@@ -17,6 +17,7 @@ pub fn client_from_server(
         .base_url
         .map(ToOwned::to_owned)
         .or_else(|| env::var("DNSYNC_PIHOLE_BASE_URL").ok())
+        .or_else(|| server.base_url_env.as_ref().and_then(|k| env::var(k).ok()))
         .or_else(|| server.base_url.clone())
         .unwrap_or_else(|| app_config::PIHOLE_DEFAULT_BASE_URL.to_string());
 
@@ -163,6 +164,35 @@ mod tests {
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
         assert_eq!(client.base_url, app_config::PIHOLE_DEFAULT_BASE_URL);
+    }
+
+    #[test]
+    fn base_url_env_wins_over_config_base_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_pihole_env();
+        // SAFETY: serialized via ENV_LOCK.
+        unsafe {
+            std::env::set_var("MY_PIHOLE_URL", "http://192.168.100.1");
+        }
+        let app_config: app_config::AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "ph"
+                vendor = "pihole"
+                base_url = "http://pi.hole"
+                base_url_env = "MY_PIHOLE_URL"
+                token = "pass"
+            "#,
+        )
+        .unwrap();
+        let server = app_config.selected_server(Some("ph")).unwrap();
+
+        let client = client_from_server(server, ClientOverrides::default()).unwrap();
+
+        assert_eq!(client.base_url, "http://192.168.100.1");
+
+        // SAFETY: serialized via ENV_LOCK.
+        unsafe { std::env::remove_var("MY_PIHOLE_URL"); }
     }
 
     #[test]

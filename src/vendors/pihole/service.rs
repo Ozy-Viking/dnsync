@@ -58,7 +58,7 @@ impl ZoneRead for PiholeClient {
         &'a self,
         domain: &'a str,
         zone: Option<&'a str>,
-        _options: ListRecordsOptions,
+        options: ListRecordsOptions,
     ) -> Result<ListRecordsResponse> {
         let inferred;
         let zone_name = match zone {
@@ -74,10 +74,17 @@ impl ZoneRead for PiholeClient {
 
         let mut records: Vec<ZoneRecord> = Vec::new();
 
+        let domain_lc = domain.trim_end_matches('.').to_ascii_lowercase();
+        let domain_suffix = format!(".{domain_lc}");
+
         if let Some(arr) = dns_data.get("dns").and_then(|d| d.as_array()) {
             for entry in arr {
                 let host = entry.get("host").and_then(|h| h.as_str()).unwrap_or("");
-                if zone.is_none() || host == domain || host.ends_with(&format!(".{domain}")) {
+                let host_lc = host.trim_end_matches('.').to_ascii_lowercase();
+                if domain.is_empty()
+                    || host_lc == domain_lc
+                    || (options.all_subdomains && host_lc.ends_with(&domain_suffix))
+                {
                     records.push(local_dns_to_zone_record(entry, zone_name));
                 }
             }
@@ -86,9 +93,10 @@ impl ZoneRead for PiholeClient {
         if let Some(arr) = cname_data.get("cnames").and_then(|c| c.as_array()) {
             for entry in arr {
                 let cname_domain = entry.get("domain").and_then(|d| d.as_str()).unwrap_or("");
-                if zone.is_none()
-                    || cname_domain == domain
-                    || cname_domain.ends_with(&format!(".{domain}"))
+                let cname_lc = cname_domain.trim_end_matches('.').to_ascii_lowercase();
+                if domain.is_empty()
+                    || cname_lc == domain_lc
+                    || (options.all_subdomains && cname_lc.ends_with(&domain_suffix))
                 {
                     records.push(local_cname_to_zone_record(entry, zone_name));
                 }
