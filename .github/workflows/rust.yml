@@ -28,7 +28,7 @@ jobs:
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
       with:
-        key: rust-ci
+        shared-key: linux-host
         cache-on-failure: true
 
     - name: Build

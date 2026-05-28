@@ -20,6 +20,9 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: linux-host
+          cache-on-failure: true
 
       - name: Test
         run: cargo test --locked --all-features --all-targets
@@ -90,7 +93,8 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
-          key: ${{ matrix.target }}
+          shared-key: release-${{ runner.os }}-${{ matrix.target }}
+          cache-on-failure: true
 
       - name: Install musl-tools
         if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -117,6 +121,9 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: linux-host
+          cache-on-failure: true
 
       - name: Publish to crates.io
         run: cargo publish --locked --token ${{ secrets.CRATES_IO_TOKEN }}
