@@ -17,6 +17,9 @@ pub mod cloudflare;
 #[cfg(feature = "unifi")]
 pub mod unifi;
 
+#[cfg(feature = "pihole")]
+pub mod pihole;
+
 pub struct DnsClient<Vendor> {
     vendor_id: VendorKind,
     vendor_client: Vendor,

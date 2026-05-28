@@ -28,6 +28,8 @@ pub enum VendorClient {
     Cloudflare(crate::vendors::cloudflare::client::CloudflareClient),
     #[cfg(feature = "unifi")]
     Unifi(crate::vendors::unifi::client::UnifiClient),
+    #[cfg(feature = "pihole")]
+    Pihole(crate::vendors::pihole::client::PiholeClient),
 }
 
 impl VendorClient {
@@ -62,6 +64,10 @@ impl VendorClient {
                 server,
                 ClientOverrides::default(),
             )?)),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Ok(Self::Pihole(
+                crate::vendors::pihole::client_from_server(server, ClientOverrides::default())?,
+            )),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -95,6 +101,8 @@ impl VendorClient {
             VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone export")),
             #[cfg(feature = "unifi")]
             VendorKind::Unifi => Err(Error::unsupported("UniFi", "zone export")),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Err(Error::unsupported("Pi-hole", "zone export")),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -153,6 +161,8 @@ impl VendorClient {
             VendorKind::Pangolin => Err(Error::unsupported("Pangolin", "zone import")),
             #[cfg(feature = "unifi")]
             VendorKind::Unifi => Err(Error::unsupported("UniFi", "zone import")),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Err(Error::unsupported("Pi-hole", "zone import")),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -182,6 +192,10 @@ impl VendorClient {
             VendorKind::Unifi => Ok(Self::Unifi(crate::vendors::unifi::client_from_server(
                 server, overrides,
             )?)),
+            #[cfg(feature = "pihole")]
+            VendorKind::Pihole => Ok(Self::Pihole(
+                crate::vendors::pihole::client_from_server(server, overrides)?,
+            )),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -216,6 +230,8 @@ macro_rules! delegate_vendor {
             Self::Cloudflare($client) => $body,
             #[cfg(feature = "unifi")]
             Self::Unifi($client) => $body,
+            #[cfg(feature = "pihole")]
+            Self::Pihole($client) => $body,
         }
     };
 }

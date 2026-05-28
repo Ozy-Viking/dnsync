@@ -113,7 +113,11 @@ pub enum Command {
     Allowed(AllowedCmd),
 
     /// Show server settings
-    Settings,
+    Settings {
+        /// Display sensitive settings values instead of redacting them
+        #[arg(long)]
+        show_secrets: bool,
+    },
 
     /// Fetch DNS query logs
     Logs {
@@ -490,5 +494,24 @@ mod tests {
             std::env::remove_var("TECHNITIUM_BASE_URL");
             std::env::remove_var("TECHNITIUM_API_TOKEN");
         }
+    }
+
+    #[test]
+    fn settings_accepts_show_secrets_flag() {
+        let cli = Cli::try_parse_from(["dns", "settings", "--show-secrets"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Command::Settings { show_secrets: true }
+        ));
+
+        let cli = Cli::try_parse_from(["dns", "settings"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Command::Settings {
+                show_secrets: false
+            }
+        ));
     }
 }
