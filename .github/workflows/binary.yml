@@ -6,7 +6,7 @@ on:
       - "[vV]?[0-9]+.[0-9]+.[0-9]+*"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,6 +24,8 @@ jobs:
   create-release:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       release-ref: ${{ steps.release-version.outputs.release-ref }}
       release-version: ${{ steps.release-version.outputs.version }}
@@ -58,6 +60,8 @@ jobs:
 
   build-and-upload:
     needs: create-release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -83,8 +87,6 @@ jobs:
       - name: Install musl-tools
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Build
-        run: cargo build --release --locked --all-features --target ${{ matrix.target }}
 
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
