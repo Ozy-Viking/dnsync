@@ -278,4 +278,10 @@ pub struct ResolveParams {
     /// Per-attempt timeout in milliseconds (default 5000).
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+
+    /// Follow CNAME/DNAME chains to their terminal address records. With
+    /// a specific `types` filter (e.g. just `CNAME`) this is what
+    /// surfaces the chain's terminal A/AAAA; otherwise off.
+    #[serde(default)]
+    pub chase: Option<bool>,
 }

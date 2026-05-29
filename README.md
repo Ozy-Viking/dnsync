@@ -370,6 +370,7 @@ dns q huly.hankin.io @1.1.1.1                     # ad-hoc plain DNS
 dns q huly.hankin.io --at tls://9.9.9.9           # ad-hoc DoT
 dns q huly.hankin.io --at https://cloudflare-dns.com/dns-query
 dns q huly.hankin.io --at quic://dns.adguard.com  # DoQ (needs --features doq)
+dns q huly.hankin.io -t CNAME --chase             # follow the chain to its A/AAAA terminal
 dns q huly.hankin.io --short                      # answers only, one per line
 dns q huly.hankin.io --json                       # stable JSON shape
 ```

@@ -54,6 +54,7 @@ fn params_to_args(p: ResolveParams) -> Result<QueryArgs, Error> {
         tls_server_name: p.tls_server_name,
         timeout: p.timeout_ms,
         all_transports: p.all_transports.unwrap_or(false),
+        chase: p.chase.unwrap_or(false),
         json: true,
         ..Default::default()
     };
@@ -89,6 +90,7 @@ mod tests {
             port: None,
             tls_server_name: None,
             timeout_ms: Some(1500),
+            chase: None,
         };
         let args = params_to_args(p).unwrap();
         assert_eq!(args.targets, vec!["example.com".to_string()]);
@@ -116,6 +118,7 @@ mod tests {
             port: None,
             tls_server_name: None,
             timeout_ms: None,
+            chase: None,
         };
         let args = params_to_args(p).unwrap();
         assert!(args.all_transports);
@@ -133,6 +136,7 @@ mod tests {
             port: None,
             tls_server_name: None,
             timeout_ms: None,
+            chase: None,
         };
         assert!(params_to_args(p).is_err());
     }

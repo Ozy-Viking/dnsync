@@ -115,6 +115,7 @@ dns query huly.hankin.io --json
 | `--tls-server-name <NAME>` | SNI / certificate name override for DoT, DoH, DoQ. |
 | `--timeout <MS>` | Per-attempt timeout (default 5000, overrides the block's `timeout_ms`). |
 | `--tcp` | With `--dns`, force TCP for the plain-DNS query (skip UDP). Ignored for other transports. |
+| `--chase` (alias `--chain`) | Follow CNAME/DNAME chains to their terminal address records. See §Chain resolution. |
 | `--short` | Print only the data column. Mirrors `dig +short`. |
 | `--json` | Emit structured output (see §Output). |
 
@@ -406,6 +407,49 @@ silently dropped rather than reported as `skipped`.
 
 The output order is always `dns → dot → doh → doq`, regardless of the
 order the flags were supplied on the command line.
+
+### Chain resolution (`--chase`)
+
+A CNAME record only names its target; the target's address records live
+under a different owner name. When you ask for a **specific** type, that
+chain can go missing:
+
+- **No `-t` (default all-types):** `A` and `AAAA` are among the queried
+  types, and a recursive resolver bundles the chain into those answers,
+  so the full `CNAME → A`/`AAAA` chain already shows.
+- **`-t A` (address type):** the resolver still bundles the `CNAME` hop
+  with the `A` — unless the terminal is AAAA-only, in which case the `A`
+  lookup is NODATA and only the CNAME hop appears.
+- **`-t CNAME` (non-address type):** you get exactly the `CNAME` hop and
+  nothing else.
+
+`--chase` (alias `--chain`) closes that gap: after the requested
+lookups, it walks each CNAME/DNAME target that isn't already resolved,
+issuing follow-up `CNAME`/`A`/`AAAA` lookups until it reaches the
+terminal address record(s). The whole chain is shown in order:
+
+```
+$ dns q huly.hankin.io -t CNAME --chase
+@ 127.0.0.53  dns  system  7ms
+
+huly.hankin.io     CNAME  300  nasapps.hankin.io.
+nasapps.hankin.io  A      600  10.5.161.83
+```
+
+Behaviour:
+
+- A terminal with both `A` and `AAAA` shows **both** — the complete set,
+  not a single pick.
+- Chains are walked to the **terminal** (no remaining CNAME); that is the
+  longest valid chain by construction.
+- A target that dead-ends in NODATA leaves the CNAME hops in place and
+  simply stops — the chain is never silently truncated.
+- Walks are bounded by a depth limit and a visited-set, so CNAME **loops**
+  and overlong chains terminate cleanly.
+- Only `CNAME`/`DNAME` are chased; `MX`/`SRV`/`NS` targets are
+  intentionally indirect and are left as-is.
+- Chase lookups are best-effort: their errors do not change the block's
+  status.
 
 ### Querying multiple servers
 

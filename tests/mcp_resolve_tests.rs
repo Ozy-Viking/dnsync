@@ -175,7 +175,77 @@ async fn dns_resolve_default_types_handles_cname_to_aaaa_and_a_targets() {
     server_handle.abort();
 }
 
+#[tokio::test]
+async fn cname_only_query_without_chase_shows_just_the_cname() {
+    let (server_addr, server_handle) = spawn_dns_server().await;
+
+    let body = resolve_body(
+        server_addr,
+        "alias-v6.example.test",
+        Some(vec!["CNAME".to_string()]),
+    )
+    .await;
+
+    assert_eq!(
+        body["results"][0]["answers"],
+        json!([
+            {
+                "name": "alias-v6.example.test",
+                "type": "CNAME",
+                "data": "target-v6.example.test.",
+                "ttl": 300,
+            },
+        ])
+    );
+
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn chase_follows_cname_to_terminal_address_on_typed_query() {
+    let (server_addr, server_handle) = spawn_dns_server().await;
+
+    // Asking only for CNAME would normally stop at the hop; --chase walks
+    // on to the terminal AAAA even though AAAA was never requested.
+    let body = resolve_body_chase(
+        server_addr,
+        "alias-v6.example.test",
+        Some(vec!["CNAME".to_string()]),
+        true,
+    )
+    .await;
+
+    assert_eq!(
+        body["results"][0]["answers"],
+        json!([
+            {
+                "name": "alias-v6.example.test",
+                "type": "CNAME",
+                "data": "target-v6.example.test.",
+                "ttl": 300,
+            },
+            {
+                "name": "target-v6.example.test",
+                "type": "AAAA",
+                "data": "2001:db8::10",
+                "ttl": 300,
+            },
+        ])
+    );
+
+    server_handle.abort();
+}
+
 async fn resolve_body(server_addr: SocketAddr, domain: &str, types: Option<Vec<String>>) -> Value {
+    resolve_body_chase(server_addr, domain, types, false).await
+}
+
+async fn resolve_body_chase(
+    server_addr: SocketAddr,
+    domain: &str,
+    types: Option<Vec<String>>,
+    chase: bool,
+) -> Value {
     let result = handle_resolve(
         &AppConfig::default(),
         &[],
@@ -190,6 +260,7 @@ async fn resolve_body(server_addr: SocketAddr, domain: &str, types: Option<Vec<S
             port: None,
             tls_server_name: None,
             timeout_ms: Some(1_000),
+            chase: Some(chase),
         },
     )
     .await
@@ -354,6 +425,24 @@ fn dns_response_for(request: Message) -> Message {
                     "192.0.2.20",
                 ));
             }
+        }
+        // Terminal records for the chain targets, answered directly so a
+        // `--chase` walk can reach them from a CNAME-only initial query.
+        ("target-v6.example.test.", RecordType::AAAA) => {
+            response.add_answer(record(
+                "target-v6.example.test.",
+                300,
+                RecordType::AAAA,
+                "2001:db8::10",
+            ));
+        }
+        ("target-v4.example.test.", RecordType::A) => {
+            response.add_answer(record(
+                "target-v4.example.test.",
+                300,
+                RecordType::A,
+                "192.0.2.20",
+            ));
         }
         _ => {}
     }

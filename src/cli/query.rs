@@ -139,6 +139,14 @@ pub struct QueryArgs {
     #[arg(long)]
     pub tcp: bool,
 
+    /// Follow CNAME (and DNAME) chains to their terminal address
+    /// records. Without this, a single-type query like `-t CNAME` shows
+    /// only the CNAME hop; with it, the chain is walked to its A/AAAA
+    /// terminal and the whole chain is shown in order. Bounded against
+    /// loops by a depth limit.
+    #[arg(long, visible_alias = "chain")]
+    pub chase: bool,
+
     /// Print only the data column. Mirrors `dig +short`.
     #[arg(long)]
     pub short: bool,
@@ -147,6 +155,14 @@ pub struct QueryArgs {
     #[arg(long)]
     pub json: bool,
 }
+
+/// Maximum number of chain hops `--chase` will follow before giving up,
+/// guarding against CNAME loops and pathologically long chains.
+const MAX_CHASE_DEPTH: usize = 8;
+
+/// Record types `--chase` looks up when walking to a chain's terminal:
+/// further CNAMEs to keep walking, plus the address types that end it.
+const CHASE_TYPES: [&str; 3] = ["CNAME", "A", "AAAA"];
 
 /// Per-transport outcome for one block within a single `dns query`
 /// invocation. The renderer turns these into header+rows / short
@@ -310,7 +326,7 @@ pub async fn execute_query(config: Option<AppConfig>, args: QueryArgs) -> Result
 
     let mut blocks = Vec::with_capacity(plan.targets.len());
     for plan_target in plan.targets {
-        blocks.push(run_block(plan_target, &record_types, &domain).await);
+        blocks.push(run_block(plan_target, &record_types, &domain, effective.chase).await);
     }
 
     Ok(QueryOutcome {
@@ -964,7 +980,12 @@ fn transport_word(t: ValidationTransport) -> &'static str {
     }
 }
 
-async fn run_block(plan: PlanTarget, record_types: &[String], domain: &str) -> QueryResultBlock {
+async fn run_block(
+    plan: PlanTarget,
+    record_types: &[String],
+    domain: &str,
+    chase: bool,
+) -> QueryResultBlock {
     let started = Instant::now();
     let asked_types = record_types.to_vec();
     let queried_name = domain.to_string();
@@ -991,7 +1012,8 @@ async fn run_block(plan: PlanTarget, record_types: &[String], domain: &str) -> Q
             Ok(r) => r,
             Err(status) => return finish(status, Vec::new()),
         };
-        let (status, records) = lookup_all(&resolver, domain, record_types, plan.transport).await;
+        let (status, records) =
+            lookup_all(&resolver, domain, record_types, plan.transport, chase).await;
         return finish(status, records);
     }
 
@@ -1037,7 +1059,8 @@ async fn run_block(plan: PlanTarget, record_types: &[String], domain: &str) -> Q
         Ok(r) => r,
         Err(kind) => return finish(QueryStatus::from(kind), Vec::new()),
     };
-    let (status, records) = lookup_all(&resolver, domain, record_types, plan.transport).await;
+    let (status, records) =
+        lookup_all(&resolver, domain, record_types, plan.transport, chase).await;
     finish(status, records)
 }
 
@@ -1110,6 +1133,7 @@ async fn lookup_all(
     domain: &str,
     record_types: &[String],
     transport: ValidationTransport,
+    chase: bool,
 ) -> (QueryStatus, Vec<ObservedRecord>) {
     let mut all_records = Vec::new();
     let mut worst_status = QueryStatus::NoError;
@@ -1137,6 +1161,10 @@ async fn lookup_all(
         }
     }
 
+    if chase {
+        chase_chain(resolver, &mut all_records).await;
+    }
+
     if all_records.is_empty() {
         (worst_status, all_records)
     } else {
@@ -1145,6 +1173,81 @@ async fn lookup_all(
         // Mixed success/failure means we show the successful answers.
         (QueryStatus::NoError, all_records)
     }
+}
+
+/// Follow CNAME (and DNAME) targets to their terminal address records,
+/// appending the discovered hops/terminals to `records` in chain order.
+///
+/// A "dangling" target is a CNAME/DNAME value that is not itself the
+/// owner of any record we've already collected — i.e. the chain's
+/// current tail. We look up the chase types for each dangling target,
+/// repeating until no new tail appears, the depth limit is reached, or a
+/// target loops back (tracked via `visited`). Lookups here are
+/// best-effort: errors and NODATA terminals simply stop that branch
+/// without changing the block's status.
+async fn chase_chain(resolver: &Resolver<TokioRuntimeProvider>, records: &mut Vec<ObservedRecord>) {
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for _ in 0..MAX_CHASE_DEPTH {
+        let owners: std::collections::HashSet<String> =
+            records.iter().map(|r| chain_key(&r.name)).collect();
+
+        let mut targets: Vec<String> = Vec::new();
+        for record in records.iter() {
+            if !is_chain_record(&record.record_type) {
+                continue;
+            }
+            for value in &record.values {
+                let key = chain_key(value);
+                if owners.contains(&key) || visited.contains(&key) {
+                    continue;
+                }
+                if !targets.contains(value) {
+                    targets.push(value.clone());
+                }
+            }
+        }
+
+        if targets.is_empty() {
+            break;
+        }
+
+        let mut added_any = false;
+        for target in targets {
+            visited.insert(chain_key(&target));
+            for rr_name in CHASE_TYPES {
+                let Ok(rr_type) = rr_name.parse::<RecordType>() else {
+                    continue;
+                };
+                if let Ok(lookup) = resolver.lookup(target.as_str(), rr_type).await {
+                    for record in observed_records_from_answers(lookup.answers()) {
+                        let before = records.len();
+                        push_observed_record_once(records, record);
+                        if records.len() > before {
+                            added_any = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Nothing new resolved (NODATA terminal or only dead branches) —
+        // stop rather than spin until the depth limit.
+        if !added_any {
+            break;
+        }
+    }
+}
+
+/// True for record types whose rdata is a target name worth chasing.
+fn is_chain_record(record_type: &str) -> bool {
+    matches!(record_type, "CNAME" | "DNAME")
+}
+
+/// Normalise a name for chain-membership comparison: drop the trailing
+/// dot and lowercase, so `Target.Example.` and `target.example` match.
+fn chain_key(name: &str) -> String {
+    trim_trailing_dot(name).to_ascii_lowercase()
 }
 
 fn push_observed_record_once(records: &mut Vec<ObservedRecord>, record: ObservedRecord) {
@@ -1785,6 +1888,29 @@ mod tests {
         assert!(args.all_servers);
         assert!(args.all_types);
         assert!(!args.all_transports);
+    }
+
+    #[test]
+    fn clap_parses_chase_and_chain_alias() {
+        assert!(parse(&["huly.hankin.io", "--chase"]).unwrap().chase);
+        assert!(parse(&["huly.hankin.io", "--chain"]).unwrap().chase);
+        assert!(!parse(&["huly.hankin.io"]).unwrap().chase);
+    }
+
+    #[test]
+    fn chain_key_normalises_trailing_dot_and_case() {
+        assert_eq!(chain_key("Target.Example."), "target.example");
+        assert_eq!(chain_key("target.example"), "target.example");
+        assert_eq!(chain_key("HULY.Hankin.IO."), "huly.hankin.io");
+    }
+
+    #[test]
+    fn is_chain_record_matches_only_cname_and_dname() {
+        assert!(is_chain_record("CNAME"));
+        assert!(is_chain_record("DNAME"));
+        assert!(!is_chain_record("A"));
+        assert!(!is_chain_record("AAAA"));
+        assert!(!is_chain_record("MX"));
     }
 
     #[test]
