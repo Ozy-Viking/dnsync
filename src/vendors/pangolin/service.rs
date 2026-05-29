@@ -15,9 +15,9 @@ use tracing::instrument;
 
 use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
+use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
-use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
     RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,

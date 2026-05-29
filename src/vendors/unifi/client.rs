@@ -200,8 +200,7 @@ impl UnifiClient {
         let params: Vec<(&str, String)> =
             vec![("offset", offset.to_string()), ("limit", limit.to_string())];
         let value = self.get("/sites", &params).await?;
-        parse_site_page(value)
-            .map_err(|e| Error::parse(format!("decoding UniFi site page: {e}")))
+        parse_site_page(value).map_err(|e| Error::parse(format!("decoding UniFi site page: {e}")))
     }
 
     /// Fetch every site by paginating until exhausted.

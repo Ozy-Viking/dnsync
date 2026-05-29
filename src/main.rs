@@ -172,7 +172,10 @@ async fn run_inner(cli: Cli) -> Result<()> {
                 Ok(())
             }
 
-            ConfigCmd::Server { server_id, endpoint } => {
+            ConfigCmd::Server {
+                server_id,
+                endpoint,
+            } => {
                 match endpoint {
                     Some(endpoint) => {
                         // Non-interactive: load existing config so omitted flags keep their
@@ -192,8 +195,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
                             })?;
                         let server = cfg.selected_server(Some(&id))?;
                         let update = build_endpoint_update(endpoint, server);
-                        let path =
-                            config::update_server_endpoint(cli.config, &id, update)?;
+                        let path = config::update_server_endpoint(cli.config, &id, update)?;
                         println!("Updated config file: {}", path.display());
                     }
                     None => {
@@ -381,58 +383,90 @@ fn build_endpoint_update(
     server: &config::DnsServerConfig,
 ) -> config::EndpointUpdate {
     match endpoint {
-        ServerEndpointCmd::Dns { addr, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Dns(if clear {
-                None
-            } else {
-                let ex = server.dns.as_ref();
-                Some(config::DnsTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        ServerEndpointCmd::Dns {
+            addr,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Dns(if clear {
+            None
+        } else {
+            let ex = server.dns.as_ref();
+            Some(config::DnsTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
-        ServerEndpointCmd::Dot { addr, server_name, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Dot(if clear {
-                None
-            } else {
-                let ex = server.dot.as_ref();
-                Some(config::DotTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        }),
+        ServerEndpointCmd::Dot {
+            addr,
+            server_name,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Dot(if clear {
+            None
+        } else {
+            let ex = server.dot.as_ref();
+            Some(config::DotTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
-        ServerEndpointCmd::Doh { url, addr, server_name, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Doh(if clear {
-                None
-            } else {
-                let ex = server.doh.as_ref();
-                Some(config::DohTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    url: url.or_else(|| ex.and_then(|e| e.url.clone())),
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        }),
+        ServerEndpointCmd::Doh {
+            url,
+            addr,
+            server_name,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Doh(if clear {
+            None
+        } else {
+            let ex = server.doh.as_ref();
+            Some(config::DohTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                url: url.or_else(|| ex.and_then(|e| e.url.clone())),
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
-        ServerEndpointCmd::Doq { addr, server_name, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Doq(if clear {
-                None
-            } else {
-                let ex = server.doq.as_ref();
-                Some(config::DoqTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        }),
+        ServerEndpointCmd::Doq {
+            addr,
+            server_name,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Doq(if clear {
+            None
+        } else {
+            let ex = server.doq.as_ref();
+            Some(config::DoqTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
+        }),
     }
 }
 

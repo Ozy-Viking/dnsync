@@ -388,28 +388,49 @@ mod tests {
             .create_zone("example.com", "Primary")
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn delete_zone_is_unsupported() {
         let err = make_client().delete_zone("example.com").await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn enable_zone_is_unsupported() {
         let err = make_client().enable_zone("example.com").await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn disable_zone_is_unsupported() {
-        let err = make_client()
-            .disable_zone("example.com")
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        let err = make_client().disable_zone("example.com").await.unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -418,7 +439,13 @@ mod tests {
             .delete_cache_zone("example.com")
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -427,7 +454,13 @@ mod tests {
             .import_zone_file("example.com", "zone.txt".into(), vec![], true, false, false)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -436,7 +469,13 @@ mod tests {
             .export_zone_file("example.com")
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -449,6 +488,12 @@ mod tests {
             .add_record("home.lan", "example.com", 300, &record)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Pi-hole", .. }));
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Pi-hole",
+                ..
+            }
+        ));
     }
 }

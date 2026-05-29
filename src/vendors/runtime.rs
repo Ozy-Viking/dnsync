@@ -65,9 +65,10 @@ impl VendorClient {
                 ClientOverrides::default(),
             )?)),
             #[cfg(feature = "pihole")]
-            VendorKind::Pihole => Ok(Self::Pihole(
-                crate::vendors::pihole::client_from_server(server, ClientOverrides::default())?,
-            )),
+            VendorKind::Pihole => Ok(Self::Pihole(crate::vendors::pihole::client_from_server(
+                server,
+                ClientOverrides::default(),
+            )?)),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",
@@ -193,9 +194,9 @@ impl VendorClient {
                 server, overrides,
             )?)),
             #[cfg(feature = "pihole")]
-            VendorKind::Pihole => Ok(Self::Pihole(
-                crate::vendors::pihole::client_from_server(server, overrides)?,
-            )),
+            VendorKind::Pihole => Ok(Self::Pihole(crate::vendors::pihole::client_from_server(
+                server, overrides,
+            )?)),
             #[allow(unreachable_patterns)]
             _ => Err(Error::parse(format!(
                 "server '{}' has unsupported vendor in this build",

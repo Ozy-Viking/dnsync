@@ -14,7 +14,8 @@ use std::{fmt::Write, time::Duration, time::Instant};
 
 use clap::Args;
 use hickory_resolver::{
-    Resolver, config::ResolverOpts, net::runtime::TokioRuntimeProvider, proto::rr::RecordType,
+    Resolver, config::ResolverOpts, net::runtime::TokioRuntimeProvider, proto::rr::Record,
+    proto::rr::RecordType,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -44,6 +45,10 @@ pub const TRANSPORT_PRECEDENCE: [ValidationTransport; 4] = [
     ValidationTransport::Doq,
 ];
 
+const DEFAULT_RECORD_TYPES: [&str; 10] = [
+    "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA", "PTR", "SOA",
+];
+
 #[derive(Args, Debug, Clone, Default)]
 pub struct QueryArgs {
     /// Domain to resolve, plus an optional dig-style `@ADDR` positional
@@ -51,7 +56,8 @@ pub struct QueryArgs {
     /// `@`-prefixed one, if any, is the ad-hoc resolver target.
     pub targets: Vec<String>,
 
-    /// Record type, repeatable (default `A`). Standard mnemonics:
+    /// Record type, repeatable (default: query all supported standard
+    /// types). Standard mnemonics:
     /// `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`,
     /// `SOA`, `ANY`.
     #[arg(short = 't', long = "type", value_name = "RR")]
@@ -379,7 +385,10 @@ fn validate_cli_rules(args: &QueryArgs) -> Result<()> {
 
 fn parse_record_types(input: &[String]) -> Result<Vec<String>> {
     if input.is_empty() {
-        return Ok(vec!["A".to_string()]);
+        return Ok(DEFAULT_RECORD_TYPES
+            .iter()
+            .map(|rr_type| (*rr_type).to_string())
+            .collect());
     }
     let mut out = Vec::with_capacity(input.len());
     for raw in input {
@@ -1005,22 +1014,13 @@ async fn lookup_all(
         };
         match resolver.lookup(domain, rr_type).await {
             Ok(lookup) => {
-                let ttl = lookup.answers().iter().map(|r| r.ttl).min();
-                let values: Vec<String> = lookup
-                    .answers()
-                    .iter()
-                    .map(|r| r.data.to_string())
-                    .collect();
-                if values.is_empty() {
+                if lookup.answers().is_empty() {
                     // Empty answer set for that type — treat as no data
                     // (NoError but no records emitted for this type).
                 } else {
-                    all_records.push(ObservedRecord {
-                        name: domain.to_string(),
-                        record_type: rr_name.clone(),
-                        ttl,
-                        values,
-                    });
+                    for record in observed_records_from_answers(lookup.answers()) {
+                        push_observed_record_once(&mut all_records, record);
+                    }
                 }
             }
             Err(err) => {
@@ -1030,7 +1030,34 @@ async fn lookup_all(
         }
     }
 
-    (worst_status, all_records)
+    if all_records.is_empty() {
+        (worst_status, all_records)
+    } else {
+        (QueryStatus::NoError, all_records)
+    }
+}
+
+fn push_observed_record_once(records: &mut Vec<ObservedRecord>, record: ObservedRecord) {
+    if !records.iter().any(|existing| {
+        existing.name == record.name
+            && existing.record_type == record.record_type
+            && existing.ttl == record.ttl
+            && existing.values == record.values
+    }) {
+        records.push(record);
+    }
+}
+
+fn observed_records_from_answers(answers: &[Record]) -> Vec<ObservedRecord> {
+    answers
+        .iter()
+        .map(|record| ObservedRecord {
+            name: record.name.to_string(),
+            record_type: record.record_type().to_string(),
+            ttl: Some(record.ttl),
+            values: vec![record.data.to_string()],
+        })
+        .collect()
 }
 
 fn worst(a: QueryStatus, b: QueryStatus) -> QueryStatus {
@@ -1321,6 +1348,9 @@ mod tests {
     use super::*;
     use crate::cli::{Cli, Command};
     use clap::Parser;
+    use hickory_resolver::proto::rr::{Name, RData, Record};
+    use rstest::rstest;
+    use std::str::FromStr;
 
     fn parse(args: &[&str]) -> Result<QueryArgs> {
         let mut argv = vec!["dns", "query"];
@@ -1381,9 +1411,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_record_types_default_to_a() {
+    fn parse_record_types_default_to_supported_standard_types() {
         let types = parse_record_types(&[]).unwrap();
-        assert_eq!(types, vec!["A".to_string()]);
+        assert_eq!(
+            types,
+            DEFAULT_RECORD_TYPES
+                .iter()
+                .map(|rr_type| (*rr_type).to_string())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1619,5 +1655,84 @@ mod tests {
             ]),
             0
         );
+    }
+
+    #[rstest]
+    #[case("A", "192.0.2.10", "192.0.2.10")]
+    #[case("AAAA", "2001:db8::10", "2001:db8::10")]
+    #[case("CNAME", "target.example.com.", "target.example.com.")]
+    #[case("MX", "10 mail.example.com.", "10 mail.example.com.")]
+    #[case("TXT", "\"v=spf1 -all\"", "v=spf1 -all")]
+    #[case("NS", "ns1.example.com.", "ns1.example.com.")]
+    #[case("SRV", "10 20 5060 sip.example.com.", "10 20 5060 sip.example.com.")]
+    #[case("CAA", "0 issue \"letsencrypt.org\"", "0 issue \"letsencrypt.org\"")]
+    #[case("PTR", "host.example.com.", "host.example.com.")]
+    #[case(
+        "SOA",
+        "ns1.example.com. hostmaster.example.com. 2026052901 3600 900 604800 300",
+        "ns1.example.com. hostmaster.example.com. 2026052901 3600 900 604800 300"
+    )]
+    fn observed_records_preserve_actual_type_name_ttl_and_value(
+        #[case] rr_type: &str,
+        #[case] rdata_text: &str,
+        #[case] expected_value: &str,
+    ) {
+        let rr_type = rr_type.parse::<RecordType>().unwrap();
+        let record = test_record("owner.example.com.", 600, rr_type, rdata_text);
+
+        let observed = observed_records_from_answers(&[record]);
+
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].name, "owner.example.com.");
+        assert_eq!(observed[0].record_type, rr_type.to_string());
+        assert_eq!(observed[0].ttl, Some(600));
+        assert_eq!(observed[0].values, vec![expected_value.to_string()]);
+    }
+
+    #[test]
+    fn observed_records_keep_cname_type_returned_during_a_lookup() {
+        let records = vec![
+            test_record(
+                "alias.example.com.",
+                300,
+                RecordType::CNAME,
+                "target.example.com.",
+            ),
+            test_record("target.example.com.", 300, RecordType::A, "192.0.2.10"),
+        ];
+
+        let observed = observed_records_from_answers(&records);
+
+        assert_eq!(observed[0].name, "alias.example.com.");
+        assert_eq!(observed[0].record_type, "CNAME");
+        assert_eq!(observed[0].values, vec!["target.example.com.".to_string()]);
+        assert_eq!(observed[1].name, "target.example.com.");
+        assert_eq!(observed[1].record_type, "A");
+        assert_eq!(observed[1].values, vec!["192.0.2.10".to_string()]);
+    }
+
+    #[test]
+    fn push_observed_record_once_deduplicates_cname_seen_from_multiple_type_lookups() {
+        let mut records = Vec::new();
+        let cname = ObservedRecord {
+            name: "alias.example.com.".to_string(),
+            record_type: "CNAME".to_string(),
+            ttl: Some(300),
+            values: vec!["target.example.com.".to_string()],
+        };
+
+        push_observed_record_once(&mut records, cname.clone());
+        push_observed_record_once(&mut records, cname);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].record_type, "CNAME");
+    }
+
+    fn test_record(name: &str, ttl: u32, rr_type: RecordType, rdata_text: &str) -> Record {
+        Record::from_rdata(
+            Name::from_str(name).unwrap(),
+            ttl,
+            RData::try_from_str(rr_type, rdata_text).unwrap(),
+        )
     }
 }

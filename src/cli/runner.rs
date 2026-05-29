@@ -202,9 +202,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
                 domain,
                 ttl,
                 record,
-            } => {
-                dns_records::create_record(client, &zone, &domain, ttl, &record).await?
-            }
+            } => dns_records::create_record(client, &zone, &domain, ttl, &record).await?,
             RecordCmd::Delete {
                 zone,
                 domain,
@@ -243,13 +241,21 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             }
         }
 
-        Command::Logs { lines, start, end, level } => {
-            let lines_vec = logs::get_logs(client, LogsOptions {
-                lines,
-                start: start.map(|s| resolve_time(&s)),
-                end:   end.map(|s| resolve_time(&s)),
-                level,
-            })
+        Command::Logs {
+            lines,
+            start,
+            end,
+            level,
+        } => {
+            let lines_vec = logs::get_logs(
+                client,
+                LogsOptions {
+                    lines,
+                    start: start.map(|s| resolve_time(&s)),
+                    end: end.map(|s| resolve_time(&s)),
+                    level,
+                },
+            )
             .await?;
             serde_json::to_value(lines_vec).map_err(|e| Error::parse(e.to_string()))?
         }
@@ -286,7 +292,11 @@ fn resolve_time(s: &str) -> String {
         let now = now_unix_secs();
         let today_midnight = now - (now % 86400);
         let candidate = today_midnight + day_secs;
-        let target = if candidate > now { candidate.saturating_sub(86400) } else { candidate };
+        let target = if candidate > now {
+            candidate.saturating_sub(86400)
+        } else {
+            candidate
+        };
         return unix_to_iso8601(target);
     }
     s.to_string()
@@ -306,11 +316,15 @@ fn parse_relative_duration(s: &str) -> Option<u64> {
 
 fn parse_time_of_day(s: &str) -> Option<u64> {
     let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() < 2 || parts.len() > 3 { return None; }
+    if parts.len() < 2 || parts.len() > 3 {
+        return None;
+    }
     let h: u64 = parts[0].parse().ok()?;
     let m: u64 = parts[1].parse().ok()?;
     let sec: u64 = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
-    if h >= 24 || m >= 60 || sec >= 60 { return None; }
+    if h >= 24 || m >= 60 || sec >= 60 {
+        return None;
+    }
     Some(h * 3600 + m * 60 + sec)
 }
 
@@ -334,14 +348,31 @@ fn days_to_ymd(mut days: u64) -> (u32, u8, u8) {
     let mut year = 1970u32;
     loop {
         let dy = if is_leap(year) { 366 } else { 365 };
-        if days < dy { break; }
+        if days < dy {
+            break;
+        }
         days -= dy;
         year += 1;
     }
-    let month_lens = [31u8, if is_leap(year) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_lens = [
+        31u8,
+        if is_leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1u8;
     for &ml in &month_lens {
-        if days < ml as u64 { break; }
+        if days < ml as u64 {
+            break;
+        }
         days -= ml as u64;
         month += 1;
     }

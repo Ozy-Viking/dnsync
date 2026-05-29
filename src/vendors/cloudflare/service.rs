@@ -20,9 +20,9 @@ use tracing::instrument;
 
 use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
+use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
-use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
     RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
@@ -218,9 +218,7 @@ impl RecordWrite for CloudflareClient {
         let matched = records
             .iter()
             .find(|r| match expected_content {
-                Some(expected) => {
-                    r.get("content").and_then(|c| c.as_str()) == Some(expected)
-                }
+                Some(expected) => r.get("content").and_then(|c| c.as_str()) == Some(expected),
                 None => true,
             })
             .ok_or_else(|| Error::Api {
@@ -418,8 +416,17 @@ mod tests {
     #[tokio::test]
     async fn get_logs_is_unsupported() {
         use crate::core::dns::logs::LogsOptions;
-        let err = make_client().get_logs(LogsOptions::default()).await.unwrap_err();
-        assert!(matches!(err, Error::Unsupported { vendor: "Cloudflare", .. }));
+        let err = make_client()
+            .get_logs(LogsOptions::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Unsupported {
+                vendor: "Cloudflare",
+                ..
+            }
+        ));
     }
 
     // ── Unsupported operations return correct error ────────────────────────────
@@ -935,10 +942,16 @@ mod tests {
 
     #[test]
     fn expected_content_extracts_value_for_simple_types() {
-        let params = vec![("type", "A".to_string()), ("ipAddress", "1.2.3.4".to_string())];
+        let params = vec![
+            ("type", "A".to_string()),
+            ("ipAddress", "1.2.3.4".to_string()),
+        ];
         assert_eq!(expected_cloudflare_content("A", &params), Some("1.2.3.4"));
 
-        let params = vec![("type", "CNAME".to_string()), ("cname", "x.example.com".to_string())];
+        let params = vec![
+            ("type", "CNAME".to_string()),
+            ("cname", "x.example.com".to_string()),
+        ];
         assert_eq!(
             expected_cloudflare_content("CNAME", &params),
             Some("x.example.com")

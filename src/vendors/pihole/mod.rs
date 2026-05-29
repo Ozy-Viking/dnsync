@@ -192,7 +192,9 @@ mod tests {
         assert_eq!(client.base_url, "http://192.168.100.1");
 
         // SAFETY: serialized via ENV_LOCK.
-        unsafe { std::env::remove_var("MY_PIHOLE_URL"); }
+        unsafe {
+            std::env::remove_var("MY_PIHOLE_URL");
+        }
     }
 
     #[test]

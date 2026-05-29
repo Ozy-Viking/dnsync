@@ -3,9 +3,9 @@ use inquire::{Confirm, InquireError, MultiSelect, Select, Text};
 
 use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, DnsTransportConfig, DohTransportConfig,
-    DotTransportConfig, DoqTransportConfig, EndpointUpdate, McpPermissions,
-    PANGOLIN_DEFAULT_BASE_URL, PIHOLE_DEFAULT_BASE_URL, ServerLocation, TECHNITIUM_DEFAULT_BASE_URL,
-    UNIFI_DEFAULT_BASE_URL, ValidationEndpointConfig, VendorKind,
+    DoqTransportConfig, DotTransportConfig, EndpointUpdate, McpPermissions,
+    PANGOLIN_DEFAULT_BASE_URL, PIHOLE_DEFAULT_BASE_URL, ServerLocation,
+    TECHNITIUM_DEFAULT_BASE_URL, UNIFI_DEFAULT_BASE_URL, ValidationEndpointConfig, VendorKind,
 };
 use crate::control_plane::policy::PolicyRule;
 use crate::core::error::{Error, Result};
@@ -97,9 +97,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
                 )
                 .with_validator(|input: &str| {
                     if input.trim().is_empty() {
-                        Ok(Validation::Invalid(
-                            "site is required for UniFi".into(),
-                        ))
+                        Ok(Validation::Invalid("site is required for UniFi".into()))
                     } else {
                         Ok(Validation::Valid)
                     }
@@ -208,7 +206,11 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         if endpoint.is_empty() {
             break;
         }
-        validation_endpoints.push(endpoint.parse::<ValidationEndpointConfig>().map_err(Error::parse)?);
+        validation_endpoints.push(
+            endpoint
+                .parse::<ValidationEndpointConfig>()
+                .map_err(Error::parse)?,
+        );
     }
 
     let (dns, dot, doh, doq) = prompt_transport_endpoints_for_add()?;
@@ -243,19 +245,35 @@ pub fn run_server_wizard(server: &DnsServerConfig) -> Result<EndpointUpdate> {
     let choices = vec![
         EndpointChoice {
             protocol: EndpointProtocol::Dns,
-            label: format_endpoint_label("dns", "plain DNS, port 53", endpoint_addr_status(server.dns.as_ref(), false)),
+            label: format_endpoint_label(
+                "dns",
+                "plain DNS, port 53",
+                endpoint_addr_status(server.dns.as_ref(), false),
+            ),
         },
         EndpointChoice {
             protocol: EndpointProtocol::Dot,
-            label: format_endpoint_label("dot", "DNS-over-TLS, port 853", endpoint_addr_status(server.dot.as_ref(), false)),
+            label: format_endpoint_label(
+                "dot",
+                "DNS-over-TLS, port 853",
+                endpoint_addr_status(server.dot.as_ref(), false),
+            ),
         },
         EndpointChoice {
             protocol: EndpointProtocol::Doh,
-            label: format_endpoint_label("doh", "DNS-over-HTTPS", endpoint_addr_status(server.doh.as_ref(), true)),
+            label: format_endpoint_label(
+                "doh",
+                "DNS-over-HTTPS",
+                endpoint_addr_status(server.doh.as_ref(), true),
+            ),
         },
         EndpointChoice {
             protocol: EndpointProtocol::Doq,
-            label: format_endpoint_label("doq", "DNS-over-QUIC", endpoint_addr_status(server.doq.as_ref(), false)),
+            label: format_endpoint_label(
+                "doq",
+                "DNS-over-QUIC",
+                endpoint_addr_status(server.doq.as_ref(), false),
+            ),
         },
     ];
 
@@ -331,10 +349,22 @@ fn prompt_transport_endpoints_for_add() -> Result<(
     }
 
     let choices = vec![
-        ProtocolChoice { id: 0, label: "dns  (plain DNS, port 53)" },
-        ProtocolChoice { id: 1, label: "dot  (DNS-over-TLS, port 853)" },
-        ProtocolChoice { id: 2, label: "doh  (DNS-over-HTTPS)" },
-        ProtocolChoice { id: 3, label: "doq  (DNS-over-QUIC)" },
+        ProtocolChoice {
+            id: 0,
+            label: "dns  (plain DNS, port 53)",
+        },
+        ProtocolChoice {
+            id: 1,
+            label: "dot  (DNS-over-TLS, port 853)",
+        },
+        ProtocolChoice {
+            id: 2,
+            label: "doh  (DNS-over-HTTPS)",
+        },
+        ProtocolChoice {
+            id: 3,
+            label: "doq  (DNS-over-QUIC)",
+        },
     ];
 
     let selected = MultiSelect::new("Select protocols to configure:", choices)
@@ -363,11 +393,7 @@ fn prompt_transport_endpoints_for_add() -> Result<(
 fn prompt_dns_config(existing: Option<&DnsTransportConfig>) -> Result<DnsTransportConfig> {
     let addr = Text::new("Address (host:port):")
         .with_help_message("e.g. 10.0.0.1:53 or dns.example.com:53")
-        .with_default(
-            existing
-                .and_then(|e| e.addr.as_deref())
-                .unwrap_or(""),
-        )
+        .with_default(existing.and_then(|e| e.addr.as_deref()).unwrap_or(""))
         .prompt()
         .map_err(wizard_err)?;
 
@@ -393,11 +419,7 @@ fn prompt_dns_config(existing: Option<&DnsTransportConfig>) -> Result<DnsTranspo
 fn prompt_dot_config(existing: Option<&DotTransportConfig>) -> Result<DotTransportConfig> {
     let addr = Text::new("Address (host:port):")
         .with_help_message("e.g. 10.0.0.1:853 or dns.example.com:853")
-        .with_default(
-            existing
-                .and_then(|e| e.addr.as_deref())
-                .unwrap_or(""),
-        )
+        .with_default(existing.and_then(|e| e.addr.as_deref()).unwrap_or(""))
         .prompt()
         .map_err(wizard_err)?;
 
@@ -469,11 +491,7 @@ fn prompt_doh_config(existing: Option<&DohTransportConfig>) -> Result<DohTranspo
 fn prompt_doq_config(existing: Option<&DoqTransportConfig>) -> Result<DoqTransportConfig> {
     let addr = Text::new("Address (host:port):")
         .with_help_message("e.g. 10.0.0.1:853 or dns.example.com:853")
-        .with_default(
-            existing
-                .and_then(|e| e.addr.as_deref())
-                .unwrap_or(""),
-        )
+        .with_default(existing.and_then(|e| e.addr.as_deref()).unwrap_or(""))
         .prompt()
         .map_err(wizard_err)?;
 
@@ -505,14 +523,24 @@ fn prompt_doq_config(existing: Option<&DoqTransportConfig>) -> Result<DoqTranspo
 
 /// If an existing config is present, ask the user whether to update or remove it.
 /// If not present, go straight to the configure prompt.
-fn configure_or_remove<T, F>(protocol: &str, existing: Option<&T>, configure: F) -> Result<Option<T>>
+fn configure_or_remove<T, F>(
+    protocol: &str,
+    existing: Option<&T>,
+    configure: F,
+) -> Result<Option<T>>
 where
     F: FnOnce(Option<&T>) -> Result<T>,
 {
     if existing.is_some() {
         let choices = vec![
-            ActionChoice { action: EndpointAction::Configure, label: "configure / update" },
-            ActionChoice { action: EndpointAction::Remove, label: "remove endpoint" },
+            ActionChoice {
+                action: EndpointAction::Configure,
+                label: "configure / update",
+            },
+            ActionChoice {
+                action: EndpointAction::Remove,
+                label: "remove endpoint",
+            },
         ];
         let chosen = Select::new(&format!("{protocol} endpoint:"), choices)
             .prompt()
@@ -543,7 +571,11 @@ fn endpoint_addr_status<T: EndpointInfo>(endpoint: Option<&T>, is_url: bool) -> 
             } else {
                 ep.addr_str().unwrap_or("?")
             };
-            let state = if ep.is_enabled() { "enabled" } else { "disabled" };
+            let state = if ep.is_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            };
             format!("{state} → {target}")
         }
     }
@@ -557,10 +589,7 @@ fn format_server_summary(server: &DnsServerConfig) -> String {
         crate::control_plane::config::VendorKind::Unifi => "unifi",
         crate::control_plane::config::VendorKind::Pihole => "pihole",
     };
-    let url = server
-        .base_url
-        .as_deref()
-        .unwrap_or("(default)");
+    let url = server.base_url.as_deref().unwrap_or("(default)");
     format!("{}  [{vendor}]  {url}", server.id)
 }
 
@@ -575,24 +604,42 @@ trait EndpointInfo {
 }
 
 impl EndpointInfo for DnsTransportConfig {
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn addr_str(&self) -> Option<&str> { self.addr.as_deref() }
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn addr_str(&self) -> Option<&str> {
+        self.addr.as_deref()
+    }
 }
 
 impl EndpointInfo for DotTransportConfig {
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn addr_str(&self) -> Option<&str> { self.addr.as_deref() }
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn addr_str(&self) -> Option<&str> {
+        self.addr.as_deref()
+    }
 }
 
 impl EndpointInfo for DohTransportConfig {
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn addr_str(&self) -> Option<&str> { self.addr.as_deref() }
-    fn url_str(&self) -> Option<&str> { self.url.as_deref() }
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn addr_str(&self) -> Option<&str> {
+        self.addr.as_deref()
+    }
+    fn url_str(&self) -> Option<&str> {
+        self.url.as_deref()
+    }
 }
 
 impl EndpointInfo for DoqTransportConfig {
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn addr_str(&self) -> Option<&str> { self.addr.as_deref() }
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn addr_str(&self) -> Option<&str> {
+        self.addr.as_deref()
+    }
 }
 
 // ─── Prompt utilities ─────────────────────────────────────────────────────────
@@ -604,7 +651,11 @@ fn optional_text(label: &str, help: &str, default: Option<&str>) -> Result<Optio
     }
     let val = builder.prompt().map_err(wizard_err)?;
     let val = val.trim();
-    Ok(if val.is_empty() { None } else { Some(val.to_string()) })
+    Ok(if val.is_empty() {
+        None
+    } else {
+        Some(val.to_string())
+    })
 }
 
 fn optional_u64(label: &str, help: &str, current: Option<u64>) -> Result<Option<u64>> {
