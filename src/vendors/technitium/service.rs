@@ -324,9 +324,13 @@ fn parse_log_file(text: &str, options: &LogsOptions) -> Vec<LogLine> {
         })
         .collect();
 
-    let requested = options.lines as usize;
-    if requested > 0 && lines.len() > requested {
-        lines = lines.split_off(lines.len() - requested);
+    if let Some(requested) = options.lines {
+        let requested = requested as usize;
+        if requested == 0 {
+            lines.clear();
+        } else if lines.len() > requested {
+            lines = lines.split_off(lines.len() - requested);
+        }
     }
     lines
 }
@@ -407,7 +411,7 @@ mod tests {
         let lines = parse_log_file(
             text,
             &LogsOptions {
-                lines: 1,
+                lines: Some(1),
                 start: None,
                 end: None,
                 level: Some(LogLevel::Error),

@@ -250,7 +250,7 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             let lines_vec = logs::get_logs(
                 client,
                 LogsOptions {
-                    lines,
+                    lines: Some(lines),
                     start: start.map(|s| resolve_time(&s)),
                     end: end.map(|s| resolve_time(&s)),
                     level,

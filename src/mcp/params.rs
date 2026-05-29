@@ -191,7 +191,7 @@ pub struct LogsParams {
 impl From<LogsParams> for LogsOptions {
     fn from(value: LogsParams) -> Self {
         Self {
-            lines: value.lines.unwrap_or_default(),
+            lines: value.lines,
             start: value.start,
             end: value.end,
             level: value.level.map(Into::into),

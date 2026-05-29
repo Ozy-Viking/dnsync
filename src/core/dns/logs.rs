@@ -34,7 +34,7 @@ pub struct LogLine {
 
 #[derive(Debug, Clone, Default)]
 pub struct LogsOptions {
-    pub lines: u32,
+    pub lines: Option<u32>,
     pub start: Option<String>,
     pub end: Option<String>,
     pub level: Option<LogLevel>,
