@@ -1044,6 +1044,7 @@ fn push_observed_record_once(records: &mut Vec<ObservedRecord>, record: Observed
     if !records.iter().any(|existing| {
         existing.name == record.name
             && existing.record_type == record.record_type
+            && existing.ttl == record.ttl
             && existing.values == record.values
     }) {
         records.push(record);
@@ -1692,6 +1693,28 @@ mod tests {
     }
 
     #[test]
+    fn observed_records_keep_cname_type_returned_during_aaaa_lookup() {
+        let records = vec![
+            test_record(
+                "alias.example.com.",
+                300,
+                RecordType::CNAME,
+                "target.example.com.",
+            ),
+            test_record("target.example.com.", 300, RecordType::AAAA, "2001:db8::10"),
+        ];
+
+        let observed = observed_records_from_answers(&records);
+
+        assert_eq!(observed[0].name, "alias.example.com.");
+        assert_eq!(observed[0].record_type, "CNAME");
+        assert_eq!(observed[0].values, vec!["target.example.com.".to_string()]);
+        assert_eq!(observed[1].name, "target.example.com.");
+        assert_eq!(observed[1].record_type, "AAAA");
+        assert_eq!(observed[1].values, vec!["2001:db8::10".to_string()]);
+    }
+
+    #[test]
     fn observed_records_keep_cname_type_returned_during_a_lookup() {
         let records = vec![
             test_record(
@@ -1712,7 +1735,6 @@ mod tests {
         assert_eq!(observed[1].record_type, "A");
         assert_eq!(observed[1].values, vec!["192.0.2.10".to_string()]);
     }
-
     #[test]
     fn push_observed_record_once_deduplicates_cname_seen_from_multiple_type_lookups() {
         let mut records = Vec::new();
