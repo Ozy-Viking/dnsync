@@ -35,13 +35,16 @@ use crate::{
 /// `timeout_ms` is configured.
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 
-/// Order in which transports render and run when fanning out. Matches
-/// the precedence used to pick a single transport when none is
-/// requested (DoH first, DoQ last because it's an opt-in build).
+/// Order in which transports render and run when fanning out, and the
+/// precedence used to pick a server's *default* transport when none is
+/// requested explicitly. Plain DNS is first (the universally-available
+/// baseline); DoQ is last because it is an opt-in build. A server with
+/// a single configured transport block uses that block as its default
+/// regardless of where the block sits in this list.
 pub const TRANSPORT_PRECEDENCE: [ValidationTransport; 4] = [
-    ValidationTransport::Doh,
-    ValidationTransport::Dot,
     ValidationTransport::Dns,
+    ValidationTransport::Dot,
+    ValidationTransport::Doh,
     ValidationTransport::Doq,
 ];
 
@@ -63,11 +66,12 @@ pub struct QueryArgs {
     #[arg(short = 't', long = "type", value_name = "RR")]
     pub r#type: Vec<String>,
 
-    /// A configured `[[servers]]` entry to query. Matched case-
-    /// insensitively against `server.id`. Mutually exclusive with
-    /// `--at`/`@ADDR`.
+    /// A configured `[[servers]]` entry to query, repeatable. Each is
+    /// matched case-insensitively against `server.id`. Mutually
+    /// exclusive with `--at`/`@ADDR`. Pass `--server` more than once to
+    /// fan out across several servers, or use `--all-servers`.
     #[arg(long)]
-    pub server: Option<String>,
+    pub server: Vec<String>,
 
     /// Ad-hoc resolver. `host[:port]` or `scheme://host[:port][/path]`.
     /// Schemes recognised: `udp://`, `tcp://`, `dns://`, `tls://`,
@@ -93,9 +97,26 @@ pub struct QueryArgs {
     #[arg(long)]
     pub doq: bool,
 
-    /// Equivalent to passing every transport flag. Only blocks
-    /// present and `enabled = true` on the target are actually
-    /// queried. Requires `--server`.
+    /// Query every transport block (DNS/DoT/DoH/DoQ) present and
+    /// `enabled = true` on the target. Requires a server target
+    /// (`--server`/`--all-servers`). Mutually exclusive with the
+    /// individual `--dns`/`--dot`/`--doh`/`--doq` flags.
+    #[arg(long)]
+    pub all_transports: bool,
+
+    /// Query every configured `[[servers]]` entry. Cannot be combined
+    /// with `--at`/`@ADDR`. Without a transport flag, each server is
+    /// queried over its default transport (see precedence).
+    #[arg(long)]
+    pub all_servers: bool,
+
+    /// Query every supported record type, overriding any `-t`/`--type`.
+    /// This is also the default when no `-t` is given.
+    #[arg(long)]
+    pub all_types: bool,
+
+    /// Shorthand for `--all-servers --all-types --all-transports`:
+    /// every server, every record type, every enabled transport.
     #[arg(long)]
     pub all: bool,
 
@@ -133,6 +154,11 @@ pub struct QueryArgs {
 #[derive(Debug, Clone)]
 pub struct QueryResultBlock {
     pub target_label: String,
+    /// The configured server id this block was produced for, when the
+    /// target was a named `[[servers]]` entry. `None` for the system
+    /// resolver and ad-hoc targets. Used to disambiguate headers and
+    /// JSON results when fanning out across multiple servers.
+    pub server_id: Option<String>,
     pub transport: ValidationTransport,
     pub extras: Vec<(String, String)>,
     pub url: Option<String>,
@@ -266,9 +292,18 @@ pub async fn execute_query(config: Option<AppConfig>, args: QueryArgs) -> Result
         effective.at = Some(at);
     }
 
+    // `--all` is sugar for the three independent "all" axes. Expand it
+    // up front so the rest of the pipeline only reasons about the
+    // specific flags.
+    if effective.all {
+        effective.all_servers = true;
+        effective.all_types = true;
+        effective.all_transports = true;
+    }
+
     validate_cli_rules(&effective)?;
 
-    let record_types = parse_record_types(&effective.r#type)?;
+    let record_types = parse_record_types(&effective.r#type, effective.all_types)?;
     let default_timeout = Duration::from_millis(effective.timeout.unwrap_or(DEFAULT_TIMEOUT_MS));
 
     let plan = build_query_plan(config.as_ref(), &effective, default_timeout)?;
@@ -339,30 +374,38 @@ fn split_targets(positionals: &[String]) -> Result<(String, Option<String>)> {
 }
 
 fn validate_cli_rules(args: &QueryArgs) -> Result<()> {
-    if args.server.is_some() && args.at.is_some() {
+    let has_server = !args.server.is_empty() || args.all_servers;
+
+    if has_server && args.at.is_some() {
         return Err(Error::parse(
-            "`--server` and `--at`/`@ADDR` are mutually exclusive",
+            "`--server`/`--all-servers` and `--at`/`@ADDR` are mutually exclusive",
+        ));
+    }
+
+    if !args.server.is_empty() && args.all_servers {
+        return Err(Error::parse(
+            "`--all-servers` already queries every server; drop the explicit `--server`",
         ));
     }
 
     let any_transport = args.dns || args.dot || args.doh || args.doq;
-    let has_target = args.server.is_some() || args.at.is_some();
+    let has_target = has_server || args.at.is_some();
 
-    if args.all && (args.dns || args.dot || args.doh || args.doq) {
+    if args.all_transports && any_transport {
         return Err(Error::parse(
-            "`--all` is mutually exclusive with `--dns` / `--dot` / `--doh` / `--doq`",
+            "`--all-transports` is mutually exclusive with `--dns` / `--dot` / `--doh` / `--doq`",
         ));
     }
 
-    if args.all && args.server.is_none() {
+    if args.all_transports && !has_server {
         return Err(Error::parse(
-            "`--all` requires `--server <ID>` — there's no way to enumerate transports for an ad-hoc target or the system resolver",
+            "`--all-transports` requires a server target (`--server <ID>` or `--all-servers`) — there's no way to enumerate transports for an ad-hoc target or the system resolver",
         ));
     }
 
-    if !has_target && (any_transport || args.all) {
+    if !has_target && (any_transport || args.all_transports) {
         return Err(Error::parse(
-            "transport flags (--dns/--dot/--doh/--doq/--all) require a resolver target — pass --server <ID> or --at <ADDR>",
+            "transport flags (--dns/--dot/--doh/--doq/--all-transports) require a resolver target — pass --server <ID> or --at <ADDR>",
         ));
     }
 
@@ -373,8 +416,7 @@ fn validate_cli_rules(args: &QueryArgs) -> Result<()> {
         ));
     }
 
-    if args.server.is_some() && (args.port.is_some() || args.tls_server_name.is_some() || args.tcp)
-    {
+    if has_server && (args.port.is_some() || args.tls_server_name.is_some() || args.tcp) {
         return Err(Error::parse(
             "`--port` / `--tls-server-name` / `--tcp` only apply to ad-hoc resolvers (`--at` / `@ADDR`); for `--server`, the transport block owns those values",
         ));
@@ -383,8 +425,8 @@ fn validate_cli_rules(args: &QueryArgs) -> Result<()> {
     Ok(())
 }
 
-fn parse_record_types(input: &[String]) -> Result<Vec<String>> {
-    if input.is_empty() {
+fn parse_record_types(input: &[String], all_types: bool) -> Result<Vec<String>> {
+    if all_types || input.is_empty() {
         return Ok(DEFAULT_RECORD_TYPES
             .iter()
             .map(|rr_type| (*rr_type).to_string())
@@ -415,6 +457,8 @@ struct QueryPlan {
 
 struct PlanTarget {
     transport: ValidationTransport,
+    /// The configured server id this plan entry came from, when named.
+    server_id: Option<String>,
     /// `Some(target)` runs the lookup; `None` records a `skipped` row
     /// without a network call (explicit transport flag on a missing
     /// or disabled block).
@@ -430,14 +474,17 @@ struct PlanTarget {
 
 #[derive(Debug, Clone)]
 pub enum TargetKind {
-    System {
-        display: String,
-    },
-    Named {
-        server_id: String,
-        cluster: Option<String>,
-    },
+    System { display: String },
+    Named { servers: Vec<NamedServer> },
     AdHoc,
+}
+
+/// One named server in a (possibly multi-server) query, kept for JSON
+/// output so each result can be attributed to its server and cluster.
+#[derive(Debug, Clone)]
+pub struct NamedServer {
+    pub server_id: String,
+    pub cluster: Option<String>,
 }
 
 fn build_query_plan(
@@ -445,8 +492,8 @@ fn build_query_plan(
     args: &QueryArgs,
     timeout: Duration,
 ) -> Result<QueryPlan> {
-    if let Some(server_id) = args.server.as_deref() {
-        return build_named_plan(config, server_id, args, timeout);
+    if args.all_servers || !args.server.is_empty() {
+        return build_servers_plan(config, args, timeout);
     }
     if let Some(at) = args.at.as_deref() {
         return build_ad_hoc_plan(at, args, timeout);
@@ -467,6 +514,7 @@ fn build_system_plan(_args: &QueryArgs, timeout: Duration) -> Result<QueryPlan> 
         },
         targets: vec![PlanTarget {
             transport: ValidationTransport::Dns,
+            server_id: None,
             target: None,
             target_label: display,
             extras,
@@ -504,33 +552,80 @@ fn system_resolver_display() -> String {
     }
 }
 
-fn build_named_plan(
+fn build_servers_plan(
     config: Option<&AppConfig>,
-    server_id: &str,
     args: &QueryArgs,
     timeout: Duration,
 ) -> Result<QueryPlan> {
     let cfg = config.ok_or_else(|| {
-        Error::parse(format!(
-            "--server {server_id} requires a config file; none was loaded",
-        ))
+        Error::parse("querying a configured server requires a config file; none was loaded")
     })?;
 
-    if cfg.clusters.contains_key(server_id) {
-        let members = cfg
-            .clusters
-            .get(server_id)
-            .map(|c| c.members.join(", "))
-            .unwrap_or_default();
-        return Err(Error::parse(format!(
-            "'{server_id}' is a cluster id, not a server. Pick one of its members ({members}) with --server",
-        )));
+    let servers = resolve_server_set(cfg, args)?;
+
+    let mut named = Vec::with_capacity(servers.len());
+    let mut plan_targets = Vec::new();
+    for server in &servers {
+        plan_targets.extend(plan_targets_for_server(server, args, timeout));
+        named.push(NamedServer {
+            server_id: server.id.clone(),
+            cluster: server.cluster.clone(),
+        });
     }
 
-    let server = cfg.selected_server(Some(server_id))?;
+    Ok(QueryPlan {
+        kind: TargetKind::Named { servers: named },
+        targets: plan_targets,
+    })
+}
+
+/// Resolve the set of servers to query: every configured server for
+/// `--all-servers`, or each explicitly-named `--server <ID>` (rejecting
+/// cluster ids and de-duplicating repeats).
+fn resolve_server_set<'a>(
+    cfg: &'a AppConfig,
+    args: &QueryArgs,
+) -> Result<Vec<&'a DnsServerConfig>> {
+    if args.all_servers {
+        if cfg.servers.is_empty() {
+            return Err(Error::parse(
+                "`--all-servers` was given but the config defines no `[[servers]]`",
+            ));
+        }
+        return Ok(cfg.servers.iter().collect());
+    }
+
+    let mut out: Vec<&DnsServerConfig> = Vec::new();
+    for id in &args.server {
+        if cfg.clusters.contains_key(id) {
+            let members = cfg
+                .clusters
+                .get(id)
+                .map(|c| c.members.join(", "))
+                .unwrap_or_default();
+            return Err(Error::parse(format!(
+                "'{id}' is a cluster id, not a server. Pick one of its members ({members}) with --server",
+            )));
+        }
+        let server = cfg.selected_server(Some(id))?;
+        if !out.iter().any(|existing| existing.id == server.id) {
+            out.push(server);
+        }
+    }
+    Ok(out)
+}
+
+/// Build the per-transport plan entries for a single server, honouring
+/// explicit transport flags, `--all-transports`, and the default
+/// (single-best) precedence pick.
+fn plan_targets_for_server(
+    server: &DnsServerConfig,
+    args: &QueryArgs,
+    timeout: Duration,
+) -> Vec<PlanTarget> {
     let mut transports = chosen_transports(args);
     transports.sort_by_key(|t| precedence_index(*t));
-    if !args.all
+    if !args.all_transports
         && !has_explicit_transport(args)
         && let Some(best) = transports
             .iter()
@@ -544,7 +639,7 @@ fn build_named_plan(
     for transport in transports {
         let block_enabled = ResolverTarget::is_enabled_on(server, transport);
         if !block_enabled {
-            if args.all {
+            if args.all_transports {
                 continue;
             }
             plan_targets.push(skipped_plan_target(
@@ -556,7 +651,7 @@ fn build_named_plan(
             continue;
         }
         let Some(mut target) = ResolverTarget::from_server_block(server, transport) else {
-            if args.all {
+            if args.all_transports {
                 continue;
             }
             plan_targets.push(skipped_plan_target(
@@ -580,6 +675,7 @@ fn build_named_plan(
         let target_timeout = target.timeout;
         plan_targets.push(PlanTarget {
             transport,
+            server_id: Some(server.id.clone()),
             target: Some(target),
             target_label: label,
             extras,
@@ -591,13 +687,7 @@ fn build_named_plan(
         });
     }
 
-    Ok(QueryPlan {
-        kind: TargetKind::Named {
-            server_id: server.id.clone(),
-            cluster: server.cluster.clone(),
-        },
-        targets: plan_targets,
-    })
+    plan_targets
 }
 
 fn skipped_plan_target(
@@ -608,6 +698,7 @@ fn skipped_plan_target(
 ) -> PlanTarget {
     PlanTarget {
         transport,
+        server_id: Some(server.id.clone()),
         target: None,
         target_label: format!(
             "—  (no [servers.{}] on {})",
@@ -686,6 +777,7 @@ fn build_ad_hoc_plan(at: &str, args: &QueryArgs, timeout: Duration) -> Result<Qu
         kind: TargetKind::AdHoc,
         targets: vec![PlanTarget {
             transport,
+            server_id: None,
             target: Some(target),
             target_label: label,
             extras,
@@ -880,6 +972,7 @@ async fn run_block(plan: PlanTarget, record_types: &[String], domain: &str) -> Q
 
     let finish = |status: QueryStatus, records: Vec<ObservedRecord>| QueryResultBlock {
         target_label: plan.target_label.clone(),
+        server_id: plan.server_id.clone(),
         transport: plan.transport,
         extras: plan.extras.clone(),
         url: plan.url.clone(),
@@ -1055,14 +1148,25 @@ async fn lookup_all(
 }
 
 fn push_observed_record_once(records: &mut Vec<ObservedRecord>, record: ObservedRecord) {
-    if !records.iter().any(|existing| {
+    // Identity is (name, type, values) — TTL is deliberately excluded.
+    // The same chain record (e.g. a CNAME) is returned by more than one
+    // type-lookup in a multi-type query (the A lookup follows the chain
+    // and includes the CNAME; the explicit CNAME lookup returns it too).
+    // A caching resolver hands back a decrementing TTL, so the copies
+    // differ only in TTL. Collapse them into one row, keeping the
+    // smallest TTL (the most current view of the cache countdown).
+    if let Some(existing) = records.iter_mut().find(|existing| {
         existing.name == record.name
             && existing.record_type == record.record_type
-            && existing.ttl == record.ttl
             && existing.values == record.values
     }) {
-        records.push(record);
+        existing.ttl = match (existing.ttl, record.ttl) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        return;
     }
+    records.push(record);
 }
 
 fn observed_records_from_answers(answers: &[Record]) -> Vec<ObservedRecord> {
@@ -1098,25 +1202,42 @@ fn exit_code_for(blocks: &[QueryResultBlock]) -> i32 {
 
 fn print_table(blocks: &[QueryResultBlock], asked_types: &[String]) {
     let multi_type = asked_types.len() > 1;
+    let multi_server = distinct_server_count(blocks) > 1;
     let mut first = true;
     for block in blocks {
         if !first {
             println!();
         }
         first = false;
-        print_header(block);
+        print_header(block, multi_server);
         println!();
         let rows = expand_rows(block, multi_type);
         print_rows(&rows, multi_type);
     }
 }
 
-fn print_header(block: &QueryResultBlock) {
+/// Number of distinct named servers represented across the blocks. Used
+/// to decide whether headers need to spell out which server a block
+/// belongs to.
+fn distinct_server_count(blocks: &[QueryResultBlock]) -> usize {
+    let mut ids: Vec<&str> = blocks
+        .iter()
+        .filter_map(|b| b.server_id.as_deref())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.len()
+}
+
+fn print_header(block: &QueryResultBlock, multi_server: bool) {
     let mut line = format!(
         "@ {}  {}",
         block.target_label,
         transport_word(block.transport)
     );
+    if multi_server && let Some(id) = block.server_id.as_deref() {
+        let _ = write!(&mut line, "  server={id}");
+    }
     for (k, v) in &block.extras {
         if v.is_empty() {
             line.push_str("  ");
@@ -1238,6 +1359,8 @@ struct JsonTarget<'a> {
 
 #[derive(Serialize)]
 struct JsonResult<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server: Option<&'a str>,
     resolver: JsonResolver<'a>,
     elapsed_ms: u128,
     status: &'a str,
@@ -1298,12 +1421,21 @@ fn build_json_value(
             cluster: None,
             system_resolver: Some(display.as_str()),
         },
-        TargetKind::Named { server_id, cluster } => JsonTarget {
-            kind: "named",
-            server: Some(server_id.as_str()),
-            cluster: cluster.as_deref(),
-            system_resolver: None,
-        },
+        TargetKind::Named { servers } => {
+            // Top-level `server`/`cluster` stay populated for the common
+            // single-server case (back-compat); for a multi-server fan-
+            // out they are null and each result carries its own `server`.
+            let (server, cluster) = match servers.as_slice() {
+                [only] => (Some(only.server_id.as_str()), only.cluster.as_deref()),
+                _ => (None, None),
+            };
+            JsonTarget {
+                kind: "named",
+                server,
+                cluster,
+                system_resolver: None,
+            }
+        }
         TargetKind::AdHoc => JsonTarget {
             kind: "ad_hoc",
             server: None,
@@ -1315,6 +1447,7 @@ fn build_json_value(
     let results: Vec<JsonResult> = blocks
         .iter()
         .map(|b| JsonResult {
+            server: b.server_id.as_deref(),
             resolver: JsonResolver {
                 transport: transport_word(b.transport),
                 address: b.host_for_json.as_deref(),
@@ -1429,7 +1562,19 @@ mod tests {
 
     #[test]
     fn parse_record_types_default_to_supported_standard_types() {
-        let types = parse_record_types(&[]).unwrap();
+        let types = parse_record_types(&[], false).unwrap();
+        assert_eq!(
+            types,
+            DEFAULT_RECORD_TYPES
+                .iter()
+                .map(|rr_type| (*rr_type).to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn parse_record_types_all_types_overrides_explicit() {
+        let types = parse_record_types(&["A".to_string()], true).unwrap();
         assert_eq!(
             types,
             DEFAULT_RECORD_TYPES
@@ -1442,36 +1587,53 @@ mod tests {
     #[test]
     fn parse_record_types_uppercases_and_dedups() {
         let types =
-            parse_record_types(&["a".to_string(), "AAAA".to_string(), "A".to_string()]).unwrap();
+            parse_record_types(&["a".to_string(), "AAAA".to_string(), "A".to_string()], false)
+                .unwrap();
         assert_eq!(types, vec!["A".to_string(), "AAAA".to_string()]);
     }
 
     #[test]
     fn parse_record_types_rejects_unknown() {
-        assert!(parse_record_types(&["BOGUS".to_string()]).is_err());
+        assert!(parse_record_types(&["BOGUS".to_string()], false).is_err());
     }
 
     #[test]
     fn validate_rejects_server_and_at() {
         let mut args = QueryArgs::default();
-        args.server = Some("dns1".to_string());
+        args.server = vec!["dns1".to_string()];
         args.at = Some("1.1.1.1".to_string());
         assert!(validate_cli_rules(&args).is_err());
     }
 
     #[test]
-    fn validate_rejects_all_with_explicit_transport() {
+    fn validate_rejects_all_servers_with_explicit_server() {
         let mut args = QueryArgs::default();
-        args.server = Some("dns1".to_string());
-        args.all = true;
+        args.all_servers = true;
+        args.server = vec!["dns1".to_string()];
+        assert!(validate_cli_rules(&args).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_all_servers_with_at() {
+        let mut args = QueryArgs::default();
+        args.all_servers = true;
+        args.at = Some("1.1.1.1".to_string());
+        assert!(validate_cli_rules(&args).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_all_transports_with_explicit_transport() {
+        let mut args = QueryArgs::default();
+        args.server = vec!["dns1".to_string()];
+        args.all_transports = true;
         args.dot = true;
         assert!(validate_cli_rules(&args).is_err());
     }
 
     #[test]
-    fn validate_rejects_all_without_server() {
+    fn validate_rejects_all_transports_without_server() {
         let mut args = QueryArgs::default();
-        args.all = true;
+        args.all_transports = true;
         args.at = Some("1.1.1.1".to_string());
         assert!(validate_cli_rules(&args).is_err());
     }
@@ -1495,7 +1657,7 @@ mod tests {
     #[test]
     fn validate_rejects_port_with_named_server() {
         let mut args = QueryArgs::default();
-        args.server = Some("dns1".to_string());
+        args.server = vec!["dns1".to_string()];
         args.port = Some(53);
         assert!(validate_cli_rules(&args).is_err());
     }
@@ -1503,11 +1665,18 @@ mod tests {
     #[test]
     fn validate_accepts_single_target_with_no_transport_flags() {
         let mut args = QueryArgs::default();
-        args.server = Some("dns1".to_string());
+        args.server = vec!["dns1".to_string()];
         validate_cli_rules(&args).unwrap();
 
         let mut args = QueryArgs::default();
         args.at = Some("1.1.1.1".to_string());
+        validate_cli_rules(&args).unwrap();
+    }
+
+    #[test]
+    fn validate_accepts_multiple_servers() {
+        let mut args = QueryArgs::default();
+        args.server = vec!["dns1".to_string(), "dns2".to_string()];
         validate_cli_rules(&args).unwrap();
     }
 
@@ -1590,7 +1759,32 @@ mod tests {
         assert!(args.doh);
         assert!(!args.dns);
         assert!(!args.all);
-        assert_eq!(args.server.as_deref(), Some("dns1"));
+        assert!(!args.all_transports);
+        assert_eq!(args.server, vec!["dns1".to_string()]);
+    }
+
+    #[test]
+    fn clap_parses_repeated_server() {
+        let args = parse(&[
+            "huly.hankin.io",
+            "--server",
+            "dns1",
+            "--server",
+            "dns2",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.server,
+            vec!["dns1".to_string(), "dns2".to_string()]
+        );
+    }
+
+    #[test]
+    fn clap_parses_all_flags() {
+        let args = parse(&["huly.hankin.io", "--all-servers", "--all-types"]).unwrap();
+        assert!(args.all_servers);
+        assert!(args.all_types);
+        assert!(!args.all_transports);
     }
 
     #[test]
@@ -1641,6 +1835,7 @@ mod tests {
         fn block(status: QueryStatus) -> QueryResultBlock {
             QueryResultBlock {
                 target_label: String::new(),
+                server_id: None,
                 transport: ValidationTransport::Dns,
                 extras: Vec::new(),
                 url: None,
@@ -1764,6 +1959,30 @@ mod tests {
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].record_type, "CNAME");
+    }
+
+    #[test]
+    fn push_observed_record_once_collapses_differing_ttls_keeping_smallest() {
+        // The same CNAME comes back from the A-type lookup (cache TTL
+        // 3600) and the explicit CNAME-type lookup (counted down to 599).
+        // It should collapse to a single row carrying the smaller TTL.
+        let mut records = Vec::new();
+        let high = ObservedRecord {
+            name: "huly.hankin.io.".to_string(),
+            record_type: "CNAME".to_string(),
+            ttl: Some(3600),
+            values: vec!["nasapps.hankin.io.".to_string()],
+        };
+        let low = ObservedRecord {
+            ttl: Some(599),
+            ..high.clone()
+        };
+
+        push_observed_record_once(&mut records, high);
+        push_observed_record_once(&mut records, low);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].ttl, Some(599));
     }
 
     fn test_record(name: &str, ttl: u32, rr_type: RecordType, rdata_text: &str) -> Record {

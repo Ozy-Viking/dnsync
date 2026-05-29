@@ -362,7 +362,10 @@ dns q huly.hankin.io -t AAAA                      # specific record type
 dns q huly.hankin.io --server dns1                # configured entry, best transport
 dns q huly.hankin.io --server dns1 --dot          # force DoT
 dns q huly.hankin.io --server dns1 --dot --doh    # fan out across two
-dns q huly.hankin.io --server dns1 --all          # every enabled block
+dns q huly.hankin.io --server dns1 --all-transports # every enabled block
+dns q huly.hankin.io --server dns1 --server dns2  # several servers
+dns q huly.hankin.io --all-servers                # every configured server
+dns q huly.hankin.io --all                        # all servers × types × transports
 dns q huly.hankin.io @1.1.1.1                     # ad-hoc plain DNS
 dns q huly.hankin.io --at tls://9.9.9.9           # ad-hoc DoT
 dns q huly.hankin.io --at https://cloudflare-dns.com/dns-query
@@ -374,8 +377,8 @@ dns q huly.hankin.io --json                       # stable JSON shape
 Output starts with an `@` header line — target, transport, optional
 `key=value` extras (e.g. `sni=dns1.hankin.io`), elapsed milliseconds —
 then a column-aligned table of `name type ttl data` rows. Multiple
-transports print one block per transport in precedence order `doh →
-dot → dns → doq`, separated by blank lines. Non-`noerror` results (
+transports print one block per transport in precedence order `dns →
+dot → doh → doq`, separated by blank lines. Non-`noerror` results (
 NXDOMAIN, TIMEOUT, …) render as a single row with the queried name on
 the left and the status word where the data would be.
 

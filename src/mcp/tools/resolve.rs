@@ -48,12 +48,12 @@ fn params_to_args(p: ResolveParams) -> Result<QueryArgs, Error> {
     let mut args = QueryArgs {
         targets: vec![p.domain],
         r#type: p.types.unwrap_or_default(),
-        server: p.server_id,
+        server: p.server_id.into_iter().collect(),
         at: p.at,
         port: p.port,
         tls_server_name: p.tls_server_name,
         timeout: p.timeout_ms,
-        all: p.all_transports.unwrap_or(false),
+        all_transports: p.all_transports.unwrap_or(false),
         json: true,
         ..Default::default()
     };
@@ -93,12 +93,12 @@ mod tests {
         let args = params_to_args(p).unwrap();
         assert_eq!(args.targets, vec!["example.com".to_string()]);
         assert_eq!(args.r#type, vec!["A".to_string(), "AAAA".to_string()]);
-        assert_eq!(args.server.as_deref(), Some("dns1"));
+        assert_eq!(args.server, vec!["dns1".to_string()]);
         assert!(args.dot);
         assert!(args.doh);
         assert!(!args.dns);
         assert!(!args.doq);
-        assert!(!args.all);
+        assert!(!args.all_transports);
         assert_eq!(args.timeout, Some(1500));
         // MCP always emits JSON
         assert!(args.json);
@@ -118,7 +118,7 @@ mod tests {
             timeout_ms: None,
         };
         let args = params_to_args(p).unwrap();
-        assert!(args.all);
+        assert!(args.all_transports);
     }
 
     #[test]
