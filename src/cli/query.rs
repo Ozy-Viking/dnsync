@@ -164,8 +164,9 @@ pub struct QueryArgs {
 const MAX_CHASE_DEPTH: usize = 8;
 
 /// Record types `--chase` looks up when walking to a chain's terminal:
-/// further CNAMEs to keep walking, plus the address types that end it.
-const CHASE_TYPES: [&str; 3] = ["CNAME", "A", "AAAA"];
+/// further CNAME/DNAME hops to keep walking, plus the address types that
+/// end it.
+const CHASE_TYPES: [&str; 4] = ["CNAME", "DNAME", "A", "AAAA"];
 
 /// Per-transport outcome for one block within a single `dns query`
 /// invocation. The renderer turns these into header+rows / short

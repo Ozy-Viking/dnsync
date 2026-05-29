@@ -168,7 +168,7 @@ Columns are space-padded to fit the widest cell.
 **Default table** (one row per answer record, blank line between header
 and answers):
 
-```
+```text
 @ 10.5.0.53:853  dot  sni=dns1.hankin.io  9ms
 
 huly.hankin.io  A  300  10.5.0.42
@@ -178,7 +178,7 @@ huly.hankin.io  A  300  10.5.0.43
 For the system-resolver default the header line names the OS resolver
 the platform actually picked:
 
-```
+```text
 @ 127.0.0.53  dns  system  3ms
 
 huly.hankin.io  A  300  10.5.0.42
@@ -188,14 +188,14 @@ Non-`noerror` results render as a single row in the answer table —
 queried name on the left, status where the data would go — so the
 user can see what was actually asked:
 
-```
+```text
 $ dns q nope.hankin.io
 @ 127.0.0.53  dns  system  3ms
 
 nope.hankin.io  NXDOMAIN
 ```
 
-```
+```text
 $ dns q huly.hankin.io --server dns1 --dot
 @ 10.5.0.53:853  dot  sni=dns1.hankin.io  5004ms
 
@@ -205,7 +205,7 @@ huly.hankin.io  TIMEOUT
 In a `--type A -t AAAA` query where the type matters, the type column
 is preserved on the status row:
 
-```
+```text
 nope.hankin.io  A     NXDOMAIN
 nope.hankin.io  AAAA  NXDOMAIN
 ```
@@ -214,7 +214,7 @@ nope.hankin.io  AAAA  NXDOMAIN
 `--dns`/`--dot`/`--doh`/`--doq`) — one header+answer block per transport,
 separated by blank lines, in precedence order `dns → dot → doh → doq`:
 
-```
+```text
 $ dns q huly.hankin.io --server dns1 --all-transports
 
 @ 10.5.0.53:53  dns  4ms
@@ -232,7 +232,7 @@ id) — each server's blocks are grouped under a
 `=== Server: <id> (<Vendor>) ===` header, matching the cross-server
 `record list` output style:
 
-```
+```text
 $ dns q huly.hankin.io --server dns1 --server dns2
 
 === Server: dns1 (Technitium) ===
@@ -251,7 +251,7 @@ If a transport is requested explicitly (`--doq`) but the block is
 absent or disabled, that transport gets a header line marking the
 skip; other transports continue:
 
-```
+```text
 @ dns1.hankin.io/dns-query  doh  22ms
 huly.hankin.io  A  300  10.5.0.42
 
@@ -266,7 +266,7 @@ The process exit code is the worst across transports (see §Errors).
 
 **`--short`** — answers only, one per line:
 
-```
+```text
 10.5.0.42
 10.5.0.43
 ```
@@ -456,7 +456,7 @@ lookups, it walks each CNAME/DNAME target that isn't already resolved,
 issuing follow-up `CNAME`/`A`/`AAAA` lookups until it reaches the
 terminal address record(s). The whole chain is shown in order:
 
-```
+```text
 $ dns q huly.hankin.io -t CNAME --chase
 @ 127.0.0.53  dns  system  7ms
 
@@ -481,13 +481,16 @@ Behaviour:
 
 ### Querying multiple servers
 
-`--server <ID>` is repeatable, and `--all-servers` fans out across every
-configured `[[servers]]` entry. Each selected server is queried over its
-own transport set (its default transport, the explicit transport flags,
-or — with `--all-transports` — every enabled block). The output prints one
+`--server <ID>` is repeatable, accepts a cluster id (which expands to its
+members), and `--all-servers` fans out across every configured
+`[[servers]]` entry. Each selected server is queried over its own
+transport set (its default transport, the explicit transport flags, or —
+with `--all-transports` — every enabled block). The output prints one
 header+answer block per (server, transport) pair; when more than one
-server is involved, each header gains a `server=<id>` tag and each `--json`
-result carries a `"server"` field. The top-level `target.server` /
+server is involved, each server's blocks are grouped under a
+`=== Server: <id> (<Vendor>) ===` header, and `--json` groups results
+under top-level `servers[]` entries (`{ server, cluster, results }`)
+instead of the flat `results[]`. The top-level `target.server` /
 `target.cluster` fields stay populated only for the single-server case;
 for a multi-server fan-out they are `null`.
 
@@ -798,7 +801,7 @@ build returns `ValidationFailureKind::UnsupportedTransport`, the CLI
 shows an `UNSUPPORTED` row, logs a `tracing::warn!`, and the exit code is
 `2`:
 
-```
+```text
 DoQ transport is not enabled in this build of dns.
 Rebuild with `--features doq` to enable DNS-over-QUIC.
 ```
