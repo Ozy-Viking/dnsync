@@ -42,7 +42,7 @@ A new vendor-neutral subcommand. Reads the answer from a DNS resolver and
 prints it; never touches a vendor API.
 
 ```bash
-dns query huly.hankin.io                          # system resolver, A
+dns query huly.hankin.io                          # system resolver, all supported types
 dns query huly.hankin.io -t AAAA                  # specific record type
 dns q huly.hankin.io                              # short alias
 dns query huly.hankin.io --server dns1            # configured server entry
@@ -93,7 +93,7 @@ dns query huly.hankin.io --json
 | Flag | Meaning |
 |---|---|
 | `<DOMAIN>` | Required. Name to resolve. Bare labels are not auto-qualified — the user passes the FQDN. |
-| `-t, --type <RR>` | Record type, repeatable (default `A`). Accepts standard mnemonics: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`, `SOA`, `ANY`. |
+| `-t, --type <RR>` | Record type, repeatable (default: all supported standard types). Accepts standard mnemonics: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `CAA`, `PTR`, `SOA`, `ANY`. |
 | `--server <ID>` | A configured `[[servers]]` entry. Matched case-insensitively against `server.id` (existing rule). |
 | `--at <ADDR>` | Ad-hoc resolver. `host[:port]` or `scheme://host[:port][/path]`. |
 | `@ADDR` (positional) | Sugar for `--at ADDR`. Following dig convention; can appear before or after the domain. |

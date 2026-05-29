@@ -167,7 +167,10 @@ mod tests {
 
     #[test]
     fn extract_relative_name_subdomain() {
-        assert_eq!(relative_to_zone("sub.example.com", "example.com"), "sub");
+        assert_eq!(
+            extract_relative_name("sub.example.com", "example.com"),
+            "sub"
+        );
     }
 
     #[test]

@@ -77,16 +77,16 @@ impl DnsEndpointResolver for HickoryDnsEndpointResolver {
                 .map_err(|_| ValidationFailureKind::Timeout)?
                 .map_err(|err| classify_hickory_error(endpoint.transport, &err.to_string()))?;
 
-            Ok(vec![ObservedRecord {
-                name: fqdn.to_string(),
-                record_type: record_type.to_ascii_uppercase(),
-                ttl: lookup.answers().iter().map(|record| record.ttl).min(),
-                values: lookup
-                    .answers()
-                    .iter()
-                    .map(|record| record.data.to_string())
-                    .collect(),
-            }])
+            Ok(lookup
+                .answers()
+                .iter()
+                .map(|record| ObservedRecord {
+                    name: record.name.to_string(),
+                    record_type: record.record_type().to_string(),
+                    ttl: Some(record.ttl),
+                    values: vec![record.data.to_string()],
+                })
+                .collect())
         }
     }
 }

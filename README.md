@@ -357,7 +357,7 @@ API involved. By default it uses the host's system resolver; pass `--server
 dot|doh|doq]` blocks, or `--at <ADDR>` / `@ADDR` for an ad-hoc nameserver.
 
 ```bash
-dns q huly.hankin.io                              # system resolver, A record
+dns q huly.hankin.io                              # system resolver, all supported types
 dns q huly.hankin.io -t AAAA                      # specific record type
 dns q huly.hankin.io --server dns1                # configured entry, best transport
 dns q huly.hankin.io --server dns1 --dot          # force DoT

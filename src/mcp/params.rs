@@ -239,7 +239,8 @@ pub struct ResolveParams {
     /// Name to resolve (FQDN).
     pub domain: String,
 
-    /// Record types to look up (default: ["A"]). Standard mnemonics:
+    /// Record types to look up (default: all supported standard types).
+    /// Standard mnemonics:
     /// A, AAAA, CNAME, MX, TXT, NS, SRV, CAA, PTR, SOA, ANY.
     #[serde(default)]
     pub types: Option<Vec<String>>,
