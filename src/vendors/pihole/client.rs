@@ -35,16 +35,10 @@ impl PiholeClient {
     async fn session_id(&self) -> Result<String> {
         let url = format!("{}/api/auth", self.base_url);
         let body = serde_json::json!({ "password": self.password.expose_for_auth() });
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "Pi-hole authentication request failed");
-                Error::Network(e)
-            })?;
+        let resp = self.http.post(&url).json(&body).send().await.map_err(|e| {
+            tracing::warn!(error = %e, "Pi-hole authentication request failed");
+            Error::Network(e)
+        })?;
         let status = resp.status();
         let data: Value = resp.json().await.map_err(|e| {
             if e.is_decode() {
@@ -248,7 +242,10 @@ mod tests {
 
     #[tokio::test]
     async fn success_response_returns_body() {
-        let resp = make_resp(200, json!({"dns": [{"ip": "1.2.3.4", "host": "myhost.local"}]}));
+        let resp = make_resp(
+            200,
+            json!({"dns": [{"ip": "1.2.3.4", "host": "myhost.local"}]}),
+        );
         let val = parse_response(resp).await.unwrap();
         assert_eq!(val["dns"][0]["ip"], "1.2.3.4");
     }

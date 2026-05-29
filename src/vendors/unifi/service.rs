@@ -462,7 +462,10 @@ mod tests {
     fn unrelated_fqdn_is_still_appended_to_zone() {
         // A name that is not under the zone is treated as relative and
         // appended — UniFi has no concept of cross-zone references.
-        assert_eq!(resolve_fqdn("other.net", "example.com"), "other.net.example.com");
+        assert_eq!(
+            resolve_fqdn("other.net", "example.com"),
+            "other.net.example.com"
+        );
     }
 
     // ── add_record rejects unsupported types pre-flight ─────────────────────

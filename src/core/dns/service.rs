@@ -147,13 +147,18 @@ pub trait SettingsRead {
 }
 
 pub trait DnsRead:
-    DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport
-    + LogsRead
+    DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport + LogsRead
 {
 }
 
 impl<T> DnsRead for T where
-    T: DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport
+    T: DnsVendor
+        + ZoneRead
+        + CacheRead
+        + StatsRead
+        + AccessListRead
+        + SettingsRead
+        + ZoneExport
         + LogsRead
 {
 }

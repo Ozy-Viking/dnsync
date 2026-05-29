@@ -4,8 +4,8 @@ use clap::ValueEnum;
 use clap::builder::PossibleValue;
 
 use crate::core::dns::records::{
-    DigestType, DsAlgorithm, FwdProtocol, SshfpAlgorithm, SshfpFingerprintType,
-    TlsaCertUsage, TlsaMatchingType, TlsaSelector,
+    DigestType, DsAlgorithm, FwdProtocol, SshfpAlgorithm, SshfpFingerprintType, TlsaCertUsage,
+    TlsaMatchingType, TlsaSelector,
 };
 use crate::core::dns::responses::ListRecordsResponse;
 

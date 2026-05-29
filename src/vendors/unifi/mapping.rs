@@ -258,9 +258,7 @@ pub fn policy_matches_delete_params(
                 .map(|want| policy.mail_server_domain.as_deref() == Some(want))
                 .unwrap_or(true)
                 && value_field("preference")
-                    .map(|want| {
-                        policy.priority.map(|p| p.to_string()).as_deref() == Some(want)
-                    })
+                    .map(|want| policy.priority.map(|p| p.to_string()).as_deref() == Some(want))
                     .unwrap_or(true)
         }
         UnifiDnsPolicyType::SrvRecord => {
@@ -271,9 +269,7 @@ pub fn policy_matches_delete_params(
                     .map(|want| policy.port.map(|v| v.to_string()).as_deref() == Some(want))
                     .unwrap_or(true)
                 && value_field("priority")
-                    .map(|want| {
-                        policy.priority.map(|v| v.to_string()).as_deref() == Some(want)
-                    })
+                    .map(|want| policy.priority.map(|v| v.to_string()).as_deref() == Some(want))
                     .unwrap_or(true)
                 && value_field("weight")
                     .map(|want| policy.weight.map(|v| v.to_string()).as_deref() == Some(want))
