@@ -65,8 +65,7 @@ pub enum Command {
     Record(RecordCmd),
 
     /// Resolve a name directly against the system, a configured server, or any
-    /// ad-hoc nameserver. Supports DNS, DoT, DoH, and (with `--features doq`)
-    /// DoQ transports.
+    /// ad-hoc nameserver. Supports DNS, DoT, DoH, and DoQ transports.
     #[command(alias = "q")]
     Query(query::QueryArgs),
 

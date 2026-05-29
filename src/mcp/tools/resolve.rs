@@ -31,8 +31,7 @@ pub async fn handle_resolve(
     // aren't covered by per-server access controls; they pass through.
     let requested_servers = effective_server_ids(&p);
     if !requested_servers.is_empty() {
-        let servers =
-            select_query_servers(config, &requested_servers, false).map_err(mcp_err)?;
+        let servers = select_query_servers(config, &requested_servers, false).map_err(mcp_err)?;
         for server in servers {
             let policy = Policy::for_server(server, cli_access, cli_allow_zone).map_err(mcp_err)?;
             policy.check_read().map_err(mcp_err)?;

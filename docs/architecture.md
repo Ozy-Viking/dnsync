@@ -73,9 +73,9 @@ Direct DNS resolution uses a vendor-neutral resolver target model shared by the
 `dns query` CLI path, the `dns_resolve` MCP tool, and endpoint validation.
 
 Supported transport tags are DNS, DoT, DoH, and DoQ. DoQ config always parses
-and round-trips, but the actual DNS-over-QUIC resolver is compiled only with the
-`doq` Cargo feature. Default builds return `unsupported_transport` when asked to
-execute a DoQ query.
+and round-trips, and default builds include the DNS-over-QUIC resolver via the
+`doq` Cargo feature. Custom builds that disable default features and omit `doq`
+return `unsupported_transport` when asked to execute a DoQ query.
 
 ## Vendor Adapter Rules
 
@@ -95,4 +95,3 @@ Vendor-neutral code owns:
 - resolver target construction
 - policy enforcement
 - output formatting
-
