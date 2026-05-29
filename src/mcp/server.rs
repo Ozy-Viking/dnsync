@@ -187,6 +187,16 @@ impl DnsServer {
         })))
     }
 
+    #[tool(description = "Show the local application config (dnsync.toml) in TOML format. \
+    This is the dnsync application config, not remote DNS server settings. \
+    Token values are redacted; token_env references are preserved.")]
+    async fn dns_get_config(&self) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_get_config", "MCP tool invoked");
+        let redacted = self.config.redact();
+        let toml = redacted.render_toml().map_err(mcp_err)?;
+        Ok(crate::mcp::helpers::text_result(toml))
+    }
+
     // ── Zones ─────────────────────────────────────────────────────────────
 
     /// List authoritative zones hosted on the specified DNS server.
@@ -1023,5 +1033,68 @@ impl ServerHandler for DnsServer {
         info.server_info = impl_info;
 
         info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control_plane::config::AppConfig;
+
+    fn make_server(config: AppConfig) -> DnsServer {
+        DnsServer::new(config, vec![], vec![])
+    }
+
+    #[tokio::test]
+    async fn dns_get_config_returns_toml() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [[servers]]
+            id = "primary"
+            vendor = "technitium"
+            token = "supersecret"
+            "#,
+        )
+        .unwrap();
+        let server = make_server(config);
+        let result = server.dns_get_config().await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = result.content[0]
+            .as_text()
+            .expect("expected text content")
+            .text
+            .clone();
+        // Must be parseable TOML
+        let parsed: toml::Value = toml::from_str(&text).expect("output should be valid TOML");
+        // Token must be redacted
+        let token = parsed["servers"][0]["token"].as_str().unwrap();
+        assert_eq!(token, "[redacted]");
+    }
+
+    #[tokio::test]
+    async fn dns_get_config_preserves_token_env() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [[servers]]
+            id = "primary"
+            vendor = "technitium"
+            token_env = "MY_DNS_TOKEN"
+            "#,
+        )
+        .unwrap();
+        let server = make_server(config);
+        let result = server.dns_get_config().await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let text = result.content[0]
+            .as_text()
+            .expect("expected text content")
+            .text
+            .clone();
+        let parsed: toml::Value = toml::from_str(&text).expect("output should be valid TOML");
+        // token_env should be preserved as-is
+        let token_env = parsed["servers"][0]["token_env"].as_str().unwrap();
+        assert_eq!(token_env, "MY_DNS_TOKEN");
+        // token key should not appear (was None)
+        assert!(parsed["servers"][0].get("token").is_none());
     }
 }
