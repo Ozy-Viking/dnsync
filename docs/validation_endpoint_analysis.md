@@ -104,12 +104,13 @@ Defined in `src/core/dns/validation.rs`:
   - `plain_dns_name_server()` (UDP+TCP, port 53)
   - `dot_name_server()` (TLS, port 853)
   - `doh_name_server()` (HTTPS, port 443, path `/dns-query`)
-  - `doq_name_server()` (QUIC, port 853) — available only when compiled with
-    the `doq` Cargo feature; default builds report `unsupported_transport`
+  - `doq_name_server()` (QUIC, port 853) — available with the `doq` Cargo
+    feature, which is enabled in default builds
 - `ValidationReport` types - `disabled()`, `skipped_no_endpoints()`, success/failure reports
 
 Per the project mandate (`agents.md`), all **four** transports — DNS, DoT, DoH,
-and DoQ — are first-class config/CLI tags. DoQ execution is feature-gated.
+and DoQ — are first-class config/CLI tags. DoQ execution is feature-gated and
+enabled by default.
 
 **Key observation:** No CLI/MCP/vendor code calls `HickoryDnsEndpointResolver::query_endpoint()` or related validation functions.
 
@@ -130,7 +131,7 @@ and DoQ — are first-class config/CLI tags. DoQ execution is feature-gated.
 - **DoT**: TLS only, port 853, server name from `tls_server_name` or `address`
 - **DoH**: HTTPS only, port 443, default path `/dns-query`, server name from `tls_server_name` or URL host
 - **DoQ**: QUIC, port 853, server name from `tls_server_name` or `address`;
-  requires `--features doq` to execute
+  included in default builds via the `doq` Cargo feature
 - **Validation timeout**: Defaults to 5000 ms
 
 ### Enabled Flag Behavior

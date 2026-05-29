@@ -138,9 +138,8 @@ mod tests {
     #[test]
     fn cluster_and_member_dedup_to_single_run() {
         let cfg = config();
-        let got =
-            select_query_servers(&cfg, &["home-dns".to_string(), "dns1".to_string()], false)
-                .unwrap();
+        let got = select_query_servers(&cfg, &["home-dns".to_string(), "dns1".to_string()], false)
+            .unwrap();
         assert_eq!(ids(&got), ["dns1", "dns2"]);
     }
 

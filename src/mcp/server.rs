@@ -187,9 +187,11 @@ impl DnsServer {
         })))
     }
 
-    #[tool(description = "Show the local application config (dnsync.toml) in TOML format. \
+    #[tool(
+        description = "Show the local application config (dnsync.toml) in TOML format. \
     This is the dnsync application config, not remote DNS server settings. \
-    Token values are redacted; token_env references are preserved.")]
+    Token values are redacted; token_env references are preserved."
+    )]
     async fn dns_get_config(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_get_config", "MCP tool invoked");
         let redacted = self.config.redact();
@@ -971,8 +973,8 @@ impl DnsServer {
     // ── Direct DNS resolution (mirrors `dns query`) ───────────────────────
 
     /// Resolve a name directly via the system resolver, a configured
-    /// `[[servers]]` entry, or any ad-hoc nameserver. Supports DNS,
-    /// DoT, DoH, and (with the `doq` Cargo feature) DoQ.
+    /// `[[servers]]` entry, a public resolver shortcut, or any ad-hoc
+    /// nameserver. Supports DNS, DoT, DoH, and DoQ.
     ///
     /// Mirrors the `dns query` CLI subcommand and returns the same
     /// stable JSON shape (`query`, `target`, `results` array — one
@@ -983,11 +985,11 @@ impl DnsServer {
     /// transports queried.
     #[tool(
         description = "Resolve a name directly against the system resolver, a configured \
-    `[[servers]]` entry (via `server_id`), or any ad-hoc nameserver (via `at`). Supports DNS, \
-    DoT, DoH, and (with the `doq` build feature) DoQ. When `server_id` is given, transport \
-    selection follows `transports` / `all_transports`; otherwise the scheme on `at` chooses, \
-    or the system resolver is used. Returns the same JSON shape as `dns query --json` — a \
-    `results` array with one entry per transport queried."
+    `[[servers]]` entry (via `server_id`), a public resolver (`public_resolver`: cf/google/quad9/adg), \
+    or any ad-hoc nameserver (via `at`). Supports DNS, DoT, DoH, and DoQ. When `server_id` or \
+    `public_resolver` is given, transport selection follows `transports` / `all_transports`; \
+    otherwise the scheme on `at` chooses, or the system resolver is used. Returns the same JSON \
+    shape as `dns query --json` — a `results` array with one entry per transport queried."
     )]
     async fn dns_resolve(
         &self,

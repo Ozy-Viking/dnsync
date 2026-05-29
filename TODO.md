@@ -61,6 +61,8 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 - [x] Ship the `dns query` (alias `q`) CLI subcommand: system / named /
   ad-hoc targets, DoH bootstrap, dig-style table + `--short` + `--json`,
   fan-out with `--all` and per-transport flags.
+- [x] Add public resolver shortcuts for Cloudflare, Google, Quad9, and
+  AdGuard (`--cf`, `--google`, `--quad9`, `--adg`) across DNS/DoT/DoH/DoQ.
 - [x] Ship the `dns_resolve` MCP tool with the same engine and JSON shape.
 - [x] Document `dns query` in the README (examples + `[servers.doq]`).
 - [x] Shell completion for `--server` on `dns query`; zsh output is patched
@@ -69,6 +71,7 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
   across multiple resolvers (extends the existing `record list --all`
   idea to the query side).
 - [x] Wire DoQ (DNS-over-QUIC, port 853) into the shared resolver layer behind the `doq` Cargo feature.
+- [x] Include DoQ in default Cargo features.
 - [ ] Add end-to-end DoQ validation tests that run when built with `--features doq`.
 
 ## CLI / MCP Parity (bugs, per `agents.md`)

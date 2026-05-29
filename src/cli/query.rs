@@ -1036,9 +1036,7 @@ async fn run_block(
                     }
                 }
             }
-            ValidationTransport::Dns
-            | ValidationTransport::Dot
-            | ValidationTransport::Doq => {
+            ValidationTransport::Dns | ValidationTransport::Dot | ValidationTransport::Doq => {
                 if let Some(ref host) = target.host.clone() {
                     match bootstrap_host(host, target.transport, target.timeout).await {
                         Ok(ip) => target.host = Some(ip),
@@ -1069,9 +1067,10 @@ async fn bootstrap_host(
         return Ok(ip.to_string());
     }
     let resolver = build_system_resolver(timeout)?;
-    let lookup = resolver.lookup_ip(host).await.map_err(|e| {
-        QueryStatus::from(classify_hickory_error(transport, &e.to_string()))
-    })?;
+    let lookup = resolver
+        .lookup_ip(host)
+        .await
+        .map_err(|e| QueryStatus::from(classify_hickory_error(transport, &e.to_string())))?;
     // Prefer IPv4: many container/CI environments have no IPv6 outbound.
     let ips: Vec<std::net::IpAddr> = lookup.iter().collect();
     ips.iter()
@@ -1586,7 +1585,10 @@ fn build_json_value(
             .collect();
         (None, Some(groups))
     } else {
-        (Some(blocks.iter().map(json_result_for_block).collect()), None)
+        (
+            Some(blocks.iter().map(json_result_for_block).collect()),
+            None,
+        )
     };
 
     let out = JsonOutput {
@@ -1732,9 +1734,11 @@ mod tests {
 
     #[test]
     fn parse_record_types_uppercases_and_dedups() {
-        let types =
-            parse_record_types(&["a".to_string(), "AAAA".to_string(), "A".to_string()], false)
-                .unwrap();
+        let types = parse_record_types(
+            &["a".to_string(), "AAAA".to_string(), "A".to_string()],
+            false,
+        )
+        .unwrap();
         assert_eq!(types, vec!["A".to_string(), "AAAA".to_string()]);
     }
 
@@ -1989,18 +1993,8 @@ mod tests {
 
     #[test]
     fn clap_parses_repeated_server() {
-        let args = parse(&[
-            "huly.hankin.io",
-            "--server",
-            "dns1",
-            "--server",
-            "dns2",
-        ])
-        .unwrap();
-        assert_eq!(
-            args.server,
-            vec!["dns1".to_string(), "dns2".to_string()]
-        );
+        let args = parse(&["huly.hankin.io", "--server", "dns1", "--server", "dns2"]).unwrap();
+        assert_eq!(args.server, vec!["dns1".to_string(), "dns2".to_string()]);
     }
 
     #[test]
