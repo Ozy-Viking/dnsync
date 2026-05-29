@@ -1,0 +1,401 @@
+$ORIGIN ruthless.test.
+$TTL 1
+
+@ IN SOA ns1.ruthless.test. hostmaster.ruthless.test. (
+  2026052901 ; serial
+  1          ; refresh
+  1          ; retry
+  604800     ; expire
+  0          ; negative cache TTL
+)
+
+@ IN NS ns1.ruthless.test.
+@ IN NS ns2.ruthless.test.
+
+ns1 IN A    192.0.2.53
+ns1 IN AAAA 2001:db8::53
+ns2 IN A    198.51.100.53
+ns2 IN AAAA 2001:db8:ffff::53
+
+; ===========================================================================
+; 1. CNAME hell
+; Valid zone data, terrible resolver experience.
+; ===========================================================================
+
+self-cname IN CNAME self-cname
+
+cname-loop-a IN CNAME cname-loop-b
+cname-loop-b IN CNAME cname-loop-a
+
+cname-loop-3-a IN CNAME cname-loop-3-b
+cname-loop-3-b IN CNAME cname-loop-3-c
+cname-loop-3-c IN CNAME cname-loop-3-a
+
+cname-loop-branch-a IN CNAME cname-loop-branch-b
+cname-loop-branch-b IN CNAME cname-loop-branch-c
+cname-loop-branch-c IN CNAME cname-loop-branch-d
+cname-loop-branch-d IN CNAME cname-loop-branch-b
+
+root-cname IN CNAME .
+
+; Looks external, but is relative, so it becomes:
+; looks-external.ruthless.test. CNAME api.github.com.ruthless.test.
+looks-external IN CNAME api.github.com
+
+; Actually external.
+real-external IN CNAME api.github.com.
+
+; CNAME target is the literal wildcard owner below.
+alias-to-literal-wildcard IN CNAME *.literal-wildcard-target
+*.literal-wildcard-target IN A 192.0.2.210
+
+; ===========================================================================
+; 2. Long CNAME chain with a loop at the end
+; Tests max-hop limits and cycle detection together.
+; ===========================================================================
+
+long00 IN CNAME long01
+long01 IN CNAME long02
+long02 IN CNAME long03
+long03 IN CNAME long04
+long04 IN CNAME long05
+long05 IN CNAME long06
+long06 IN CNAME long07
+long07 IN CNAME long08
+long08 IN CNAME long09
+long09 IN CNAME long10
+long10 IN CNAME long11
+long11 IN CNAME long12
+long12 IN CNAME long13
+long13 IN CNAME long14
+long14 IN CNAME long15
+long15 IN CNAME long16
+long16 IN CNAME long17
+long17 IN CNAME long18
+long18 IN CNAME long19
+long19 IN CNAME long20
+long20 IN CNAME long21
+long21 IN CNAME long22
+long22 IN CNAME long23
+long23 IN CNAME long24
+long24 IN CNAME long25
+long25 IN CNAME long26
+long26 IN CNAME long27
+long27 IN CNAME long28
+long28 IN CNAME long29
+long29 IN CNAME long30
+long30 IN CNAME long31
+long31 IN CNAME long32
+long32 IN CNAME long33
+long33 IN CNAME long34
+long34 IN CNAME long35
+long35 IN CNAME long36
+long36 IN CNAME long37
+long37 IN CNAME long38
+long38 IN CNAME long39
+long39 IN CNAME long40
+long40 IN CNAME long41
+long41 IN CNAME long42
+long42 IN CNAME long43
+long43 IN CNAME long44
+long44 IN CNAME long45
+long45 IN CNAME long46
+long46 IN CNAME long47
+long47 IN CNAME long48
+long48 IN CNAME long49
+long49 IN CNAME long50
+long50 IN CNAME long47
+
+; ===========================================================================
+; 3. DNAME trouble
+; DNAME creates synthesised CNAME behaviour below the owner.
+; ===========================================================================
+
+dname-loop-a IN DNAME dname-loop-b
+dname-loop-b IN DNAME dname-loop-a
+
+dname-chain-a IN DNAME dname-chain-b
+dname-chain-b IN DNAME dname-chain-c
+dname-chain-c IN DNAME dname-chain-final
+
+leaf.dname-chain-final IN A 192.0.2.61
+
+alias-to-dname-child IN CNAME leaf.dname-chain-a
+
+*.wild-dname IN DNAME wild-dname-target
+leaf.wild-dname-target IN A 192.0.2.62
+
+; ===========================================================================
+; 4. Wildcards, closest-encloser pain, and explicit overrides
+; ===========================================================================
+
+*.wild IN A 192.0.2.100
+
+explicit.wild IN A 192.0.2.101
+
+*.explicit.wild IN A 192.0.2.102
+
+deep.explicit.wild IN A 192.0.2.103
+
+*.*.doublewild IN TXT "leftmost wildcard with literal asterisk as next label"
+
+*.mxwild IN MX 10 mail.mxwild
+mail.mxwild IN A 192.0.2.104
+
+*.cnamewild IN CNAME wildcard-cname-target
+wildcard-cname-target IN A 192.0.2.105
+
+*.caawild IN CAA 0 issue "letsencrypt.org"
+
+; ===========================================================================
+; 5. Empty non-terminals
+; These create ancestor names that exist but have no direct RRsets.
+; ===========================================================================
+
+leaf.a.b.c.d.e.empty IN A 192.0.2.110
+another.leaf.a.b.c.d.e.empty IN AAAA 2001:db8::110
+txt.leaf.a.b.c.d.e.empty IN TXT "creates many empty non-terminals"
+
+; ===========================================================================
+; 6. Name canonicalisation and hostname-vs-DNS-name edge cases
+; ===========================================================================
+
+MiXeD-CaSe IN A 192.0.2.120
+mixed-case IN A 192.0.2.121
+
+CaseCollision IN A 192.0.2.122
+casecollision IN A 192.0.2.123
+
+_under_score IN A 192.0.2.124
+-leading-hyphen IN A 192.0.2.125
+trailing-hyphen- IN A 192.0.2.126
+123numeric IN A 192.0.2.127
+
+literal\.dot IN TXT "the owner label contains an escaped dot"
+space\032label IN TXT "the owner label contains an escaped space"
+semi\;colon IN TXT "the owner label contains an escaped semicolon"
+
+xn--bcher-kva IN A 192.0.2.128
+
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa IN TXT "63-octet label"
+
+; Maximum length-ish name under ruthless.test.
+; Three 63-octet labels plus one 47-octet label before the origin.
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddd IN A 192.0.2.129
+
+; ===========================================================================
+; 7. RRset bloat and duplicate handling
+; ===========================================================================
+
+fat-a IN A 192.0.2.1
+fat-a IN A 192.0.2.2
+fat-a IN A 192.0.2.3
+fat-a IN A 192.0.2.4
+fat-a IN A 192.0.2.5
+fat-a IN A 192.0.2.6
+fat-a IN A 192.0.2.7
+fat-a IN A 192.0.2.8
+fat-a IN A 192.0.2.9
+fat-a IN A 192.0.2.10
+fat-a IN A 192.0.2.11
+fat-a IN A 192.0.2.12
+fat-a IN A 192.0.2.13
+fat-a IN A 192.0.2.14
+fat-a IN A 192.0.2.15
+fat-a IN A 192.0.2.16
+
+duplicate-a IN A 192.0.2.200
+duplicate-a IN A 192.0.2.200
+duplicate-a IN A 192.0.2.201
+
+fat-aaaa IN AAAA 2001:db8::1
+fat-aaaa IN AAAA 2001:db8::2
+fat-aaaa IN AAAA 2001:db8::3
+fat-aaaa IN AAAA 2001:db8::4
+fat-aaaa IN AAAA 2001:db8::5
+fat-aaaa IN AAAA 2001:db8::6
+fat-aaaa IN AAAA 2001:db8::7
+fat-aaaa IN AAAA 2001:db8::8
+
+; ===========================================================================
+; 8. TTL extremes
+; ===========================================================================
+
+zero-ttl 0 IN A 192.0.2.130
+one-second 1 IN A 192.0.2.131
+huge-ttl 2147483647 IN A 192.0.2.132
+
+; ===========================================================================
+; 9. Special-use and policy-hostile addresses
+; Syntactically valid, but should probably warn in many deployment contexts.
+; ===========================================================================
+
+zero-v4 IN A 0.0.0.0
+broadcast-v4 IN A 255.255.255.255
+loopback-v4 IN A 127.0.0.1
+private-v4-10 IN A 10.0.0.1
+private-v4-172 IN A 172.16.0.1
+private-v4-192 IN A 192.168.0.1
+linklocal-v4 IN A 169.254.1.1
+carrier-nat-v4 IN A 100.64.0.1
+documentation-v4 IN A 192.0.2.250
+
+unspecified-v6 IN AAAA ::
+loopback-v6 IN AAAA ::1
+ula-v6 IN AAAA fc00::1
+linklocal-v6 IN AAAA fe80::1
+mapped-v6 IN AAAA ::ffff:192.0.2.1
+documentation-v6 IN AAAA 2001:db8::250
+
+; ===========================================================================
+; 10. Mail records that annoy validators
+; ===========================================================================
+
+@ IN MX 0 .
+
+mail IN A 192.0.2.140
+
+mx-many IN MX 0 mail
+mx-many IN MX 0 mail2
+mx-many IN MX 10 mail3
+mx-many IN MX 65535 mail4
+
+mail2 IN A 192.0.2.141
+mail3 IN A 192.0.2.142
+mail4 IN A 192.0.2.143
+
+mx-to-cname IN MX 10 mail-alias
+mail-alias IN CNAME mail-real
+mail-real IN A 192.0.2.144
+
+; ===========================================================================
+; 11. NS delegation and glue weirdness
+; ===========================================================================
+
+delegated IN NS ns1.delegated
+delegated IN NS ns2.delegated
+delegated IN DS 12345 13 2 0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF
+
+ns1.delegated IN A 192.0.2.150
+ns2.delegated IN AAAA 2001:db8::150
+
+child-with-cname-ns IN NS ns-cname.child-with-cname-ns
+ns-cname.child-with-cname-ns IN CNAME ns-real.child-with-cname-ns
+ns-real.child-with-cname-ns IN A 192.0.2.151
+
+; ===========================================================================
+; 12. SRV, URI, NAPTR, PTR, RP, HINFO
+; Old-ish but legal RR types that many simple DNS tools mishandle.
+; ===========================================================================
+
+_sip._tcp IN SRV 10 20 5060 sip01
+_sip._tcp IN SRV 10 20 5060 sip02
+_sip._tcp IN SRV 20 0 5061 .
+
+sip01 IN A 192.0.2.160
+sip02 IN AAAA 2001:db8::160
+
+srv-to-cname IN SRV 0 0 443 srv-alias
+srv-alias IN CNAME srv-real
+srv-real IN A 192.0.2.161
+
+_http._tcp IN URI 10 1 "https://www.ruthless.test/path?query=value#fragment"
+
+naptr IN NAPTR 100 10 "U" "E2U+sip" "!^.*$!sip:info@ruthless.test!" .
+
+ptrish IN PTR target.ptrish.ruthless.test.
+target.ptrish IN A 192.0.2.162
+
+rp-test IN RP hostmaster.ruthless.test. rp-txt.ruthless.test.
+rp-txt IN TXT "responsible person TXT target"
+
+hinfo-test IN HINFO "DefinitelyNotARealCPU" "DefinitelyNotARealOS"
+
+; ===========================================================================
+; 13. TXT record torture
+; Each individual quoted string is under 255 bytes, but the RR is large.
+; ===========================================================================
+
+empty-txt IN TXT ""
+
+txt-bloat IN TXT (
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+)
+
+spf-style IN TXT (
+  "v=spf1 "
+  "include:one.ruthless.test "
+  "include:two.ruthless.test "
+  "include:three.ruthless.test "
+  "include:four.ruthless.test "
+  "include:five.ruthless.test "
+  "-all"
+)
+
+txt-escapes IN TXT "tabs\009spaces\032quote\034backslash\092"
+
+; ===========================================================================
+; 14. CAA weirdness
+; ===========================================================================
+
+caa-open IN CAA 0 issue ";"
+caa-none IN CAA 0 issuewild ";"
+
+caa-many IN CAA 0 issue "letsencrypt.org"
+caa-many IN CAA 0 issue "digicert.com"
+caa-many IN CAA 0 issuewild ";"
+caa-many IN CAA 0 iodef "mailto:security@ruthless.test"
+
+caa-critical-unknown IN CAA 128 unknown "critical unknown property"
+
+; ===========================================================================
+; 15. SSHFP and TLSA
+; Valid syntax, intentionally fake material.
+; ===========================================================================
+
+sshfp-test IN SSHFP 4 2 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+_443._tcp.tlsa-test IN TLSA 3 1 1 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+; ===========================================================================
+; 16. Origin switching
+; Tests whether importer/exporter preserves or canonicalises names correctly.
+; ===========================================================================
+
+$ORIGIN sub.ruthless.test.
+
+@ IN A 192.0.2.170
+www IN A 192.0.2.171
+relative-cname IN CNAME www
+absolute-cname IN CNAME www.ruthless.test.
+
+nested.deep IN TXT "this is nested.deep.sub.ruthless.test"
+
+$ORIGIN deeper.sub.ruthless.test.
+
+@ IN TXT "apex of deeper.sub.ruthless.test"
+same-name IN A 192.0.2.172
+same-name IN AAAA 2001:db8::172
+
+$ORIGIN ruthless.test.
+
+; ===========================================================================
+; 17. Apex extras
+; Valid at apex alongside SOA/NS.
+; ===========================================================================
+
+@ IN TXT "apex txt"
+@ IN CAA 0 issue "letsencrypt.org"
+@ IN CAA 0 iodef "mailto:security@ruthless.test"
+
+; ===========================================================================
+; 18. Final trap: valid leaf target after chaos
+; Good control case for ensuring the resolver still succeeds normally.
+; ===========================================================================
+
+boring-control IN A 192.0.2.254

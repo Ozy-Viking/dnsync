@@ -1,0 +1,210 @@
+$ORIGIN worstcase.test.
+$TTL 60
+
+@ IN SOA ns1.worstcase.test. hostmaster.worstcase.test. (
+  2026052901 ; serial
+  60         ; refresh
+  30         ; retry
+  120        ; expire
+  0          ; negative cache TTL
+)
+
+@    IN NS ns1.worstcase.test.
+ns1  IN A 192.0.2.53
+ns1  IN AAAA 2001:db8::53
+
+; ---------------------------------------------------------------------------
+; 1. Direct CNAME loops
+; ---------------------------------------------------------------------------
+
+cname-loop-a IN CNAME cname-loop-b
+cname-loop-b IN CNAME cname-loop-a
+
+self-cname IN CNAME self-cname
+
+tri-loop-a IN CNAME tri-loop-b
+tri-loop-b IN CNAME tri-loop-c
+tri-loop-c IN CNAME tri-loop-a
+
+; ---------------------------------------------------------------------------
+; 2. Long CNAME chain
+; Good for testing max-follow depth, recursion limits, cycle detection, timeout.
+; ---------------------------------------------------------------------------
+
+chain00 IN CNAME chain01
+chain01 IN CNAME chain02
+chain02 IN CNAME chain03
+chain03 IN CNAME chain04
+chain04 IN CNAME chain05
+chain05 IN CNAME chain06
+chain06 IN CNAME chain07
+chain07 IN CNAME chain08
+chain08 IN CNAME chain09
+chain09 IN CNAME chain10
+chain10 IN CNAME chain11
+chain11 IN CNAME chain12
+chain12 IN CNAME chain13
+chain13 IN CNAME chain14
+chain14 IN CNAME chain15
+chain15 IN CNAME chain16
+chain16 IN CNAME chain17
+chain17 IN CNAME chain18
+chain18 IN CNAME chain19
+chain19 IN CNAME chain20
+chain20 IN CNAME chain21
+chain21 IN CNAME chain22
+chain22 IN CNAME chain23
+chain23 IN CNAME chain24
+chain24 IN CNAME chain25
+chain25 IN A 192.0.2.25
+
+; ---------------------------------------------------------------------------
+; 3. DNAME loops
+; DNAME can create synthesised CNAME-like behaviour.
+; ---------------------------------------------------------------------------
+
+dname-loop-a IN DNAME dname-loop-b
+dname-loop-b IN DNAME dname-loop-a
+
+; ---------------------------------------------------------------------------
+; 4. Wildcard edge cases
+; ---------------------------------------------------------------------------
+
+*.wild IN CNAME wild-target
+wild-target IN A 192.0.2.200
+
+specific.wild IN A 192.0.2.201
+
+*.deep.wild IN DNAME dname-target
+dname-target IN A 192.0.2.202
+
+; ---------------------------------------------------------------------------
+; 5. MX / NS / SRV targets that are CNAMEs
+; Many systems should warn on this even if the zone parser accepts it.
+; ---------------------------------------------------------------------------
+
+mx-to-cname IN MX 10 mail-alias
+mail-alias IN CNAME real-mail
+real-mail IN A 192.0.2.10
+
+child IN NS ns-alias
+ns-alias IN CNAME real-ns
+real-ns IN A 192.0.2.11
+
+_sip._tcp IN SRV 10 20 5060 sip-target
+sip-target IN A 192.0.2.12
+
+srv-to-cname IN SRV 0 0 443 srv-alias
+srv-alias IN CNAME srv-real
+srv-real IN A 192.0.2.13
+
+; ---------------------------------------------------------------------------
+; 6. Weird-but-syntactically-possible names
+; Useful for hostname-vs-DNS-name validation.
+; ---------------------------------------------------------------------------
+
+bad_host_with_underscore IN A 192.0.2.30
+MiXeD-CaSe-Name IN A 192.0.2.31
+mixed-case-name IN A 192.0.2.32
+
+; Case-insensitive duplicate-ish names.
+CaseTest IN A 192.0.2.33
+casetest IN A 192.0.2.34
+
+; ---------------------------------------------------------------------------
+; 7. Duplicate records / RRset normalisation
+; ---------------------------------------------------------------------------
+
+duplicate-a IN A 192.0.2.40
+duplicate-a IN A 192.0.2.40
+duplicate-a IN A 192.0.2.41
+
+multi-aaaa IN AAAA 2001:db8::40
+multi-aaaa IN AAAA 2001:db8::41
+multi-aaaa IN AAAA 2001:db8::42
+
+; ---------------------------------------------------------------------------
+; 8. TTL extremes
+; ---------------------------------------------------------------------------
+
+zero-ttl 0 IN A 192.0.2.50
+high-ttl 2147483647 IN A 192.0.2.51
+
+; ---------------------------------------------------------------------------
+; 9. Bogon, local, documentation, loopback, and special-use addresses
+; Good for policy validation.
+; ---------------------------------------------------------------------------
+
+zero-v4 IN A 0.0.0.0
+broadcast-v4 IN A 255.255.255.255
+loopback-v4 IN A 127.0.0.1
+private-v4 IN A 10.0.0.1
+linklocal-v4 IN A 169.254.1.1
+documentation-v4 IN A 192.0.2.123
+
+unspecified-v6 IN AAAA ::
+loopback-v6 IN AAAA ::1
+ula-v6 IN AAAA fc00::1
+documentation-v6 IN AAAA 2001:db8::123
+
+; ---------------------------------------------------------------------------
+; 10. Large TXT record with multiple strings
+; Each quoted string must stay under 255 bytes.
+; ---------------------------------------------------------------------------
+
+txt-bloat IN TXT (
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+)
+
+; ---------------------------------------------------------------------------
+; 11. Null MX / empty service target
+; These are valid but often mishandled.
+; ---------------------------------------------------------------------------
+
+nomail IN MX 0 .
+no-service IN SRV 0 0 0 .
+
+; ---------------------------------------------------------------------------
+; 12. Conflicting CAA policy shape
+; Not necessarily invalid, but useful for validation/display logic.
+; ---------------------------------------------------------------------------
+
+caa-conflict IN CAA 0 issue "letsencrypt.org"
+caa-conflict IN CAA 0 issue "digicert.com"
+caa-conflict IN CAA 0 issuewild ";"
+
+; ---------------------------------------------------------------------------
+; 13. Maximum-length owner name test
+; This relative owner plus ".worstcase.test." reaches the DNS wire-name limit.
+; Labels are 63, 63, 63, and 46 octets before the origin.
+; ---------------------------------------------------------------------------
+
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddd IN A 192.0.2.60
+
+; ---------------------------------------------------------------------------
+; 14. Intentionally invalid cases
+; Keep these commented unless you specifically want parser rejection tests.
+; ---------------------------------------------------------------------------
+
+; Apex CNAME conflicts with SOA and NS.
+; @ IN CNAME somewhere-else.worstcase.test.
+
+; CNAME owner with other data.
+; cname-with-a IN CNAME real-target
+; cname-with-a IN A 192.0.2.70
+
+; Multiple CNAMEs at the same owner.
+; double-cname IN CNAME one-target
+; double-cname IN CNAME two-target
+
+; Invalid IPv4 address.
+; invalid-ip IN A 999.999.999.999
+
+; Negative TTL.
+; negative-ttl -1 IN A 192.0.2.80
+
+; Invalid MX priority.
+; invalid-mx IN MX -10 mail.worstcase.test.
