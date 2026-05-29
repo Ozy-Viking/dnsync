@@ -11,14 +11,15 @@ use crate::{
     control_plane::{
         config::AppConfig,
         policy::{Policy, PolicyRule},
+        transfer,
     },
     mcp::{
         helpers::mcp_err,
         params::*,
         tools::{
-            access_lists, cache as cache_tools, records as record_tools,
+            access_lists, cache as cache_tools, logs as logs_tools, records as record_tools,
             resolve as resolve_tools, settings as settings_tools, stats as stats_tools,
-            zones as zone_tools,
+            sync as sync_tools, zones as zone_tools,
         },
     },
     vendors::runtime::VendorClient,
@@ -53,7 +54,11 @@ impl DnsServer {
     /// let cli_allow_zone = Vec::<String>::new();
     /// let server = DnsServer::new(config, cli_access, cli_allow_zone);
     /// ```
-    pub fn new(config: AppConfig, cli_access: Vec<PolicyRule>, cli_allow_zone: Vec<String>) -> Self {
+    pub fn new(
+        config: AppConfig,
+        cli_access: Vec<PolicyRule>,
+        cli_allow_zone: Vec<String>,
+    ) -> Self {
         let startup_info = if config.servers.is_empty() {
             " No DNS servers configured. Run `dns config add` to add one, then restart the MCP server.".to_string()
         } else {
@@ -101,7 +106,10 @@ impl DnsServer {
     /// // let srv = DnsServer::new(app_config, vec![], vec![]);
     /// // let (client, policy) = srv.resolve_server("primary")?;
     /// ```
-    fn resolve_server(&self, server_id: &str) -> crate::core::error::Result<(VendorClient, Policy)> {
+    fn resolve_server(
+        &self,
+        server_id: &str,
+    ) -> crate::core::error::Result<(VendorClient, Policy)> {
         let server = self
             .config
             .servers
@@ -115,6 +123,19 @@ impl DnsServer {
         let client = VendorClient::from_server(server)?;
         let policy = Policy::for_server(server, &self.cli_access, &self.cli_allow_zone)?;
         Ok((client, policy))
+    }
+
+    fn show_settings_secrets(&self, server_id: &str) -> crate::core::error::Result<bool> {
+        self.config
+            .servers
+            .iter()
+            .find(|s| s.id.eq_ignore_ascii_case(server_id))
+            .map(|server| server.mcp.show_settings_secrets)
+            .ok_or_else(|| {
+                crate::core::error::Error::config(format!(
+                    "no server named '{server_id}' — call dns_list_servers to see available IDs"
+                ))
+            })
     }
 }
 
@@ -142,11 +163,9 @@ impl DnsServer {
     ///
     /// assert!(expected_shape.get("servers").is_some());
     /// ```
-    #[tool(
-    description = "List all DNS servers defined in the config file. \
+    #[tool(description = "List all DNS servers defined in the config file. \
     Shows each server's ID, vendor, and base URL. \
-    Call this first to discover server IDs — pass `server_id` to every other tool."
-    )]
+    Call this first to discover server IDs — pass `server_id` to every other tool.")]
     async fn dns_list_servers(&self) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_servers", "MCP tool invoked");
 
@@ -188,8 +207,10 @@ impl DnsServer {
     /// # Ok(())
     /// # }
     /// ```
-    #[tool(description = "List all authoritative zones hosted on the DNS server. \
-    Use `server_id` from dns_list_servers.")]
+    #[tool(
+        description = "List all authoritative zones hosted on the DNS server. \
+    Use `server_id` from dns_list_servers."
+    )]
     async fn dns_list_zones(
         &self,
         Parameters(p): Parameters<ListZonesParams>,
@@ -226,8 +247,10 @@ impl DnsServer {
     /// # Ok(())
     /// # }
     /// ```
-    #[tool(description = "Create a new DNS zone. Types: Primary, Secondary, Stub, Forwarder. \
-    Use `server_id` from dns_list_servers.")]
+    #[tool(
+        description = "Create a new DNS zone. Types: Primary, Secondary, Stub, Forwarder. \
+    Use `server_id` from dns_list_servers."
+    )]
     async fn dns_create_zone(
         &self,
         Parameters(p): Parameters<CreateZoneParams>,
@@ -263,8 +286,10 @@ impl DnsServer {
     /// # Ok(())
     /// # }
     /// ```
-    #[tool(description = "Delete a DNS zone. This is destructive and cannot be undone. \
-    Use `server_id` from dns_list_servers.")]
+    #[tool(
+        description = "Delete a DNS zone. This is destructive and cannot be undone. \
+    Use `server_id` from dns_list_servers."
+    )]
     async fn dns_delete_zone(
         &self,
         Parameters(p): Parameters<ZoneParams>,
@@ -341,7 +366,7 @@ impl DnsServer {
     /// let _res = tokio::runtime::Runtime::new().unwrap().block_on(async { srv.dns_import_zone_file(Parameters(params)).await });
     /// ```
     #[tool(
-    description = "Import a zone file (RFC 1035 format) into an existing zone. \
+        description = "Import a zone file (RFC 1035 format) into an existing zone. \
     Pass the full zone file text in `content`. Use `overwrite_zone: true` for a clean \
     replace that deletes all existing records first. \
     Use `server_id` from dns_list_servers."
@@ -375,7 +400,7 @@ impl DnsServer {
     /// # }
     /// ```
     #[tool(
-    description = "Export a DNS zone as a BIND-format (RFC 1035) zone file. \
+        description = "Export a DNS zone as a BIND-format (RFC 1035) zone file. \
     Returns the full zone file text, which can be saved to disk or imported into another DNS provider. \
     Use `server_id` from dns_list_servers."
     )]
@@ -387,6 +412,41 @@ impl DnsServer {
         tracing::debug!(zone = %p.zone, "tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_export_zone_file(&client, &policy, p).await
+    }
+
+    #[tool(description = "Copy a zone from one configured server to another. \
+    Reads from `from`, writes to `to`, and respects each server's MCP permissions and allowed zones.")]
+    async fn dns_transfer_zone(
+        &self,
+        Parameters(p): Parameters<TransferZoneParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_transfer_zone", "MCP tool invoked");
+        let (_, from_policy) = self.resolve_server(&p.from).map_err(mcp_err)?;
+        let (_, to_policy) = self.resolve_server(&p.to).map_err(mcp_err)?;
+        let check = from_policy
+            .check_read()
+            .and(from_policy.check_zone(&p.zone))
+            .and(to_policy.check_write())
+            .and(to_policy.check_zone(&p.zone));
+        Ok(
+            crate::mcp::helpers::run_json("dns_transfer_zone", check, async move {
+                let result = transfer::transfer_zone(
+                    Some(&self.config),
+                    &p.zone,
+                    &p.from,
+                    &p.to,
+                    p.overwrite,
+                    p.overwrite_zone,
+                )
+                .await?;
+                serde_json::to_value(result).map_err(|e| {
+                    crate::core::error::Error::parse(format!(
+                        "could not serialise zone transfer result: {e}"
+                    ))
+                })
+            })
+            .await,
+        )
     }
 
     // ── Records ───────────────────────────────────────────────────────────
@@ -406,7 +466,7 @@ impl DnsServer {
     /// // let result = srv.dns_list_records(Parameters(params)).await?;
     /// ```
     #[tool(
-    description = "List all DNS records for a domain. Returns typed records including writable types (A, AAAA, MX, etc.) and read-only DNSSEC types (DNSKEY, RRSIG, NSEC, NSEC3). \
+        description = "List all DNS records for a domain. Returns typed records including writable types (A, AAAA, MX, etc.) and read-only DNSSEC types (DNSKEY, RRSIG, NSEC, NSEC3). \
     Use `server_id` from dns_list_servers."
     )]
     async fn dns_list_records(
@@ -414,7 +474,7 @@ impl DnsServer {
         Parameters(p): Parameters<ListRecordsParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_records", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, zone = ?p.zone, "tool invoked");
+        tracing::debug!(domain = ?p.domain, zone = ?p.zone, "tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         record_tools::handle_list_records(&client, &policy, p).await
     }
@@ -441,7 +501,7 @@ impl DnsServer {
     /// # }
     /// ```
     #[tool(
-    description = "Add a DNS record. The `record` field is a typed union: {\"type\":\"A\",\"ip\":\"1.2.3.4\"}, {\"type\":\"MX\",\"exchange\":\"mail.example.com\",\"preference\":10}, {\"type\":\"TXT\",\"text\":\"...\"}, etc. \
+        description = "Add a DNS record. The `record` field is a typed union: {\"type\":\"A\",\"ip\":\"1.2.3.4\"}, {\"type\":\"MX\",\"exchange\":\"mail.example.com\",\"preference\":10}, {\"type\":\"TXT\",\"text\":\"...\"}, etc. \
     Use `server_id` from dns_list_servers."
     )]
     async fn dns_add_record(
@@ -477,7 +537,7 @@ impl DnsServer {
     /// # }
     /// ```
     #[tool(
-    description = "Delete DNS record(s). Only `type` is required \u{2014} omitting value fields \
+        description = "Delete DNS record(s). Only `type` is required \u{2014} omitting value fields \
     deletes ALL records of that type for the domain. \
     e.g. {\"type\":\"A\"} deletes all A records; {\"type\":\"A\",\"ipAddress\":\"1.2.3.4\"} deletes one specific record. \
     Use `server_id` from dns_list_servers."
@@ -513,8 +573,10 @@ impl DnsServer {
     /// // let params = Parameters(DomainParams { server_id: "primary".into(), domain: "".into() });
     /// // let result = dns_server.dns_list_cache(params).await?;
     /// ```
-    #[tool(description = "Browse the DNS cache. Pass an empty string for domain to list the root. \
-    Use `server_id` from dns_list_servers.")]
+    #[tool(
+        description = "Browse the DNS cache. Pass an empty string for domain to list the root. \
+    Use `server_id` from dns_list_servers."
+    )]
     async fn dns_list_cache(
         &self,
         Parameters(p): Parameters<DomainParams>,
@@ -578,8 +640,10 @@ impl DnsServer {
     /// # Ok(())
     /// # }
     /// ```
-    #[tool(description = "Flush the entire DNS cache, forcing all records to be resolved fresh. \
-    Use `server_id` from dns_list_servers.")]
+    #[tool(
+        description = "Flush the entire DNS cache, forcing all records to be resolved fresh. \
+    Use `server_id` from dns_list_servers."
+    )]
     async fn dns_flush_cache(
         &self,
         Parameters(p): Parameters<ServerScopeParams>,
@@ -622,7 +686,7 @@ impl DnsServer {
     /// # }
     /// ```
     #[tool(
-    description = "Get dashboard statistics. stats_type: LastHour, LastDay, LastWeek, LastMonth, LastYear. \
+        description = "Get dashboard statistics. stats_type: LastHour, LastDay, LastWeek, LastMonth, LastYear. \
     Use `server_id` from dns_list_servers."
     )]
     async fn dns_get_stats(
@@ -686,8 +750,10 @@ impl DnsServer {
     /// assert!(res.is_ok());
     /// # }
     /// ```
-    #[tool(description = "Block a domain, causing the DNS server to refuse to resolve it. \
-    Use `server_id` from dns_list_servers.")]
+    #[tool(
+        description = "Block a domain, causing the DNS server to refuse to resolve it. \
+    Use `server_id` from dns_list_servers."
+    )]
     async fn dns_add_blocked_zone(
         &self,
         Parameters(p): Parameters<DomainParams>,
@@ -768,8 +834,10 @@ impl DnsServer {
     /// let params = DomainParams { server_id: "prod".into(), domain: "example.com".into() };
     /// let result = dns_server.dns_add_allowed_zone(Parameters(params)).await?;
     /// ```
-    #[tool(description = "Whitelist a domain, allowing it even if it appears on a block list. \
-    Use `server_id` from dns_list_servers.")]
+    #[tool(
+        description = "Whitelist a domain, allowing it even if it appears on a block list. \
+    Use `server_id` from dns_list_servers."
+    )]
     async fn dns_add_allowed_zone(
         &self,
         Parameters(p): Parameters<DomainParams>,
@@ -833,7 +901,61 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_get_settings", "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
-        settings_tools::handle_get_settings(&client, &policy).await
+        let show_secrets = self.show_settings_secrets(&p.server_id).map_err(mcp_err)?;
+        settings_tools::handle_get_settings(&client, &policy, show_secrets).await
+    }
+
+    // ── Logs ──────────────────────────────────────────────────────────────
+
+    /// Retrieve DNS server logs from the specified configured backend.
+    #[tool(
+        description = "Get DNS server logs. Use `server_id` from dns_list_servers. \
+    Optional filters: lines, start, end, and level."
+    )]
+    async fn dns_logs(
+        &self,
+        Parameters(p): Parameters<LogsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_logs", "MCP tool invoked");
+        let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
+        logs_tools::handle_logs(&client, &policy, p).await
+    }
+
+    // ── Sync ──────────────────────────────────────────────────────────────
+
+    #[tool(description = "Sync records between two configured servers. \
+    Dry-run by default; set `apply` to true to write changes.")]
+    async fn dns_sync(
+        &self,
+        Parameters(p): Parameters<SyncParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_sync", "MCP tool invoked");
+        let profile = p.profile.as_deref().and_then(|name| {
+            self.config
+                .sync
+                .iter()
+                .find(|profile| profile.name.eq_ignore_ascii_case(name))
+        });
+        let from_id = p
+            .from
+            .as_deref()
+            .or_else(|| profile.map(|profile| profile.from.as_str()))
+            .ok_or_else(|| {
+                mcp_err(crate::core::error::Error::parse(
+                    "sync requires a source server: name a profile or pass from",
+                ))
+            })?;
+        let to_id =
+            p.to.as_deref()
+                .or_else(|| profile.map(|profile| profile.to.as_str()))
+                .ok_or_else(|| {
+                    mcp_err(crate::core::error::Error::parse(
+                        "sync requires a destination server: name a profile or pass to",
+                    ))
+                })?;
+        let (_, from_policy) = self.resolve_server(from_id).map_err(mcp_err)?;
+        let (_, to_policy) = self.resolve_server(to_id).map_err(mcp_err)?;
+        sync_tools::handle_sync(&self.config, &from_policy, &to_policy, p).await
     }
 
     // ── Direct DNS resolution (mirrors `dns query`) ───────────────────────
@@ -849,12 +971,14 @@ impl DnsServer {
     /// every requested block in precedence order doh → dot → dns →
     /// doq; the response's `results` length reflects the actual
     /// transports queried.
-    #[tool(description = "Resolve a name directly against the system resolver, a configured \
+    #[tool(
+        description = "Resolve a name directly against the system resolver, a configured \
     `[[servers]]` entry (via `server_id`), or any ad-hoc nameserver (via `at`). Supports DNS, \
     DoT, DoH, and (with the `doq` build feature) DoQ. When `server_id` is given, transport \
     selection follows `transports` / `all_transports`; otherwise the scheme on `at` chooses, \
     or the system resolver is used. Returns the same JSON shape as `dns query --json` — a \
-    `results` array with one entry per transport queried.")]
+    `results` array with one entry per transport queried."
+    )]
     async fn dns_resolve(
         &self,
         Parameters(p): Parameters<ResolveParams>,

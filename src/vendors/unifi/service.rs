@@ -17,6 +17,7 @@ use tracing::instrument;
 use crate::control_plane::config::VendorKind;
 use crate::core::dns::capabilities::VendorCapabilities;
 use crate::core::dns::logs::{LogLine, LogsOptions, LogsRead};
+use crate::core::dns::names::domain_matches_zone;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
 use crate::core::dns::service::{
@@ -27,8 +28,7 @@ use crate::core::error::{Error, Result};
 
 use super::client::UnifiClient;
 use super::mapping::{
-    domain_matches_zone, policy_matches_delete_params, policy_to_zone_record,
-    record_data_to_unifi_body,
+    policy_matches_delete_params, policy_to_zone_record, record_data_to_unifi_body,
 };
 
 // ─── DnsVendor ────────────────────────────────────────────────────────────────
@@ -462,7 +462,10 @@ mod tests {
     fn unrelated_fqdn_is_still_appended_to_zone() {
         // A name that is not under the zone is treated as relative and
         // appended — UniFi has no concept of cross-zone references.
-        assert_eq!(resolve_fqdn("other.net", "example.com"), "other.net.example.com");
+        assert_eq!(
+            resolve_fqdn("other.net", "example.com"),
+            "other.net.example.com"
+        );
     }
 
     // ── add_record rejects unsupported types pre-flight ─────────────────────

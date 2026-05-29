@@ -6,25 +6,7 @@
 
 use serde_json::Value;
 
-use crate::core::dns::{records::RecordData, responses::ZoneRecord};
-
-/// Strip `.{zone_name}` suffix from a fully qualified domain name.
-/// Returns `"@"` for the zone apex itself.
-pub fn extract_relative_name(fqdn: &str, zone_name: &str) -> String {
-    let fqdn_lower = fqdn.to_lowercase();
-    let zone_lower = zone_name.to_lowercase();
-
-    if fqdn_lower == zone_lower {
-        return "@".to_string();
-    }
-
-    let suffix = format!(".{}", zone_lower);
-    if fqdn_lower.ends_with(&suffix) {
-        fqdn[..fqdn.len() - suffix.len()].to_string()
-    } else {
-        fqdn.to_string()
-    }
-}
+use crate::core::dns::{names::relative_to_zone, records::RecordData, responses::ZoneRecord};
 
 // ─── SSHFP ─────────────────────────────────────────────────────────────────
 
@@ -350,7 +332,7 @@ pub fn cloudflare_record_to_zone_record(cf: &Value, zone_name: &str) -> ZoneReco
         .unwrap_or("UNKNOWN")
         .to_uppercase();
     let cf_name = cf.get("name").and_then(|n| n.as_str()).unwrap_or("");
-    let name = extract_relative_name(cf_name, zone_name);
+    let name = relative_to_zone(cf_name, zone_name);
     let ttl = cf.get("ttl").and_then(|t| t.as_u64()).unwrap_or(0) as u32;
     let content = cf.get("content").and_then(|c| c.as_str()).unwrap_or("");
     let proxied = cf.get("proxied").and_then(|p| p.as_bool()).unwrap_or(false);

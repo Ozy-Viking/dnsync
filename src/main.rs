@@ -28,7 +28,7 @@ fn main() {}
 use dnslib::{
     cli::{self, RecordCmd, ZoneCmd},
     control_plane::config::AppConfig,
-    control_plane::{app, config, policy, sync},
+    control_plane::{app, config, policy, sync, transfer},
     core::{dns::service::DnsService, error},
     mcp::server,
     vendors::runtime::{ClientOverrides, VendorClient},
@@ -124,6 +124,17 @@ async fn run_inner(cli: Cli) -> Result<()> {
                 Ok(())
             }
 
+            ConfigCmd::Update => {
+                let report = config::update_defaults(cli.config)?;
+                println!(
+                    "Updated config file: {} ({} default value(s) added across {} server(s))",
+                    report.path.display(),
+                    report.added_values,
+                    report.updated_servers
+                );
+                Ok(())
+            }
+
             ConfigCmd::Add {
                 id,
                 vendor,
@@ -163,6 +174,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
                         mcp: config::McpPermissions {
                             access,
                             allowed_zones: allow_zone,
+                            show_settings_secrets: false,
                         },
                         validation_endpoints,
                     }
@@ -172,7 +184,10 @@ async fn run_inner(cli: Cli) -> Result<()> {
                 Ok(())
             }
 
-            ConfigCmd::Server { server_id, endpoint } => {
+            ConfigCmd::Server {
+                server_id,
+                endpoint,
+            } => {
                 match endpoint {
                     Some(endpoint) => {
                         // Non-interactive: load existing config so omitted flags keep their
@@ -192,8 +207,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
                             })?;
                         let server = cfg.selected_server(Some(&id))?;
                         let update = build_endpoint_update(endpoint, server);
-                        let path =
-                            config::update_server_endpoint(cli.config, &id, update)?;
+                        let path = config::update_server_endpoint(cli.config, &id, update)?;
                         println!("Updated config file: {}", path.display());
                     }
                     None => {
@@ -381,58 +395,90 @@ fn build_endpoint_update(
     server: &config::DnsServerConfig,
 ) -> config::EndpointUpdate {
     match endpoint {
-        ServerEndpointCmd::Dns { addr, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Dns(if clear {
-                None
-            } else {
-                let ex = server.dns.as_ref();
-                Some(config::DnsTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        ServerEndpointCmd::Dns {
+            addr,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Dns(if clear {
+            None
+        } else {
+            let ex = server.dns.as_ref();
+            Some(config::DnsTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
-        ServerEndpointCmd::Dot { addr, server_name, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Dot(if clear {
-                None
-            } else {
-                let ex = server.dot.as_ref();
-                Some(config::DotTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        }),
+        ServerEndpointCmd::Dot {
+            addr,
+            server_name,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Dot(if clear {
+            None
+        } else {
+            let ex = server.dot.as_ref();
+            Some(config::DotTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
-        ServerEndpointCmd::Doh { url, addr, server_name, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Doh(if clear {
-                None
-            } else {
-                let ex = server.doh.as_ref();
-                Some(config::DohTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    url: url.or_else(|| ex.and_then(|e| e.url.clone())),
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        }),
+        ServerEndpointCmd::Doh {
+            url,
+            addr,
+            server_name,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Doh(if clear {
+            None
+        } else {
+            let ex = server.doh.as_ref();
+            Some(config::DohTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                url: url.or_else(|| ex.and_then(|e| e.url.clone())),
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
-        ServerEndpointCmd::Doq { addr, server_name, timeout_ms, disable, clear } => {
-            config::EndpointUpdate::Doq(if clear {
-                None
-            } else {
-                let ex = server.doq.as_ref();
-                Some(config::DoqTransportConfig {
-                    enabled: if disable { false } else { ex.map_or(true, |e| e.enabled) },
-                    addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
-                    server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
-                    timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
-                })
+        }),
+        ServerEndpointCmd::Doq {
+            addr,
+            server_name,
+            timeout_ms,
+            disable,
+            clear,
+        } => config::EndpointUpdate::Doq(if clear {
+            None
+        } else {
+            let ex = server.doq.as_ref();
+            Some(config::DoqTransportConfig {
+                enabled: if disable {
+                    false
+                } else {
+                    ex.map_or(true, |e| e.enabled)
+                },
+                addr: addr.or_else(|| ex.and_then(|e| e.addr.clone())),
+                server_name: server_name.or_else(|| ex.and_then(|e| e.server_name.clone())),
+                timeout_ms: timeout_ms.or_else(|| ex.and_then(|e| e.timeout_ms)),
             })
-        }
+        }),
     }
 }
 
@@ -481,68 +527,20 @@ async fn run_zone_transfer(
     overwrite: bool,
     overwrite_zone: bool,
 ) -> Result<()> {
-    let Some(cfg) = app_config else {
-        return Err(Error::parse(
-            "zone transfer requires a config file with --from and --to server entries",
-        ));
-    };
-
-    let from_server = cfg.selected_server(Some(from_id))?;
-    let to_server = cfg.selected_server(Some(to_id))?;
-
     tracing::info!(
         zone = %zone,
         from = %from_id,
-        vendor = ?from_server.vendor,
         "Exporting zone"
     );
-    let zone_file = server_export_zone(from_server, zone).await?;
-
-    tracing::info!(
-        bytes = zone_file.len(),
-        to = %to_id,
-        vendor = ?to_server.vendor,
-        "Importing zone"
-    );
-    let file_name = format!("{zone}.txt");
-    let result = server_import_zone(
-        to_server,
-        zone,
-        file_name,
-        zone_file.into_bytes(),
-        overwrite,
-        overwrite_zone,
-    )
-    .await?;
-    if !result.is_null() {
-        let pretty = serde_json::to_string_pretty(&result)
+    let result =
+        transfer::transfer_zone(app_config, zone, from_id, to_id, overwrite, overwrite_zone)
+            .await?;
+    if !result.import_result.is_null() {
+        let pretty = serde_json::to_string_pretty(&result.import_result)
             .map_err(|e| Error::parse(format!("serialise error: {e}")))?;
         println!("{pretty}");
     }
     Ok(())
-}
-
-async fn server_export_zone(server: &config::DnsServerConfig, zone: &str) -> Result<String> {
-    VendorClient::export_zone_for_server(server, zone).await
-}
-
-async fn server_import_zone(
-    server: &config::DnsServerConfig,
-    zone: &str,
-    file_name: String,
-    file_bytes: Vec<u8>,
-    overwrite: bool,
-    overwrite_zone: bool,
-) -> Result<serde_json::Value> {
-    VendorClient::import_zone_for_server(
-        server,
-        zone,
-        file_name,
-        file_bytes,
-        overwrite,
-        overwrite_zone,
-    )
-    .await
 }
 
 #[cfg(test)]

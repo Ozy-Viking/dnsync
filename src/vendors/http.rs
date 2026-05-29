@@ -64,8 +64,12 @@ impl HttpClient {
         path: &str,
         builder: RequestBuilder,
     ) -> Result<Response> {
-        let span =
-            tracing::debug_span!("http.request", method, path, http.status = tracing::field::Empty);
+        let span = tracing::debug_span!(
+            "http.request",
+            method,
+            path,
+            http.status = tracing::field::Empty
+        );
         async {
             tracing::debug!("sending request");
             let resp = builder

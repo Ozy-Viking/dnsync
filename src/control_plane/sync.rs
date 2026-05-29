@@ -59,6 +59,12 @@ struct ZonePlan {
     skipped: usize,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncApplySummary {
+    pub applied: usize,
+    pub failures: usize,
+}
+
 /// Run a record sync.
 ///
 /// `profile` selects a named `[[sync]]` profile from the config; `from`, `to`,
@@ -79,6 +85,75 @@ pub async fn run_sync(
     apply: bool,
     json: bool,
 ) -> Result<()> {
+    let (from_id, to_id, plans) =
+        build_sync_plan(app_config, profile, from, to, zones, maps).await?;
+
+    if json {
+        let out = sync_plan_json(&from_id, &to_id, &plans, apply);
+        let pretty = serde_json::to_string_pretty(&out)
+            .map_err(|e| Error::parse(format!("could not serialise sync plan: {e}")))?;
+        println!("{pretty}");
+    } else {
+        render_table(&from_id, &to_id, &plans, apply);
+    }
+
+    let has_changes = plans
+        .iter()
+        .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
+    if !apply || !has_changes {
+        return Ok(());
+    }
+
+    let summary = apply_plans(
+        &VendorClient::from_server(
+            app_config
+                .and_then(|cfg| cfg.selected_server(Some(&to_id)).ok())
+                .ok_or_else(|| Error::config("sync destination server disappeared"))?,
+        )?,
+        &plans,
+    )
+    .await?;
+    println!("\nApplied {} change(s).", summary.applied);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_sync_json(
+    app_config: Option<&AppConfig>,
+    profile: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+    zones: &[String],
+    maps: &[String],
+    apply: bool,
+) -> Result<serde_json::Value> {
+    let (from_id, to_id, plans) =
+        build_sync_plan(app_config, profile, from, to, zones, maps).await?;
+    let mut out = sync_plan_json(&from_id, &to_id, &plans, apply);
+
+    let has_changes = plans
+        .iter()
+        .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
+    if apply && has_changes {
+        let cfg = app_config.expect("build_sync_plan already required config");
+        let to_server = cfg.selected_server(Some(&to_id))?;
+        let summary = apply_plans(&VendorClient::from_server(to_server)?, &plans).await?;
+        out["apply_summary"] = serde_json::to_value(summary)
+            .map_err(|e| Error::parse(format!("could not serialise sync summary: {e}")))?;
+    }
+
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn build_sync_plan(
+    app_config: Option<&AppConfig>,
+    profile: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+    zones: &[String],
+    maps: &[String],
+) -> Result<(String, String, Vec<ZonePlan>)> {
     let Some(cfg) = app_config else {
         return Err(Error::config(
             "sync requires a config file defining the source and destination servers",
@@ -162,20 +237,7 @@ pub async fn run_sync(
         plans.push(plan_zone(&from_client, &to_client, zone, &ip_map).await?);
     }
 
-    if json {
-        render_json(from_id, to_id, &plans, apply)?;
-    } else {
-        render_table(from_id, to_id, &plans, apply);
-    }
-
-    let has_changes = plans
-        .iter()
-        .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
-    if !apply || !has_changes {
-        return Ok(());
-    }
-
-    apply_plans(&to_client, &plans).await
+    Ok((from_id.to_string(), to_id.to_string(), plans))
 }
 
 /// Build the sync plan for a single zone.
@@ -343,11 +405,11 @@ fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
 }
 
 /// Apply the planned changes to the destination, reporting per-record outcomes.
-async fn apply_plans(to_client: &VendorClient, plans: &[ZonePlan]) -> Result<()> {
+async fn apply_plans(to_client: &VendorClient, plans: &[ZonePlan]) -> Result<SyncApplySummary> {
     apply_plans_with_client(to_client, plans).await
 }
 
-async fn apply_plans_with_client<C>(to_client: &C, plans: &[ZonePlan]) -> Result<()>
+async fn apply_plans_with_client<C>(to_client: &C, plans: &[ZonePlan]) -> Result<SyncApplySummary>
 where
     C: RecordWrite + ?Sized,
 {
@@ -396,11 +458,9 @@ where
     }
 
     if failures > 0 {
-        println!("\nApplied {applied} change(s), {failures} failed.");
         return Err(Error::api(format!("{failures} sync change(s) failed")));
     }
-    println!("\nApplied {applied} change(s).");
-    Ok(())
+    Ok(SyncApplySummary { applied, failures })
 }
 
 /// Rewrite an A/AAAA record's address through the IP map. Other record types
@@ -526,7 +586,12 @@ fn render_table(from_id: &str, to_id: &str, plans: &[ZonePlan], apply: bool) {
 }
 
 /// Print the sync plan as JSON.
-fn render_json(from_id: &str, to_id: &str, plans: &[ZonePlan], apply: bool) -> Result<()> {
+fn sync_plan_json(
+    from_id: &str,
+    to_id: &str,
+    plans: &[ZonePlan],
+    apply: bool,
+) -> serde_json::Value {
     let rec_json = |rec: &PlannedRecord| {
         serde_json::json!({
             "name": rec.fqdn,
@@ -550,17 +615,12 @@ fn render_json(from_id: &str, to_id: &str, plans: &[ZonePlan], apply: bool) -> R
         })
         .collect();
 
-    let out = serde_json::json!({
+    serde_json::json!({
         "from": from_id,
         "to": to_id,
         "applied": apply,
         "zones": zones,
-    });
-
-    let pretty = serde_json::to_string_pretty(&out)
-        .map_err(|e| Error::parse(format!("could not serialise sync plan: {e}")))?;
-    println!("{pretty}");
-    Ok(())
+    })
 }
 
 #[cfg(test)]

@@ -2,7 +2,8 @@
     feature = "technitium",
     feature = "pangolin",
     feature = "cloudflare",
-    feature = "unifi"
+    feature = "unifi",
+    feature = "pihole"
 ))]
 pub fn generate_completions(shell: clap_complete::Shell) {
     use clap::CommandFactory;
@@ -26,22 +27,7 @@ pub fn generate_completions(shell: clap_complete::Shell) {
         let mut buf: Vec<u8> = Vec::new();
         generate(shell, &mut cmd, &bin_name, &mut buf);
         let raw = String::from_utf8_lossy(&buf);
-        let patched: String = raw
-            .lines()
-            .map(|line| {
-                if line.contains("'*--server=") {
-                    line.replace(":_default'", &format!(":_{fn_name}_server_ids'"))
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let patched = if raw.ends_with('\n') {
-            patched + "\n"
-        } else {
-            patched
-        };
+        let patched = patch_zsh_server_completion(&raw, &fn_name);
         out.write_all(patched.as_bytes()).ok();
         let helper = format!(
             "\n# Dynamic --server completion from config\n\
@@ -68,6 +54,11 @@ pub fn generate_completions(shell: clap_complete::Shell) {
              \tlocal cur prev\n\
              \tcur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n\
              \tprev=\"${{COMP_WORDS[COMP_CWORD-1]}}\"\n\
+             \tif [[ \"$cur\" == --server=* ]]; then\n\
+             \t\tlocal value=\"${{cur#--server=}}\"\n\
+             \t\tmapfile -t COMPREPLY < <(compgen -P \"--server=\" -W \"$({bin_name} _servers 2>/dev/null)\" -- \"$value\")\n\
+             \t\treturn\n\
+             \tfi\n\
              \tif [[ \"$prev\" == \"--server\" ]]; then\n\
              \t\tmapfile -t COMPREPLY < <(compgen -W \"$({bin_name} _servers 2>/dev/null)\" -- \"$cur\")\n\
              \t\treturn\n\
@@ -81,5 +72,61 @@ pub fn generate_completions(shell: clap_complete::Shell) {
 
     if !dynamic.is_empty() {
         out.write_all(dynamic.as_bytes()).ok();
+    }
+}
+
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi",
+    feature = "pihole"
+))]
+fn patch_zsh_server_completion(raw: &str, fn_name: &str) -> String {
+    let helper = format!(":_{fn_name}_server_ids'");
+    let patched: String = raw
+        .lines()
+        .map(|line| {
+            if line.contains("'--server=[") || line.contains("'*--server=[") {
+                line.replace(":_default'", &helper)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if raw.ends_with('\n') {
+        patched + "\n"
+    } else {
+        patched
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::patch_zsh_server_completion;
+
+    #[test]
+    fn zsh_patch_updates_repeatable_and_single_server_options_only() {
+        let raw = "\
+'*--server=[DNS server ID from the config file]:SERVERS:_default' \\
+'--server=[A configured server entry to query]:SERVER:_default' \\
+'--server-name=[TLS SNI server name]:SERVER_NAME:_default' \\
+";
+
+        let patched = patch_zsh_server_completion(raw, "dns");
+
+        assert!(
+            patched.contains(
+                "'*--server=[DNS server ID from the config file]:SERVERS:_dns_server_ids'"
+            )
+        );
+        assert!(
+            patched
+                .contains("'--server=[A configured server entry to query]:SERVER:_dns_server_ids'")
+        );
+        assert!(patched.contains("'--server-name=[TLS SNI server name]:SERVER_NAME:_default'"));
+        assert!(patched.ends_with('\n'));
     }
 }

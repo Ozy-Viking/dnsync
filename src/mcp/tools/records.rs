@@ -2,7 +2,7 @@ use rmcp::{ErrorData as McpError, model::*};
 
 use crate::{
     control_plane::policy::Policy,
-    core::dns::{records, service::ListRecordsOptions},
+    core::dns::records,
     core::{dns::service::DnsService, error::Error},
     mcp::{helpers::run_json, params::*},
 };
@@ -12,23 +12,24 @@ pub async fn handle_list_records<C: DnsService + Send + Sync>(
     policy: &Policy,
     p: ListRecordsParams,
 ) -> Result<CallToolResult, McpError> {
+    let zone_check = p
+        .zone
+        .as_deref()
+        .or(p.domain.as_deref())
+        .map_or(Ok(()), |zone| policy.check_zone(zone));
     Ok(run_json(
         "dns_list_records",
-        policy
-            .check_read()
-            .and(policy.check_zone(p.zone.as_deref().unwrap_or(&p.domain))),
+        policy.check_read().and(zone_check),
         async move {
-            client
-                .list_records(
-                    &p.domain,
-                    p.zone.as_deref(),
-                    ListRecordsOptions {
-                        use_local_ip: p.use_local_ip.unwrap_or(false),
-                        all_subdomains: false,
-                    },
-                )
-                .await
-                .and_then(|r| serde_json::to_value(&r).map_err(|e| Error::parse(e.to_string())))
+            records::query::list_records_for_query(
+                client,
+                p.domain.as_deref(),
+                p.zone.as_deref(),
+                p.all_subdomains.unwrap_or(false),
+                p.use_local_ip.unwrap_or(false),
+            )
+            .await
+            .and_then(|r| serde_json::to_value(&r).map_err(|e| Error::parse(e.to_string())))
         },
     )
     .await)

@@ -2,6 +2,7 @@ pub mod access_lists;
 pub mod cache;
 pub mod capabilities;
 pub mod logs;
+pub mod names;
 pub mod records;
 pub mod resolver;
 pub mod responses;

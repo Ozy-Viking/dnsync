@@ -7,39 +7,12 @@
 
 use serde_json::{Value, json};
 
+use crate::core::dns::names::relative_to_zone;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ZoneRecord;
 use crate::core::error::{Error, Result};
 
 use super::responses::{UnifiDnsPolicy, UnifiDnsPolicyType};
-
-/// Strip `.{zone}` suffix from a fully qualified UniFi domain.
-/// Returns `"@"` when `fqdn` is the zone apex.
-pub fn extract_relative_name(fqdn: &str, zone: &str) -> String {
-    let fqdn_lower = fqdn.to_lowercase();
-    let zone_lower = zone.to_lowercase();
-
-    if fqdn_lower == zone_lower {
-        return "@".to_string();
-    }
-
-    let suffix = format!(".{zone_lower}");
-    if fqdn_lower.ends_with(&suffix) {
-        fqdn[..fqdn.len() - suffix.len()].to_string()
-    } else {
-        fqdn.to_string()
-    }
-}
-
-/// True when `domain` is `zone` itself or sits below it.
-///
-/// Comparisons are case-insensitive. Used to filter the flat UniFi policy
-/// list down to one logical zone.
-pub fn domain_matches_zone(domain: &str, zone: &str) -> bool {
-    let d = domain.to_lowercase();
-    let z = zone.to_lowercase();
-    d == z || d.ends_with(&format!(".{z}"))
-}
 
 /// Build the dnsync `rData` JSON for a UniFi policy.
 ///
@@ -87,7 +60,7 @@ pub fn policy_to_rdata(policy: &UnifiDnsPolicy) -> Value {
 /// `ZoneRecord::disabled` field (`disabled = !enabled`).
 pub fn policy_to_zone_record(policy: &UnifiDnsPolicy, zone: &str) -> ZoneRecord {
     let record_type = policy.policy_type.dnsync_record_type().to_string();
-    let name = extract_relative_name(&policy.domain, zone);
+    let name = relative_to_zone(&policy.domain, zone);
     let ttl = policy.ttl_seconds.unwrap_or(0);
 
     let mut data = policy_to_rdata(policy);
@@ -258,9 +231,7 @@ pub fn policy_matches_delete_params(
                 .map(|want| policy.mail_server_domain.as_deref() == Some(want))
                 .unwrap_or(true)
                 && value_field("preference")
-                    .map(|want| {
-                        policy.priority.map(|p| p.to_string()).as_deref() == Some(want)
-                    })
+                    .map(|want| policy.priority.map(|p| p.to_string()).as_deref() == Some(want))
                     .unwrap_or(true)
         }
         UnifiDnsPolicyType::SrvRecord => {
@@ -271,9 +242,7 @@ pub fn policy_matches_delete_params(
                     .map(|want| policy.port.map(|v| v.to_string()).as_deref() == Some(want))
                     .unwrap_or(true)
                 && value_field("priority")
-                    .map(|want| {
-                        policy.priority.map(|v| v.to_string()).as_deref() == Some(want)
-                    })
+                    .map(|want| policy.priority.map(|v| v.to_string()).as_deref() == Some(want))
                     .unwrap_or(true)
                 && value_field("weight")
                     .map(|want| policy.weight.map(|v| v.to_string()).as_deref() == Some(want))
@@ -333,35 +302,6 @@ mod tests {
             "ipAddress": "192.168.1.1"
         }))
         .unwrap()
-    }
-
-    // ── extract_relative_name / domain_matches_zone ─────────────────────────
-
-    #[test]
-    fn apex_extracts_to_at() {
-        assert_eq!(extract_relative_name("example.com", "example.com"), "@");
-    }
-
-    #[test]
-    fn subdomain_strips_zone_suffix() {
-        assert_eq!(
-            extract_relative_name("a.b.example.com", "example.com"),
-            "a.b"
-        );
-    }
-
-    #[test]
-    fn unrelated_returns_as_is() {
-        assert_eq!(extract_relative_name("foo.net", "example.com"), "foo.net");
-    }
-
-    #[test]
-    fn domain_matches_zone_covers_apex_and_subdomains() {
-        assert!(domain_matches_zone("example.com", "example.com"));
-        assert!(domain_matches_zone("a.example.com", "example.com"));
-        assert!(domain_matches_zone("A.Example.COM", "example.com"));
-        assert!(!domain_matches_zone("notexample.com", "example.com"));
-        assert!(!domain_matches_zone("example.net", "example.com"));
     }
 
     // ── policy_to_zone_record ───────────────────────────────────────────────

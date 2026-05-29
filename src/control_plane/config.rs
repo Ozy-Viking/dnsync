@@ -18,6 +18,10 @@ pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client
 pub const UNIFI_DEFAULT_BASE_URL: &str = "https://192.168.1.1/proxy/network/integration/v1";
 pub const PIHOLE_DEFAULT_BASE_URL: &str = "http://pi.hole";
 
+const CLOUDFLARE_RESOLVER_IP: &str = "1.1.1.1";
+const CLOUDFLARE_RESOLVER_NAME: &str = "cloudflare-dns.com";
+const CLOUDFLARE_DOH_URL: &str = "https://cloudflare-dns.com/dns-query";
+
 /// Supported DNS vendor backends.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -374,7 +378,7 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             raw.mcp.access
         };
 
-        DnsServerConfig {
+        let mut server = DnsServerConfig {
             id: raw.id,
             vendor: raw.vendor,
             location: raw.location,
@@ -391,10 +395,51 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
             mcp: McpPermissions {
                 access,
                 allowed_zones: zones,
+                show_settings_secrets: raw.mcp.show_settings_secrets,
             },
             validation_endpoints: raw.validation_endpoints,
-        }
+        };
+        apply_provider_transport_defaults(&mut server);
+        server
     }
+}
+
+fn apply_provider_transport_defaults(server: &mut DnsServerConfig) {
+    if server.location == Some(ServerLocation::Local) {
+        return;
+    }
+
+    match server.vendor {
+        VendorKind::Cloudflare => apply_cloudflare_transport_defaults(server),
+        VendorKind::Technitium | VendorKind::Pangolin | VendorKind::Unifi | VendorKind::Pihole => {}
+    }
+}
+
+fn apply_cloudflare_transport_defaults(server: &mut DnsServerConfig) {
+    server.dns.get_or_insert_with(|| DnsTransportConfig {
+        enabled: true,
+        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:53")),
+        timeout_ms: None,
+    });
+    server.dot.get_or_insert_with(|| DotTransportConfig {
+        enabled: true,
+        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:853")),
+        server_name: Some(CLOUDFLARE_RESOLVER_NAME.to_string()),
+        timeout_ms: None,
+    });
+    server.doh.get_or_insert_with(|| DohTransportConfig {
+        enabled: true,
+        url: Some(CLOUDFLARE_DOH_URL.to_string()),
+        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:443")),
+        server_name: Some(CLOUDFLARE_RESOLVER_NAME.to_string()),
+        timeout_ms: None,
+    });
+    server.doq.get_or_insert_with(|| DoqTransportConfig {
+        enabled: true,
+        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:853")),
+        server_name: Some(CLOUDFLARE_RESOLVER_NAME.to_string()),
+        timeout_ms: None,
+    });
 }
 
 fn default_true() -> bool {
@@ -414,6 +459,9 @@ pub struct McpPermissions {
 
     #[serde(default)]
     pub allowed_zones: Vec<String>,
+
+    #[serde(default)]
+    pub show_settings_secrets: bool,
 }
 
 impl Default for McpPermissions {
@@ -421,6 +469,7 @@ impl Default for McpPermissions {
         Self {
             access: default_access(),
             allowed_zones: Vec::new(),
+            show_settings_secrets: false,
         }
     }
 }
@@ -431,7 +480,7 @@ impl McpPermissions {
             .into_iter()
             .collect();
         let current: HashSet<PolicyRule> = self.access.iter().cloned().collect();
-        current == full && self.allowed_zones.is_empty()
+        current == full && self.allowed_zones.is_empty() && !self.show_settings_secrets
     }
 }
 
@@ -780,6 +829,77 @@ pub fn add_server(path: Option<PathBuf>, server: DnsServerConfig) -> Result<Path
     Ok(path)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateDefaultsReport {
+    pub path: PathBuf,
+    pub updated_servers: usize,
+    pub added_values: usize,
+}
+
+/// Add currently-known default values to existing server entries without
+/// overwriting any field or sub-table already present in the config file.
+pub fn update_defaults(path: Option<PathBuf>) -> Result<UpdateDefaultsReport> {
+    let Some(path) = path.or_else(default_config_path) else {
+        return Err(Error::config(
+            "could not determine a default config path; pass --config <path>",
+        ));
+    };
+
+    let config = load_from_path(&path)?;
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| Error::io(format!("reading config file '{}'", path.display()), e))?;
+    let mut doc: toml_edit::DocumentMut = raw.parse().map_err(|e| {
+        Error::config(format!(
+            "could not parse config file '{}': {e}",
+            path.display()
+        ))
+    })?;
+
+    let servers = doc
+        .get_mut("servers")
+        .and_then(|v| v.as_array_of_tables_mut())
+        .ok_or_else(|| Error::config("config file has no [[servers]] entries"))?;
+
+    let mut updated_servers = 0usize;
+    let mut added_values = 0usize;
+
+    for server_tbl in servers.iter_mut() {
+        let Some(id) = server_tbl
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(server) = config
+            .servers
+            .iter()
+            .find(|server| server.id.eq_ignore_ascii_case(&id))
+        else {
+            continue;
+        };
+
+        let before = added_values;
+        added_values += add_missing_server_defaults(server_tbl, server);
+        if added_values > before {
+            updated_servers += 1;
+        }
+    }
+
+    if added_values > 0 {
+        let updated: AppConfig = toml::from_str(&doc.to_string())
+            .map_err(|e| Error::config(format!("updated config would be invalid: {e}")))?;
+        updated.validate()?;
+        write_private_file(&path, &doc.to_string())?;
+    }
+
+    Ok(UpdateDefaultsReport {
+        path,
+        updated_servers,
+        added_values,
+    })
+}
+
 /// Specifies which transport endpoint on a server to create, replace, or remove.
 ///
 /// `None` removes the transport block entirely. `Some(config)` creates or replaces it.
@@ -788,6 +908,177 @@ pub enum EndpointUpdate {
     Dot(Option<DotTransportConfig>),
     Doh(Option<DohTransportConfig>),
     Doq(Option<DoqTransportConfig>),
+}
+
+fn add_missing_server_defaults(
+    server_tbl: &mut toml_edit::Table,
+    server: &DnsServerConfig,
+) -> usize {
+    use toml_edit::{Array, Item, value};
+
+    let mut added = 0usize;
+
+    if !server_tbl.contains_key("vendor") {
+        server_tbl["vendor"] = value(vendor_name(server.vendor));
+        added += 1;
+    }
+
+    if !server_tbl.contains_key("base_url") && !server_tbl.contains_key("base_url_env") {
+        server_tbl["base_url"] = value(default_base_url(server.vendor));
+        added += 1;
+    }
+
+    if !server_tbl.contains_key("mcp_access") && !server_tbl.contains_key("mcp") {
+        let mut access = Array::new();
+        for rule in &server.mcp.access {
+            access.push(policy_rule_name(*rule));
+        }
+        server_tbl["mcp_access"] = value(access);
+        added += 1;
+    } else if let Some(mcp) = server_tbl
+        .get_mut("mcp")
+        .and_then(|item| item.as_table_mut())
+        && !mcp.contains_key("access")
+    {
+        let mut access = Array::new();
+        for rule in &server.mcp.access {
+            access.push(policy_rule_name(*rule));
+        }
+        mcp["access"] = value(access);
+        added += 1;
+    }
+
+    if let Some(mcp) = server_tbl
+        .get_mut("mcp")
+        .and_then(|item| item.as_table_mut())
+        && !mcp.contains_key("show_settings_secrets")
+    {
+        mcp["show_settings_secrets"] = value(server.mcp.show_settings_secrets);
+        added += 1;
+    }
+
+    if !server_tbl.contains_key("dns")
+        && let Some(ref dns) = server.dns
+    {
+        server_tbl["dns"] = Item::Table(dns_transport_table(dns));
+        added += 1;
+    }
+    if !server_tbl.contains_key("dot")
+        && let Some(ref dot) = server.dot
+    {
+        server_tbl["dot"] = Item::Table(dot_transport_table(dot));
+        added += 1;
+    }
+    if !server_tbl.contains_key("doh")
+        && let Some(ref doh) = server.doh
+    {
+        server_tbl["doh"] = Item::Table(doh_transport_table(doh));
+        added += 1;
+    }
+    if !server_tbl.contains_key("doq")
+        && let Some(ref doq) = server.doq
+    {
+        server_tbl["doq"] = Item::Table(doq_transport_table(doq));
+        added += 1;
+    }
+
+    added
+}
+
+fn default_base_url(vendor: VendorKind) -> &'static str {
+    match vendor {
+        VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
+        VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
+        VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
+        VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
+        VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
+    }
+}
+
+fn vendor_name(vendor: VendorKind) -> &'static str {
+    match vendor {
+        VendorKind::Technitium => "technitium",
+        VendorKind::Pangolin => "pangolin",
+        VendorKind::Cloudflare => "cloudflare",
+        VendorKind::Unifi => "unifi",
+        VendorKind::Pihole => "pihole",
+    }
+}
+
+fn policy_rule_name(rule: PolicyRule) -> &'static str {
+    match rule {
+        PolicyRule::Read => "read",
+        PolicyRule::Write => "write",
+        PolicyRule::Delete => "delete",
+    }
+}
+
+fn dns_transport_table(cfg: &DnsTransportConfig) -> toml_edit::Table {
+    use toml_edit::{Table, value};
+
+    let mut tbl = Table::new();
+    tbl["enabled"] = value(cfg.enabled);
+    if let Some(ref addr) = cfg.addr {
+        tbl["addr"] = value(addr.as_str());
+    }
+    if let Some(ms) = cfg.timeout_ms {
+        tbl["timeout_ms"] = value(ms as i64);
+    }
+    tbl
+}
+
+fn dot_transport_table(cfg: &DotTransportConfig) -> toml_edit::Table {
+    use toml_edit::{Table, value};
+
+    let mut tbl = Table::new();
+    tbl["enabled"] = value(cfg.enabled);
+    if let Some(ref addr) = cfg.addr {
+        tbl["addr"] = value(addr.as_str());
+    }
+    if let Some(ref sn) = cfg.server_name {
+        tbl["server_name"] = value(sn.as_str());
+    }
+    if let Some(ms) = cfg.timeout_ms {
+        tbl["timeout_ms"] = value(ms as i64);
+    }
+    tbl
+}
+
+fn doh_transport_table(cfg: &DohTransportConfig) -> toml_edit::Table {
+    use toml_edit::{Table, value};
+
+    let mut tbl = Table::new();
+    tbl["enabled"] = value(cfg.enabled);
+    if let Some(ref url) = cfg.url {
+        tbl["url"] = value(url.as_str());
+    }
+    if let Some(ref addr) = cfg.addr {
+        tbl["addr"] = value(addr.as_str());
+    }
+    if let Some(ref sn) = cfg.server_name {
+        tbl["server_name"] = value(sn.as_str());
+    }
+    if let Some(ms) = cfg.timeout_ms {
+        tbl["timeout_ms"] = value(ms as i64);
+    }
+    tbl
+}
+
+fn doq_transport_table(cfg: &DoqTransportConfig) -> toml_edit::Table {
+    use toml_edit::{Table, value};
+
+    let mut tbl = Table::new();
+    tbl["enabled"] = value(cfg.enabled);
+    if let Some(ref addr) = cfg.addr {
+        tbl["addr"] = value(addr.as_str());
+    }
+    if let Some(ref sn) = cfg.server_name {
+        tbl["server_name"] = value(sn.as_str());
+    }
+    if let Some(ms) = cfg.timeout_ms {
+        tbl["timeout_ms"] = value(ms as i64);
+    }
+    tbl
 }
 
 /// Update a single transport endpoint on an existing server entry in the config file.
@@ -1488,6 +1779,7 @@ mod tests {
                 [servers.mcp]
                 access = ["read"]
                 allowed_zones = ["example.com", "internal.lan"]
+                show_settings_secrets = true
 
                 [[servers]]
                 id = "lab"
@@ -1509,6 +1801,10 @@ mod tests {
         assert_eq!(home.base_url.as_deref(), Some("http://home.local:5380"));
         assert_eq!(home.mcp.access, vec![PolicyRule::Read]);
         assert_eq!(home.mcp.allowed_zones, ["example.com", "internal.lan"]);
+        assert!(home.mcp.show_settings_secrets);
+
+        let lab = config.selected_server(Some("lab")).unwrap();
+        assert!(!lab.mcp.show_settings_secrets);
     }
 
     #[test]
@@ -1988,6 +2284,114 @@ mod tests {
     }
 
     #[test]
+    fn cloudflare_external_server_gets_provider_transport_defaults() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf"
+                vendor = "cloudflare"
+                token_env = "DNSYNC_CLOUDFLARE_API_TOKEN"
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let server = cfg.selected_server(None).unwrap();
+
+        assert_eq!(
+            server.dns.as_ref().unwrap().addr.as_deref(),
+            Some("1.1.1.1:53")
+        );
+        assert_eq!(
+            server.dot.as_ref().unwrap().server_name.as_deref(),
+            Some("cloudflare-dns.com")
+        );
+        let doh = server.doh.as_ref().unwrap();
+        assert_eq!(
+            doh.url.as_deref(),
+            Some("https://cloudflare-dns.com/dns-query")
+        );
+        assert_eq!(doh.addr.as_deref(), Some("1.1.1.1:443"));
+        assert_eq!(
+            server.doq.as_ref().unwrap().server_name.as_deref(),
+            Some("cloudflare-dns.com")
+        );
+    }
+
+    #[test]
+    fn cloudflare_transport_blocks_override_provider_defaults() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf"
+                vendor = "cloudflare"
+                token_env = "DNSYNC_CLOUDFLARE_API_TOKEN"
+
+                [servers.dns]
+                enabled = false
+
+                [servers.doh]
+                enabled = true
+                url = "https://security.cloudflare-dns.com/dns-query"
+                addr = "1.1.1.2:443"
+                server_name = "security.cloudflare-dns.com"
+                timeout_ms = 2500
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let server = cfg.selected_server(None).unwrap();
+
+        let dns = server.dns.as_ref().unwrap();
+        assert!(!dns.enabled);
+        assert_eq!(dns.addr, None);
+
+        let doh = server.doh.as_ref().unwrap();
+        assert_eq!(
+            doh.url.as_deref(),
+            Some("https://security.cloudflare-dns.com/dns-query")
+        );
+        assert_eq!(doh.addr.as_deref(), Some("1.1.1.2:443"));
+        assert_eq!(
+            doh.server_name.as_deref(),
+            Some("security.cloudflare-dns.com")
+        );
+        assert_eq!(doh.timeout_ms, Some(2500));
+
+        assert_eq!(
+            server.dot.as_ref().unwrap().addr.as_deref(),
+            Some("1.1.1.1:853")
+        );
+        assert_eq!(
+            server.doq.as_ref().unwrap().addr.as_deref(),
+            Some("1.1.1.1:853")
+        );
+    }
+
+    #[test]
+    fn cloudflare_local_server_does_not_get_provider_transport_defaults() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "cf-local"
+                vendor = "cloudflare"
+                location = "local"
+                token_env = "DNSYNC_CLOUDFLARE_API_TOKEN"
+            "#,
+        )
+        .unwrap();
+
+        cfg.validate().unwrap();
+        let server = cfg.selected_server(None).unwrap();
+
+        assert!(server.dns.is_none());
+        assert!(server.dot.is_none());
+        assert!(server.doh.is_none());
+        assert!(server.doq.is_none());
+    }
+
+    #[test]
     fn validate_rejects_doq_without_addr() {
         let cfg: AppConfig = toml::from_str(
             r#"
@@ -2325,6 +2729,54 @@ mod tests {
             written.contains("id = \"lab\""),
             "new server should be appended"
         );
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn update_defaults_adds_missing_values_without_overwriting_existing_ones() {
+        let path = temp_config_path("update-defaults");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = concat!(
+            "# Existing config\n",
+            "[[servers]]\n",
+            "id = \"cf\"\n",
+            "vendor = \"cloudflare\"\n",
+            "token_env = \"CF_TOKEN\"\n",
+            "\n",
+            "[servers.dns]\n",
+            "enabled = false\n",
+            "\n",
+            "[[servers]]\n",
+            "id = \"home\"\n",
+            "base_url_env = \"HOME_URL\"\n",
+            "token_env = \"HOME_TOKEN\"\n",
+        );
+        write_private_file(&path, original).unwrap();
+
+        let report = update_defaults(Some(path.clone())).unwrap();
+
+        assert_eq!(report.updated_servers, 2);
+        assert!(report.added_values >= 1);
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert!(updated.contains("# Existing config"));
+        assert!(updated.contains("base_url = \"https://api.cloudflare.com/client/v4\""));
+        assert!(updated.contains("[servers.dot]"));
+        assert!(updated.contains("server_name = \"cloudflare-dns.com\""));
+        assert!(updated.contains("[servers.doh]"));
+        assert!(updated.contains("[servers.doq]"));
+        assert!(updated.contains("base_url_env = \"HOME_URL\""));
+        assert!(!updated.contains("base_url = \"http://localhost:5380\""));
+
+        let parsed = AppConfig::load(Some(path.clone())).unwrap().unwrap();
+        let cf = parsed.selected_server(Some("cf")).unwrap();
+        assert_eq!(cf.dns.as_ref().unwrap().enabled, false);
+        assert_eq!(cf.dns.as_ref().unwrap().addr, None);
+
+        let second = update_defaults(Some(path.clone())).unwrap();
+        assert_eq!(second.updated_servers, 0);
+        assert_eq!(second.added_values, 0);
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

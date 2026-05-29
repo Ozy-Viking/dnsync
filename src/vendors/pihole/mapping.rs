@@ -6,34 +6,18 @@
 
 use serde_json::Value;
 
+use crate::core::dns::names::relative_to_zone;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ZoneRecord;
 
 const LOCAL_ZONE: &str = "local";
-
-/// Strip the trailing `.{zone_name}` suffix and return a relative name.
-/// Returns `"@"` for the zone apex, or the full hostname when it doesn't
-/// belong to the zone.
-pub fn extract_relative_name(fqdn: &str, zone_name: &str) -> String {
-    let fqdn_lower = fqdn.to_lowercase();
-    let zone_lower = zone_name.to_lowercase();
-    if fqdn_lower == zone_lower {
-        return "@".to_string();
-    }
-    let suffix = format!(".{zone_lower}");
-    if fqdn_lower.ends_with(&suffix) {
-        fqdn[..fqdn.len() - suffix.len()].to_string()
-    } else {
-        fqdn.to_string()
-    }
-}
 
 /// Convert a Pi-hole local DNS entry (`{"ip": "...", "host": "..."}`) to a
 /// vendor-neutral `ZoneRecord`.
 pub fn local_dns_to_zone_record(entry: &Value, zone_name: &str) -> ZoneRecord {
     let host = entry.get("host").and_then(|h| h.as_str()).unwrap_or("");
     let ip = entry.get("ip").and_then(|i| i.as_str()).unwrap_or("");
-    let name = extract_relative_name(host, zone_name);
+    let name = relative_to_zone(host, zone_name);
 
     let (record_type, data) = if ip.contains(':') {
         ("AAAA", serde_json::json!({ "ipAddress": ip }))
@@ -58,7 +42,7 @@ pub fn local_dns_to_zone_record(entry: &Value, zone_name: &str) -> ZoneRecord {
 pub fn local_cname_to_zone_record(entry: &Value, zone_name: &str) -> ZoneRecord {
     let domain = entry.get("domain").and_then(|d| d.as_str()).unwrap_or("");
     let target = entry.get("target").and_then(|t| t.as_str()).unwrap_or("");
-    let name = extract_relative_name(domain, zone_name);
+    let name = relative_to_zone(domain, zone_name);
 
     ZoneRecord {
         name,
@@ -183,19 +167,16 @@ mod tests {
 
     #[test]
     fn extract_relative_name_subdomain() {
-        assert_eq!(extract_relative_name("sub.example.com", "example.com"), "sub");
+        assert_eq!(relative_to_zone("sub.example.com", "example.com"), "sub");
     }
 
     #[test]
     fn extract_relative_name_apex() {
-        assert_eq!(extract_relative_name("example.com", "example.com"), "@");
+        assert_eq!(relative_to_zone("example.com", "example.com"), "@");
     }
 
     #[test]
     fn extract_relative_name_non_matching() {
-        assert_eq!(
-            extract_relative_name("other.net", "example.com"),
-            "other.net"
-        );
+        assert_eq!(relative_to_zone("other.net", "example.com"), "other.net");
     }
 }
