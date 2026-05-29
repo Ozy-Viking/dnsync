@@ -199,6 +199,14 @@ impl DnsServer {
         Ok(crate::mcp::helpers::text_result(toml))
     }
 
+    #[tool(description = "Return the dnsync binary version reported by this MCP server.")]
+    async fn dns_version(&self) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_version", "MCP tool invoked");
+        Ok(crate::mcp::helpers::json_result(serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+        })))
+    }
+
     // ── Zones ─────────────────────────────────────────────────────────────
 
     /// List authoritative zones hosted on the specified DNS server.
@@ -980,16 +988,17 @@ impl DnsServer {
     /// stable JSON shape (`query`, `target`, `results` array — one
     /// entry per transport). When `all_transports = true` or
     /// `transports` lists multiple entries, the tool fans out across
-    /// every requested block in precedence order doh → dot → dns →
+    /// every requested block in precedence order dns → dot → doh →
     /// doq; the response's `results` length reflects the actual
     /// transports queried.
     #[tool(
         description = "Resolve a name directly against the system resolver, a configured \
-    `[[servers]]` entry (via `server_id`), a public resolver (`public_resolver`: cf/google/quad9/adg), \
-    or any ad-hoc nameserver (via `at`). Supports DNS, DoT, DoH, and DoQ. When `server_id` or \
-    `public_resolver` is given, transport selection follows `transports` / `all_transports`; \
-    otherwise the scheme on `at` chooses, or the system resolver is used. Returns the same JSON \
-    shape as `dns query --json` — a `results` array with one entry per transport queried."
+    `[[servers]]` entry (via `server_id`), or any ad-hoc nameserver (via `at`). Supports DNS, \
+    DoT, DoH, and (with the `doq` build feature) DoQ. When `server_id` is given, transport \
+    selection follows `transports` / `all_transports`; otherwise the scheme on `at` chooses, \
+    or the system resolver is used. Transport precedence matches the CLI: dns → dot → doh → doq. \
+    Returns the same JSON shape as `dns query --json` — a \
+    `results` array with one entry per transport queried."
     )]
     async fn dns_resolve(
         &self,
@@ -1098,5 +1107,15 @@ mod tests {
         assert_eq!(token_env, "MY_DNS_TOKEN");
         // token key should not appear (was None)
         assert!(parsed["servers"][0].get("token").is_none());
+    }
+
+    #[tokio::test]
+    async fn dns_version_returns_package_version() {
+        let server = make_server(AppConfig::default());
+        let result = server.dns_version().await.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let value: serde_json::Value = serde_json::from_str(&result.content[0].as_text().unwrap().text)
+            .expect("output should be valid JSON");
+        assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
     }
 }
