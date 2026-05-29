@@ -1032,8 +1032,10 @@ async fn lookup_all(
 
     if all_records.is_empty() {
         (worst_status, all_records)
-    } else {
+    } else if worst_status == QueryStatus::NoError {
         (QueryStatus::NoError, all_records)
+    } else {
+        (worst_status, all_records)
     }
 }
 
@@ -1041,7 +1043,6 @@ fn push_observed_record_once(records: &mut Vec<ObservedRecord>, record: Observed
     if !records.iter().any(|existing| {
         existing.name == record.name
             && existing.record_type == record.record_type
-            && existing.ttl == record.ttl
             && existing.values == record.values
     }) {
         records.push(record);
