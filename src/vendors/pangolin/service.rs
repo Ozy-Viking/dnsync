@@ -384,23 +384,24 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use crate::core::dns::names::relative_to_zone;
     use crate::vendors::pangolin::mapping::{
-        dns_record_to_zone_record, extract_subdomain, parse_dns_records, parse_domains,
-        parse_resources, resource_to_zone_record,
+        dns_record_to_zone_record, parse_dns_records, parse_domains, parse_resources,
+        resource_to_zone_record,
     };
     use crate::vendors::pangolin::responses::{PangolinDnsRecord, PangolinResource};
 
-    // ── extract_subdomain ─────────────────────────────────────────────────────
+    // ── relative_to_zone ──────────────────────────────────────────────────────
 
     #[test]
     fn apex_returns_at() {
-        assert_eq!(extract_subdomain("app.hankin.io", "app.hankin.io"), "@");
+        assert_eq!(relative_to_zone("app.hankin.io", "app.hankin.io"), "@");
     }
 
     #[test]
     fn single_label_subdomain() {
         assert_eq!(
-            extract_subdomain("grafana.app.hankin.io", "app.hankin.io"),
+            relative_to_zone("grafana.app.hankin.io", "app.hankin.io"),
             "grafana"
         );
     }
@@ -408,7 +409,7 @@ mod tests {
     #[test]
     fn multi_label_subdomain() {
         assert_eq!(
-            extract_subdomain("a.b.app.hankin.io", "app.hankin.io"),
+            relative_to_zone("a.b.app.hankin.io", "app.hankin.io"),
             "a.b"
         );
     }
@@ -416,7 +417,7 @@ mod tests {
     #[test]
     fn case_insensitive_stripping() {
         assert_eq!(
-            extract_subdomain("Grafana.App.Hankin.IO", "app.hankin.io"),
+            relative_to_zone("Grafana.App.Hankin.IO", "app.hankin.io"),
             "Grafana"
         );
     }
@@ -424,7 +425,7 @@ mod tests {
     #[test]
     fn unrelated_domain_returned_as_is() {
         assert_eq!(
-            extract_subdomain("other.example.com", "app.hankin.io"),
+            relative_to_zone("other.example.com", "app.hankin.io"),
             "other.example.com"
         );
     }

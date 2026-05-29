@@ -11,7 +11,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use hickory_resolver::Resolver;
 use serde_json::Value;
 
-use crate::core::dns::responses::ZoneRecord;
+use crate::core::dns::{names::relative_to_zone, responses::ZoneRecord};
 use crate::core::error::{Error, Result};
 #[cfg(test)]
 use crate::vendors::pangolin::responses::PangolinResource;
@@ -64,26 +64,9 @@ impl<T> Pipe for T {}
 
 // ─── Record conversion ────────────────────────────────────────────────────────
 
-/// Strip `".{base_domain}"` suffix from `full_domain`, returning `"@"` for the apex.
-pub fn extract_subdomain(full_domain: &str, base_domain: &str) -> String {
-    let full_lower = full_domain.to_lowercase();
-    let base_lower = base_domain.to_lowercase();
-
-    if full_lower == base_lower {
-        return "@".to_string();
-    }
-
-    let suffix = format!(".{}", base_lower);
-    if full_lower.ends_with(&suffix) {
-        full_domain[..full_domain.len() - suffix.len()].to_string()
-    } else {
-        full_domain.to_string()
-    }
-}
-
 #[cfg(test)]
 pub fn resource_to_zone_record(resource: &PangolinResource, base_domain: &str) -> ZoneRecord {
-    let name = extract_subdomain(&resource.full_domain, base_domain);
+    let name = relative_to_zone(&resource.full_domain, base_domain);
     let record_type = if resource.http {
         "HTTP".to_string()
     } else {
@@ -118,7 +101,7 @@ pub fn dns_record_to_zone_record(
     use_local_ip: bool,
 ) -> ZoneRecord {
     let record_type = record.record_type.to_uppercase();
-    let name = extract_subdomain(&record.base_domain, zone_name);
+    let name = relative_to_zone(&record.base_domain, zone_name);
     let value = preferred_record_value(&record_type, &record.value, resolved_ips, use_local_ip);
     let data = dns_record_data(&record_type, &value);
 

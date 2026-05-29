@@ -8,13 +8,18 @@ use crate::{
 pub async fn handle_get_settings<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
+    show_secrets: bool,
 ) -> Result<CallToolResult, McpError> {
-    Ok(run_json(
-        "dns_get_settings",
-        policy.check_read(),
-        settings::get_settings(client),
+    Ok(
+        run_json("dns_get_settings", policy.check_read(), async move {
+            if show_secrets {
+                settings::get_settings_unredacted(client).await
+            } else {
+                settings::get_settings(client).await
+            }
+        })
+        .await,
     )
-    .await)
 }
 
 #[cfg(test)]
@@ -215,7 +220,7 @@ mod tests {
         };
         let policy = Policy::new([PolicyRule::Read], None);
 
-        let result = handle_get_settings(&client, &policy).await.unwrap();
+        let result = handle_get_settings(&client, &policy, false).await.unwrap();
         let text = result.content[0]
             .as_text()
             .expect("settings result should be text JSON");
@@ -223,6 +228,26 @@ mod tests {
 
         assert_eq!(value["version"], "13.4.1");
         assert_eq!(value["tsigKeys"][0]["sharedSecret"], REDACTED_MARKER);
+    }
+
+    #[tokio::test]
+    async fn handle_get_settings_can_return_unredacted_json() {
+        let client = FakeDnsService {
+            settings: json!({
+                "version": "13.4.1",
+                "tsigKeys": [{ "sharedSecret": "actual-secret" }]
+            }),
+        };
+        let policy = Policy::new([PolicyRule::Read], None);
+
+        let result = handle_get_settings(&client, &policy, true).await.unwrap();
+        let text = result.content[0]
+            .as_text()
+            .expect("settings result should be text JSON");
+        let value: Value = serde_json::from_str(&text.text).unwrap();
+
+        assert_eq!(value["version"], "13.4.1");
+        assert_eq!(value["tsigKeys"][0]["sharedSecret"], "actual-secret");
     }
 
     #[tokio::test]
@@ -235,7 +260,7 @@ mod tests {
         };
         let policy = Policy::new([PolicyRule::Write], None);
 
-        let result = handle_get_settings(&client, &policy).await.unwrap();
+        let result = handle_get_settings(&client, &policy, false).await.unwrap();
         let text = result.content[0]
             .as_text()
             .expect("policy denial should be returned as text JSON");

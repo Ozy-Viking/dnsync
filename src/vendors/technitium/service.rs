@@ -274,59 +274,154 @@ impl LogsRead for TechnitiumClient {
         fields(vendor = "technitium", operation = "get_logs")
     )]
     async fn get_logs(&self, options: LogsOptions) -> Result<Vec<LogLine>> {
-        let lines = options.lines.to_string();
-        let mut params: Vec<(&str, &str)> = vec![("entriesPerPage", &lines)];
-        if let Some(ref s) = options.start {
-            params.push(("start", s));
-        }
-        if let Some(ref e) = options.end {
-            params.push(("end", e));
-        }
-        let response_type = match options.level {
-            Some(LogLevel::Critical) | Some(LogLevel::Error) => Some("Dropped"),
-            Some(LogLevel::Warning) => Some("Blocked"),
-            _ => None,
-        };
-        if let Some(rt) = response_type {
-            params.push(("responseType", rt));
-        }
-        let raw = self.get("/api/log/query", &params).await?;
-        parse_log_lines(&raw)
+        let raw = self.get("/api/logs/list", &[]).await?;
+        let file_name = latest_log_file_name(&raw)?;
+        let text = self
+            .get_text(
+                "/api/logs/download",
+                &[("fileName", file_name.as_str()), ("limit", "1")],
+            )
+            .await?;
+        Ok(parse_log_file(&text, &options))
     }
 }
 
-fn parse_log_lines(raw: &Value) -> Result<Vec<LogLine>> {
-    let entries = raw["response"]["entries"]
+fn latest_log_file_name(raw: &Value) -> Result<String> {
+    let entries = raw["response"]["logFiles"]
         .as_array()
-        .ok_or_else(|| Error::parse("log query response missing entries array"))?;
-    let lines = entries
+        .ok_or_else(|| Error::parse("logs list response missing logFiles array"))?;
+    entries
         .iter()
-        .map(|e| {
-            let response_type = e["responseType"].as_str().unwrap_or("");
-            let level = match response_type {
-                "Dropped" => LogLevel::Error,
-                "Blocked" => LogLevel::Warning,
-                "Cached" | "Recursive" | "Authoritative" | "LocallyServed" => LogLevel::Info,
-                _ => LogLevel::Debug,
-            };
-            let name = e["question"]["name"].as_str().unwrap_or("");
-            let qtype = e["question"]["type"].as_str().unwrap_or("");
-            let title = if name.is_empty() {
-                None
-            } else {
-                Some(format!("{name} ({qtype})"))
-            };
-            let rcode = e["rCode"].as_str().unwrap_or("");
-            let client_ip = e["clientIpAddress"].as_str().unwrap_or("");
-            let message = format!("{response_type}: {rcode} from {client_ip}");
-            let timestamp = e["timestamp"].as_str().unwrap_or("").to_string();
-            LogLine {
-                timestamp,
-                level,
-                title,
-                message,
-            }
+        .filter_map(|entry| entry["fileName"].as_str())
+        .max()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| Error::parse("logs list response did not include any fileName values"))
+}
+
+fn parse_log_file(text: &str, options: &LogsOptions) -> Vec<LogLine> {
+    let mut lines: Vec<LogLine> = text
+        .lines()
+        .filter_map(parse_log_file_line)
+        .filter(|line| {
+            options
+                .level
+                .map(|level| line.level >= level)
+                .unwrap_or(true)
+        })
+        .filter(|line| {
+            options
+                .start
+                .as_deref()
+                .map(|start| line.timestamp.as_str() >= start)
+                .unwrap_or(true)
+        })
+        .filter(|line| {
+            options
+                .end
+                .as_deref()
+                .map(|end| line.timestamp.as_str() <= end)
+                .unwrap_or(true)
         })
         .collect();
-    Ok(lines)
+
+    let requested = options.lines as usize;
+    if requested > 0 && lines.len() > requested {
+        lines = lines.split_off(lines.len() - requested);
+    }
+    lines
+}
+
+fn parse_log_file_line(line: &str) -> Option<LogLine> {
+    let rest = line.strip_prefix('[')?;
+    let (timestamp, rest) = rest.split_once(']')?;
+    let message = rest.trim().to_string();
+    Some(LogLine {
+        timestamp: timestamp.trim().to_string(),
+        level: classify_log_level(&message),
+        title: log_title(&message),
+        message,
+    })
+}
+
+fn classify_log_level(message: &str) -> LogLevel {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("critical") || lower.contains("fatal") {
+        LogLevel::Critical
+    } else if lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("refused")
+        || lower.contains("exception")
+    {
+        LogLevel::Error
+    } else if lower.contains("warn") || lower.contains("not allowed") {
+        LogLevel::Warning
+    } else {
+        LogLevel::Info
+    }
+}
+
+fn log_title(message: &str) -> Option<String> {
+    let lower = message.to_ascii_lowercase();
+    let title = if lower.contains("zone transfer") {
+        "zone transfer"
+    } else if lower.contains("notify") {
+        "notify"
+    } else if lower.contains("configuration") {
+        "configuration"
+    } else if lower.contains("new record") {
+        "record"
+    } else {
+        return None;
+    };
+    Some(title.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn latest_log_file_name_picks_latest_file() {
+        let raw = json!({
+            "response": {
+                "logFiles": [
+                    {"fileName": "2026-05-28", "size": "1 KB"},
+                    {"fileName": "2026-05-29", "size": "2 KB"}
+                ]
+            },
+            "status": "ok"
+        });
+
+        assert_eq!(latest_log_file_name(&raw).unwrap(), "2026-05-29");
+    }
+
+    #[test]
+    fn parse_log_file_extracts_and_filters_recent_lines() {
+        let text = "\
+[2026-05-29 05:36:25 Local] [10.2.65.122:0] [admin] New record was added to Primary zone 'hankin.io' successfully
+[2026-05-29 05:36:30 Local] DNS Server failed to notify name server '10.5.161.84' (RCODE=Refused) for zone: hankin.io
+[2026-05-29 05:36:31 Local] Saved zone file for domain: hankin.io
+";
+
+        let lines = parse_log_file(
+            text,
+            &LogsOptions {
+                lines: 1,
+                start: None,
+                end: None,
+                level: Some(LogLevel::Error),
+            },
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].level, LogLevel::Error);
+        assert_eq!(lines[0].title.as_deref(), Some("notify"));
+        assert!(lines[0].message.contains("RCODE=Refused"));
+    }
+
+    #[test]
+    fn parse_log_file_line_ignores_unstructured_lines() {
+        assert!(parse_log_file_line("not a technitium log line").is_none());
+    }
 }

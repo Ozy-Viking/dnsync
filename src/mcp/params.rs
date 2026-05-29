@@ -3,8 +3,15 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::core::dns::records::{RecordData, RecordSelector};
 use crate::core::dns::zones::ZoneImportOptions;
+use crate::core::dns::{
+    logs::{LogLevel, LogsOptions},
+    records::{RecordData, RecordSelector},
+};
+
+fn default_true() -> bool {
+    true
+}
 
 // ─── Shared server scope ───────────────────────────────────────────────────
 
@@ -66,16 +73,36 @@ pub struct ImportZoneFileParams {
     pub options: ZoneImportOptions,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct TransferZoneParams {
+    /// Zone name to transfer, e.g. "example.com"
+    pub zone: String,
+    /// Source server ID.
+    pub from: String,
+    /// Destination server ID.
+    pub to: String,
+    /// Overwrite existing record sets in the destination for imported types (default: true)
+    #[serde(default = "default_true")]
+    pub overwrite: bool,
+    /// Delete all existing records in the destination before importing (default: false)
+    #[serde(default)]
+    pub overwrite_zone: bool,
+}
+
 // ─── Record params ─────────────────────────────────────────────────────────
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ListRecordsParams {
     /// The DNS server ID to run this command against (see dns_list_servers)
     pub server_id: String,
-    /// Domain to list records for
-    pub domain: String,
+    /// Domain to list records for. Omit to list records for all hosted zones.
+    #[serde(default)]
+    pub domain: Option<String>,
     /// Zone name (if different from domain)
     pub zone: Option<String>,
+    /// Also show records for every subdomain of the given domain
+    #[serde(default)]
+    pub all_subdomains: Option<bool>,
     /// Prefer a locally-resolved private IP over the provider's public A/AAAA value
     #[serde(default, rename = "useLocalIp", alias = "use_local_ip")]
     pub use_local_ip: Option<bool>,
@@ -119,6 +146,81 @@ pub struct StatsParams {
     pub server_id: String,
     /// LastHour, LastDay, LastWeek, LastMonth, LastYear (default: LastDay)
     pub stats_type: Option<String>,
+}
+
+// ─── Logs params ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevelParam {
+    Trace,
+    Debug,
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+impl From<LogLevelParam> for LogLevel {
+    fn from(value: LogLevelParam) -> Self {
+        match value {
+            LogLevelParam::Trace => LogLevel::Trace,
+            LogLevelParam::Debug => LogLevel::Debug,
+            LogLevelParam::Info => LogLevel::Info,
+            LogLevelParam::Warning => LogLevel::Warning,
+            LogLevelParam::Error => LogLevel::Error,
+            LogLevelParam::Critical => LogLevel::Critical,
+        }
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct LogsParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
+    /// Maximum number of log lines to return. Provider default is used when omitted.
+    pub lines: Option<u32>,
+    /// Optional provider-specific start timestamp/filter.
+    pub start: Option<String>,
+    /// Optional provider-specific end timestamp/filter.
+    pub end: Option<String>,
+    /// Minimum log level to return.
+    pub level: Option<LogLevelParam>,
+}
+
+impl From<LogsParams> for LogsOptions {
+    fn from(value: LogsParams) -> Self {
+        Self {
+            lines: value.lines.unwrap_or_default(),
+            start: value.start,
+            end: value.end,
+            level: value.level.map(Into::into),
+        }
+    }
+}
+
+// ─── Sync params ───────────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SyncParams {
+    /// Named sync profile from the config file.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Source server ID, overriding the profile.
+    #[serde(default)]
+    pub from: Option<String>,
+    /// Destination server ID, overriding the profile.
+    #[serde(default)]
+    pub to: Option<String>,
+    /// Zones to sync, overriding the profile.
+    #[serde(default)]
+    pub zones: Vec<String>,
+    /// IP rewrite entries in SRC=DST form.
+    #[serde(default)]
+    pub map: Vec<String>,
+    /// Write the changes. False/default is dry-run.
+    #[serde(default)]
+    pub apply: bool,
 }
 
 // ─── Resolve params ────────────────────────────────────────────────────────

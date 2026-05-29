@@ -1,7 +1,9 @@
 pub mod access_lists;
 pub mod cache;
+pub mod logs;
 pub mod records;
 pub mod resolve;
 pub mod settings;
 pub mod stats;
+pub mod sync;
 pub mod zones;

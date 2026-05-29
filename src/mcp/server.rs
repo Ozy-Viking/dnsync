@@ -11,13 +11,15 @@ use crate::{
     control_plane::{
         config::AppConfig,
         policy::{Policy, PolicyRule},
+        transfer,
     },
     mcp::{
         helpers::mcp_err,
         params::*,
         tools::{
-            access_lists, cache as cache_tools, records as record_tools, resolve as resolve_tools,
-            settings as settings_tools, stats as stats_tools, zones as zone_tools,
+            access_lists, cache as cache_tools, logs as logs_tools, records as record_tools,
+            resolve as resolve_tools, settings as settings_tools, stats as stats_tools,
+            sync as sync_tools, zones as zone_tools,
         },
     },
     vendors::runtime::VendorClient,
@@ -121,6 +123,19 @@ impl DnsServer {
         let client = VendorClient::from_server(server)?;
         let policy = Policy::for_server(server, &self.cli_access, &self.cli_allow_zone)?;
         Ok((client, policy))
+    }
+
+    fn show_settings_secrets(&self, server_id: &str) -> crate::core::error::Result<bool> {
+        self.config
+            .servers
+            .iter()
+            .find(|s| s.id.eq_ignore_ascii_case(server_id))
+            .map(|server| server.mcp.show_settings_secrets)
+            .ok_or_else(|| {
+                crate::core::error::Error::config(format!(
+                    "no server named '{server_id}' — call dns_list_servers to see available IDs"
+                ))
+            })
     }
 }
 
@@ -399,6 +414,41 @@ impl DnsServer {
         zone_tools::handle_export_zone_file(&client, &policy, p).await
     }
 
+    #[tool(description = "Copy a zone from one configured server to another. \
+    Reads from `from`, writes to `to`, and respects each server's MCP permissions and allowed zones.")]
+    async fn dns_transfer_zone(
+        &self,
+        Parameters(p): Parameters<TransferZoneParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_transfer_zone", "MCP tool invoked");
+        let (_, from_policy) = self.resolve_server(&p.from).map_err(mcp_err)?;
+        let (_, to_policy) = self.resolve_server(&p.to).map_err(mcp_err)?;
+        let check = from_policy
+            .check_read()
+            .and(from_policy.check_zone(&p.zone))
+            .and(to_policy.check_write())
+            .and(to_policy.check_zone(&p.zone));
+        Ok(
+            crate::mcp::helpers::run_json("dns_transfer_zone", check, async move {
+                let result = transfer::transfer_zone(
+                    Some(&self.config),
+                    &p.zone,
+                    &p.from,
+                    &p.to,
+                    p.overwrite,
+                    p.overwrite_zone,
+                )
+                .await?;
+                serde_json::to_value(result).map_err(|e| {
+                    crate::core::error::Error::parse(format!(
+                        "could not serialise zone transfer result: {e}"
+                    ))
+                })
+            })
+            .await,
+        )
+    }
+
     // ── Records ───────────────────────────────────────────────────────────
 
     /// List DNS records for a domain, returning typed records including writable and DNSSEC types.
@@ -424,7 +474,7 @@ impl DnsServer {
         Parameters(p): Parameters<ListRecordsParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_list_records", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, zone = ?p.zone, "tool invoked");
+        tracing::debug!(domain = ?p.domain, zone = ?p.zone, "tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         record_tools::handle_list_records(&client, &policy, p).await
     }
@@ -851,7 +901,61 @@ impl DnsServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(tool = "dns_get_settings", "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
-        settings_tools::handle_get_settings(&client, &policy).await
+        let show_secrets = self.show_settings_secrets(&p.server_id).map_err(mcp_err)?;
+        settings_tools::handle_get_settings(&client, &policy, show_secrets).await
+    }
+
+    // ── Logs ──────────────────────────────────────────────────────────────
+
+    /// Retrieve DNS server logs from the specified configured backend.
+    #[tool(
+        description = "Get DNS server logs. Use `server_id` from dns_list_servers. \
+    Optional filters: lines, start, end, and level."
+    )]
+    async fn dns_logs(
+        &self,
+        Parameters(p): Parameters<LogsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_logs", "MCP tool invoked");
+        let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
+        logs_tools::handle_logs(&client, &policy, p).await
+    }
+
+    // ── Sync ──────────────────────────────────────────────────────────────
+
+    #[tool(description = "Sync records between two configured servers. \
+    Dry-run by default; set `apply` to true to write changes.")]
+    async fn dns_sync(
+        &self,
+        Parameters(p): Parameters<SyncParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_sync", "MCP tool invoked");
+        let profile = p.profile.as_deref().and_then(|name| {
+            self.config
+                .sync
+                .iter()
+                .find(|profile| profile.name.eq_ignore_ascii_case(name))
+        });
+        let from_id = p
+            .from
+            .as_deref()
+            .or_else(|| profile.map(|profile| profile.from.as_str()))
+            .ok_or_else(|| {
+                mcp_err(crate::core::error::Error::parse(
+                    "sync requires a source server: name a profile or pass from",
+                ))
+            })?;
+        let to_id =
+            p.to.as_deref()
+                .or_else(|| profile.map(|profile| profile.to.as_str()))
+                .ok_or_else(|| {
+                    mcp_err(crate::core::error::Error::parse(
+                        "sync requires a destination server: name a profile or pass to",
+                    ))
+                })?;
+        let (_, from_policy) = self.resolve_server(from_id).map_err(mcp_err)?;
+        let (_, to_policy) = self.resolve_server(to_id).map_err(mcp_err)?;
+        sync_tools::handle_sync(&self.config, &from_policy, &to_policy, p).await
     }
 
     // ── Direct DNS resolution (mirrors `dns query`) ───────────────────────

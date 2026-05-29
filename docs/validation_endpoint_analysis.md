@@ -2,7 +2,11 @@
 
 ## Executive Summary
 
-DNS validation endpoints in dnsync are **configuration-time constructs only** and are **not used at runtime** for:
+Legacy `[[servers.validation_endpoints]]` entries are mostly **configuration-time constructs**.
+The newer per-server transport blocks (`[servers.dns]`, `[servers.dot]`,
+`[servers.doh]`, `[servers.doq]`) are used by direct query and MCP resolution.
+
+Validation endpoints are **not used at runtime** for:
 
 - Record listing/query operations
 - Zone import/export operations
@@ -11,7 +15,9 @@ DNS validation endpoints in dnsync are **configuration-time constructs only** an
 The validation endpoint layer exists purely for:
 
 1. Configuration validation at startup/add time
-2. Potential future use (currently unwired)
+2. Resolver-target validation/reporting paths
+3. Backward-compatible config shape while per-server transport blocks become
+   the preferred model
 
 ## Detailed Findings
 
@@ -21,7 +27,7 @@ The validation endpoint layer exists purely for:
 CLI Add / Interactive Wizard
     → main.rs:ConfigCmd::Add
     → control_plane/config.rs:add_server()
-    → AppConfig::validate() 
+    → AppConfig::validate()
         → validate_validation_endpoints()  ← VALIDATION HAPPENS HERE
     → config::append_server_entry()  ← WRITES TO TOML
 ```
@@ -52,7 +58,7 @@ CLI: dns record list example.com
         → list_records_for_all_zones() 
         OR search_bare_label_in_zones()
         OR direct client.list_records()  ← VENDOR API CALL
-            → Vendors: Technitium/Pangolin/Cloudflare HTTP APIs
+            → Vendors: Technitium/Pangolin/Cloudflare/UniFi/Pi-hole HTTP APIs
 ```
 
 **Files involved:**
@@ -92,18 +98,18 @@ CLI: dns zone transfer example.com
 
 Defined in `src/core/dns/validation.rs`:
 
-- `HickoryDnsEndpointResolver::query_endpoint()` - Builds Hickory resolvers
-- `resolver_for_endpoint()` → transport-specific builders, one per supported transport:
+- shared resolver builders construct Hickory resolvers for validation and
+  direct query paths
+- transport-specific builders, one per supported transport:
   - `plain_dns_name_server()` (UDP+TCP, port 53)
   - `dot_name_server()` (TLS, port 853)
   - `doh_name_server()` (HTTPS, port 443, path `/dns-query`)
-  - `doq_name_server()` (QUIC, port 853) — **planned**; transport is enumerated
-    here for parity with the project mandate but is not yet wired
+  - `doq_name_server()` (QUIC, port 853) — available only when compiled with
+    the `doq` Cargo feature; default builds report `unsupported_transport`
 - `ValidationReport` types - `disabled()`, `skipped_no_endpoints()`, success/failure reports
 
 Per the project mandate (`agents.md`), all **four** transports — DNS, DoT, DoH,
-and DoQ — are first-class. The first three are implemented today; DoQ is in
-progress.
+and DoQ — are first-class config/CLI tags. DoQ execution is feature-gated.
 
 **Key observation:** No CLI/MCP/vendor code calls `HickoryDnsEndpointResolver::query_endpoint()` or related validation functions.
 
@@ -111,7 +117,7 @@ progress.
 
 ### Validation Endpoint Configuration Shape
 
-- Required: `name`, `transport` (`dns`/`dot`/`doh`/`doq`; `doq` is planned)
+- Required: `name`, `transport` (`dns`/`dot`/`doh`/`doq`)
 - DNS/DoT/DoQ: require nonempty `address`
 - DoH: require nonempty `url`
 - Optional fields: `port`, `tls_server_name`, `timeout_ms`
@@ -123,7 +129,8 @@ progress.
 - **DNS**: UDP+TCP name servers, port 53
 - **DoT**: TLS only, port 853, server name from `tls_server_name` or `address`
 - **DoH**: HTTPS only, port 443, default path `/dns-query`, server name from `tls_server_name` or URL host
-- **DoQ**: QUIC, port 853, server name from `tls_server_name` or `address` — **planned**, not yet wired
+- **DoQ**: QUIC, port 853, server name from `tls_server_name` or `address`;
+  requires `--features doq` to execute
 - **Validation timeout**: Defaults to 5000 ms
 
 ### Enabled Flag Behavior

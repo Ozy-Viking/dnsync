@@ -126,7 +126,7 @@ pub enum Command {
         show_secrets: bool,
     },
 
-    /// Fetch DNS query logs
+    /// Fetch DNS server logs
     Logs {
         /// Maximum number of log entries to return
         #[arg(long, default_value_t = 50)]
@@ -168,6 +168,9 @@ pub enum ConfigCmd {
     /// Print the config to stdout (existing config with tokens redacted, or the
     /// starter template if no config file exists yet)
     Print,
+
+    /// Add newly-known default values to existing server entries without overwriting set values
+    Update,
 
     /// Add a server entry to the config file (creates the file if needed).
     /// Run with no flags to enter interactive setup.

@@ -4,7 +4,7 @@ A Rust CLI + MCP server for managing DNS servers.
 
 Use it interactively from the terminal, or run it as an MCP server so Claude can manage your DNS.
 
-**Supported vendors:** Technitium · Pangolin · Cloudflare
+**Supported vendors:** Technitium · Pangolin · Cloudflare · UniFi · Pi-hole
 
 ## Build
 
@@ -62,6 +62,8 @@ Or non-interactively with flags:
 dns config add --id home --vendor technitium --base-url-env HOME_DNS_URL --token-env HOME_DNS_TOKEN
 dns config add --id cf   --vendor cloudflare  --token-env CLOUDFLARE_API_TOKEN
 dns config add --id pg   --vendor pangolin    --org-id my-org --token-env PANGOLIN_API_TOKEN
+dns config add --id udm  --vendor unifi       --base-url https://192.168.1.1/proxy/network/integration/v1 --org-id Default --token-env UNIFI_API_TOKEN
+dns config add --id ph   --vendor pihole      --base-url http://pi.hole --token-env PIHOLE_API_TOKEN
 ```
 
 ### Example config
@@ -88,8 +90,8 @@ server_name = "dns1.hankin.io"
 enabled = true
 url = "https://dns1.hankin.io/dns-query"
 
-# DoQ (DNS-over-QUIC, port 853) — planned; configuration is accepted but
-# the transport is not yet wired into validation/benchmarking.
+# DoQ (DNS-over-QUIC, port 853). Requires a binary built with `--features doq`
+# to execute queries; default builds parse config but return unsupported_transport.
 [servers.doq]
 enabled = true
 addr = "10.5.0.53:853"
@@ -150,6 +152,19 @@ vendor = "pangolin"
 org_id = "my-org"
 token_env = "PANGOLIN_API_TOKEN"
 
+[[servers]]
+id = "udm"
+vendor = "unifi"
+base_url = "https://192.168.1.1/proxy/network/integration/v1"
+org_id = "Default" # UniFi site name or UUID
+token_env = "UNIFI_API_TOKEN"
+
+[[servers]]
+id = "ph"
+vendor = "pihole"
+base_url = "http://pi.hole"
+token_env = "PIHOLE_API_TOKEN"
+
 # Named record-sync profile — see the Sync section below.
 [[sync]]
 name = "home"          # invoked as `dns sync home`
@@ -170,6 +185,8 @@ Vendor defaults when no `base_url` is set:
 - `technitium` → `http://localhost:5380`
 - `pangolin` → `https://api.pangolin.net/v1`
 - `cloudflare` → `https://api.cloudflare.com/client/v4`
+- `unifi` → `https://192.168.1.1/proxy/network/integration/v1`
+- `pihole` → `http://pi.hole`
 
 Per-server DNS transports are optional query endpoints, used by `dns query`
 (see below), endpoint validation, and future benchmarking. Configure them with
@@ -212,7 +229,7 @@ Credential resolution chain (highest priority first):
 | Step | Base URL | Token |
 |---|---|---|
 | 1 | `--base-url` flag | `--token` flag |
-| 2 | vendor env var (`DNSYNC_TECHNITIUM_BASE_URL`, `DNSYNC_PANGOLIN_BASE_URL`, `DNSYNC_CLOUDFLARE_BASE_URL`) | vendor env var (`DNSYNC_TECHNITIUM_API_TOKEN`, `DNSYNC_PANGOLIN_API_TOKEN`, `DNSYNC_CLOUDFLARE_API_TOKEN`) |
+| 2 | vendor env var (`DNSYNC_TECHNITIUM_BASE_URL`, `DNSYNC_PANGOLIN_BASE_URL`, `DNSYNC_CLOUDFLARE_BASE_URL`, `DNSYNC_UNIFI_BASE_URL`, `DNSYNC_PIHOLE_BASE_URL`) | vendor env var (`DNSYNC_TECHNITIUM_API_TOKEN`, `DNSYNC_PANGOLIN_API_TOKEN`, `DNSYNC_CLOUDFLARE_API_TOKEN`, `DNSYNC_UNIFI_API_TOKEN`, `DNSYNC_PIHOLE_API_TOKEN`) |
 | 3 | config `base_url_env` → env lookup | config `token_env` → env lookup |
 | 4 | config `base_url` literal | config `token` literal |
 | 5 | vendor default URL | — |
@@ -220,6 +237,10 @@ Credential resolution chain (highest priority first):
 Technitium also accepts legacy `TECHNITIUM_BASE_URL` / `TECHNITIUM_API_TOKEN` at step 2 (checked after `DNSYNC_TECHNITIUM_*`).
 
 Pangolin additionally requires `org_id` — resolved from `DNSYNC_PANGOLIN_ORG_ID` then config `org_id`.
+
+UniFi also requires a site name or UUID from `DNSYNC_UNIFI_SITE` or config
+`org_id`. Pi-hole uses the same token/base-url resolution pattern as other
+token-authenticated vendors.
 
 ---
 
@@ -323,6 +344,10 @@ normalizes them into the same shape used by other vendors. `--use-local-ip`
 optionally resolves A/AAAA record names with Hickory and prefers a
 private/local address when one is visible; without the flag, provider API
 values are preserved exactly.
+
+UniFi and Pi-hole expose record operations without authoritative zone
+management, so zone-specific commands report unsupported operation errors for
+those vendors. Pi-hole also supports cache and block/allow list commands.
 
 ### Query
 

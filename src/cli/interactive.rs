@@ -232,6 +232,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         mcp: McpPermissions {
             access,
             allowed_zones,
+            show_settings_secrets: false,
         },
         validation_endpoints,
     })

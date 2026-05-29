@@ -759,29 +759,6 @@ mod tests {
         assert_eq!(rec.data["id"], "record-id-xyz");
     }
 
-    // ── extract_relative_name ─────────────────────────────────────────────────
-
-    #[test]
-    fn subdomain_is_extracted() {
-        assert_eq!(
-            extract_relative_name("sub.example.com", "example.com"),
-            "sub"
-        );
-    }
-
-    #[test]
-    fn apex_returns_at() {
-        assert_eq!(extract_relative_name("example.com", "example.com"), "@");
-    }
-
-    #[test]
-    fn non_matching_fqdn_returned_as_is() {
-        assert_eq!(
-            extract_relative_name("other.net", "example.com"),
-            "other.net"
-        );
-    }
-
     // ── record_data_to_cloudflare_body ────────────────────────────────────────
 
     #[test]

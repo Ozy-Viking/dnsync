@@ -51,11 +51,13 @@ need to be listed per-feature.
 
 ```toml
 [features]
-default = ["technitium", "pangolin", "cloudflare", "newvendor"]
+default = ["technitium", "pangolin", "cloudflare", "unifi", "pihole", "newvendor"]
 
 technitium = []
 pangolin = []
 cloudflare = []
+unifi = []
+pihole = []
 newvendor = []
 ```
 
@@ -77,6 +79,8 @@ pub enum VendorKind {
     Technitium,
     Pangolin,
     Cloudflare,
+    Unifi,
+    Pihole,
     NewVendor,
 }
 ```
@@ -109,6 +113,8 @@ Add match arms in `resolved_base_url()` and `resolved_location()` on `DnsServerC
     VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
     VendorKind::Pangolin   => PANGOLIN_DEFAULT_BASE_URL.to_string(),
     VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL.to_string(),
+    VendorKind::Unifi      => UNIFI_DEFAULT_BASE_URL.to_string(),
+    VendorKind::Pihole     => PIHOLE_DEFAULT_BASE_URL.to_string(),
     VendorKind::NewVendor  => NEWVENDOR_DEFAULT_BASE_URL.to_string(),
 })
 
@@ -117,6 +123,8 @@ let url = self.base_url.as_deref().unwrap_or(match self.vendor {
     VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
     VendorKind::Pangolin   => PANGOLIN_DEFAULT_BASE_URL,
     VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
+    VendorKind::Unifi      => UNIFI_DEFAULT_BASE_URL,
+    VendorKind::Pihole     => PIHOLE_DEFAULT_BASE_URL,
     VendorKind::NewVendor  => NEWVENDOR_DEFAULT_BASE_URL,
 });
 ```
@@ -128,6 +136,8 @@ tbl["vendor"] = value(match server.vendor {
     VendorKind::Technitium => "technitium",
     VendorKind::Pangolin   => "pangolin",
     VendorKind::Cloudflare => "cloudflare",
+    VendorKind::Unifi      => "unifi",
+    VendorKind::Pihole     => "pihole",
     VendorKind::NewVendor  => "newvendor",
 });
 ```
@@ -495,18 +505,17 @@ pub struct VendorCapabilities {
     pub cache: bool,
     pub access_lists: bool,
     pub settings: bool,
-    pub stats: bool,
     pub zone_import: bool,
+    pub zone_export: bool,
+    pub logs: bool,
 }
 ```
 
 Set each boolean to `true` only for operations you fully implement. Capabilities must reflect
 actual behaviour, not aspirational support.
 
-`stats` is a first-class capability alongside zones/records/cache: a vendor that
-exposes per-server statistics (query counts, top clients, cache hit rate, etc.)
-must set `stats: true` and back it with a working `StatsRead` implementation.
-Vendors without a stats endpoint set `stats: false` and return
+`StatsRead` is part of the service contract, but there is currently no separate
+`stats` capability flag. Vendors without a stats endpoint should return
 `Error::unsupported("VendorName", "stats")` from `get_stats`.
 
 Example for Pangolin (read-only):
@@ -518,8 +527,9 @@ VendorCapabilities {
     cache: false,
     access_lists: false,
     settings: true,
-    stats: false,
     zone_import: false,
+    zone_export: false,
+    logs: false,
 }
 ```
 
@@ -654,17 +664,31 @@ targets/sites/health → vendor metadata in data
 Add credential resolution in `src/vendors/newvendor/mod.rs`, then add dispatch branches in
 `src/vendors/runtime.rs` that call those vendor-local constructors.
 
-Update every `#[cfg(any(feature = "technitium", feature = "pangolin"))]` guard to include
-the new feature:
+Update any aggregate vendor `#[cfg(any(...))]` guards to include the new
+feature:
 
 ```rust
-#[cfg(any(feature = "technitium", feature = "pangolin", feature = "cloudflare", feature = "newvendor"))]
+#[cfg(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi",
+    feature = "pihole",
+    feature = "newvendor",
+))]
 ```
 
 Update the `compile_error!` guard:
 
 ```rust
-#[cfg(not(any(feature = "technitium", feature = "pangolin", feature = "cloudflare", feature = "newvendor")))]
+#[cfg(not(any(
+    feature = "technitium",
+    feature = "pangolin",
+    feature = "cloudflare",
+    feature = "unifi",
+    feature = "pihole",
+    feature = "newvendor",
+)))]
 compile_error!("No DNS vendor feature is enabled...");
 ```
 
@@ -783,6 +807,8 @@ let choices = vec![
     VendorChoice { kind: VendorKind::Technitium, label: "technitium" },
     VendorChoice { kind: VendorKind::Pangolin,   label: "pangolin" },
     VendorChoice { kind: VendorKind::Cloudflare, label: "cloudflare" },
+    VendorChoice { kind: VendorKind::Unifi,      label: "unifi" },
+    VendorChoice { kind: VendorKind::Pihole,     label: "pihole" },
     VendorChoice { kind: VendorKind::NewVendor,  label: "newvendor" },
 ];
 ```
