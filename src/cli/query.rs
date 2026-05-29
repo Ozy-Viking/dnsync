@@ -1032,10 +1032,11 @@ async fn lookup_all(
 
     if all_records.is_empty() {
         (worst_status, all_records)
-    } else if worst_status == QueryStatus::NoError {
-        (QueryStatus::NoError, all_records)
     } else {
-        (worst_status, all_records)
+        // If we have any successful records, return NoError status so
+        // expand_rows will display them instead of showing status-only rows.
+        // Mixed success/failure means we show the successful answers.
+        (QueryStatus::NoError, all_records)
     }
 }
 
