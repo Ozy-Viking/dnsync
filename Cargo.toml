@@ -15,7 +15,7 @@ name = "dnslib"
 path = "src/lib.rs"
 
 [features]
-default = ["technitium", "pangolin", "cloudflare", "unifi", "pihole"]
+default = ["technitium", "pangolin", "cloudflare", "unifi", "pihole", "doq"]
 technitium = []
 pangolin = []
 cloudflare = []
@@ -44,6 +44,7 @@ miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
 tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
 hickory-resolver = { version = "0.26", features = [
     "tls-ring",
     "https-ring",

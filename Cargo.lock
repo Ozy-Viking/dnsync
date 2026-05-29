@@ -483,6 +483,7 @@ version = "0.2.3"
 dependencies = [
  "clap",
  "clap_complete",
+ "futures",
  "hickory-resolver",
  "http",
  "inquire",

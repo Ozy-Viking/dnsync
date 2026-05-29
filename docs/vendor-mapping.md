@@ -93,6 +93,6 @@ server, `[servers.dns]`, `[servers.dot]`, `[servers.doh]`, and `[servers.doq]`
 configure resolver endpoints used by `dns query`, `dns_resolve`, validation,
 and future benchmarking.
 
-DoQ means DNS-over-QUIC on port 853. Its config is portable across builds, but
-the resolver implementation requires building with `--features doq`.
-
+DoQ means DNS-over-QUIC on port 853. Its config is portable across builds.
+Default builds include the resolver implementation via the `doq` Cargo feature;
+custom builds that disable default features can omit it.

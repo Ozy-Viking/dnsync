@@ -30,8 +30,9 @@ Use a general DNS control-plane architecture:
 Vendor adapters must implement the shared trait set and report unavailable
 operations explicitly with `Error::unsupported(...)`.
 
-DoQ is a first-class transport tag in config and command parsing, but executable
-DNS-over-QUIC support remains gated by the `doq` Cargo feature.
+DoQ is a first-class transport tag in config and command parsing. Default
+builds include executable DNS-over-QUIC support via the `doq` Cargo feature;
+custom no-default-feature builds can still omit it.
 
 ## Consequences
 
@@ -48,4 +49,3 @@ record-capable but zone-less vendors such as UniFi and Pi-hole.
 Transport configuration is independent from vendor API configuration. A
 Cloudflare API server entry, for example, does not automatically imply public
 resolver endpoints until provider-level resolver defaults are added.
-
