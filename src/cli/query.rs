@@ -641,6 +641,14 @@ fn plan_targets_for_server(
 ) -> Vec<PlanTarget> {
     let mut transports = chosen_transports(args);
     transports.sort_by_key(|t| precedence_index(*t));
+    // Unless a transport was named explicitly, drop ones that can't run
+    // in this build (DoQ on a non-`doq` build). This keeps fan-outs
+    // (`--all`/`--all-transports`) and the default single-best pick from
+    // emitting noisy UNSUPPORTED rows for a transport the user never
+    // asked for; an explicit `--doq` still surfaces UNSUPPORTED.
+    if !has_explicit_transport(args) {
+        transports.retain(|t| transport_compiled_in(*t));
+    }
     if !args.all_transports
         && !has_explicit_transport(args)
         && let Some(best) = transports
@@ -969,6 +977,16 @@ fn precedence_index(t: ValidationTransport) -> u8 {
         .position(|p| *p == t)
         .map(|i| i as u8)
         .unwrap_or(255)
+}
+
+/// Whether a transport can actually run in this build. Everything is
+/// available except DoQ, which is gated behind the non-default `doq`
+/// Cargo feature.
+fn transport_compiled_in(t: ValidationTransport) -> bool {
+    match t {
+        ValidationTransport::Doq => cfg!(feature = "doq"),
+        _ => true,
+    }
 }
 
 fn transport_word(t: ValidationTransport) -> &'static str {
@@ -1781,6 +1799,84 @@ mod tests {
         let mut args = QueryArgs::default();
         args.server = vec!["dns1".to_string(), "dns2".to_string()];
         validate_cli_rules(&args).unwrap();
+    }
+
+    fn server_with_dns_and_doq() -> DnsServerConfig {
+        use crate::control_plane::config::{
+            DnsTransportConfig, DoqTransportConfig, McpPermissions, VendorKind,
+        };
+        DnsServerConfig {
+            id: "dns1".to_string(),
+            vendor: VendorKind::Technitium,
+            location: None,
+            base_url: None,
+            base_url_env: None,
+            token: None,
+            token_env: None,
+            org_id: None,
+            cluster: None,
+            dns: Some(DnsTransportConfig {
+                enabled: true,
+                addr: Some("10.5.0.53:53".to_string()),
+                timeout_ms: None,
+            }),
+            dot: None,
+            doh: None,
+            doq: Some(DoqTransportConfig {
+                enabled: true,
+                addr: Some("10.5.0.53:853".to_string()),
+                server_name: Some("dns1.hankin.io".to_string()),
+                timeout_ms: None,
+            }),
+            mcp: McpPermissions::default(),
+            validation_endpoints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn transport_compiled_in_gates_only_doq() {
+        assert!(transport_compiled_in(ValidationTransport::Dns));
+        assert!(transport_compiled_in(ValidationTransport::Dot));
+        assert!(transport_compiled_in(ValidationTransport::Doh));
+        assert_eq!(
+            transport_compiled_in(ValidationTransport::Doq),
+            cfg!(feature = "doq")
+        );
+    }
+
+    #[test]
+    fn all_transports_skips_doq_unless_compiled_in() {
+        let server = server_with_dns_and_doq();
+        let mut args = QueryArgs::default();
+        args.all_transports = true;
+        let targets = plan_targets_for_server(&server, &args, Duration::from_millis(1000));
+        // DNS is always planned; DoQ only when the feature is enabled.
+        assert!(
+            targets
+                .iter()
+                .any(|t| t.transport == ValidationTransport::Dns)
+        );
+        assert_eq!(
+            targets
+                .iter()
+                .any(|t| t.transport == ValidationTransport::Doq),
+            cfg!(feature = "doq")
+        );
+    }
+
+    #[test]
+    fn explicit_doq_is_always_planned() {
+        let server = server_with_dns_and_doq();
+        let mut args = QueryArgs::default();
+        args.doq = true;
+        let targets = plan_targets_for_server(&server, &args, Duration::from_millis(1000));
+        // An explicit `--doq` is honoured regardless of build, so the
+        // UNSUPPORTED status still surfaces when the feature is off.
+        assert!(
+            targets
+                .iter()
+                .any(|t| t.transport == ValidationTransport::Doq)
+        );
     }
 
     #[test]

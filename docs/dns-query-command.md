@@ -763,16 +763,27 @@ No new direct dependencies. `quinn` arrives transitively through
 ### Runtime behaviour without the feature
 
 A config file containing a `[servers.doq]` block parses and validates on
-every build. Issuing a `dns query --server <id> --transport doq` (or
-selecting that block through the precedence fallback) on a build without
-`doq` returns `ValidationFailureKind::UnsupportedTransport` (already in
-the enum, no new variant). The CLI maps that to exit code `2` with the
-message:
+every build. DoQ is only *attempted* on a build without the `doq`
+feature when the user **explicitly asks for it** — an explicit `--doq`
+flag or a `quic://`/`doq://` ad-hoc target. In that case the resolver
+build returns `ValidationFailureKind::UnsupportedTransport`, the CLI
+shows an `UNSUPPORTED` row, logs a `tracing::warn!`, and the exit code is
+`2`:
 
 ```
 DoQ transport is not enabled in this build of dns.
 Rebuild with `--features doq` to enable DNS-over-QUIC.
 ```
+
+DoQ is **never run implicitly** on a non-`doq` build: fan-outs
+(`--all`/`--all-transports`) and the default single-best transport pick
+skip the DoQ block silently — same best-effort treatment as a
+missing/disabled block — so a stock build doesn't emit `UNSUPPORTED`
+rows or the warning for a transport the user never requested. (Selecting
+DoQ through `--server <id>` precedence only happens when DoQ is the
+server's *sole* configured transport; on a non-`doq` build that server
+then produces no block for the default query — pass `--doq` to see the
+`UNSUPPORTED` status.)
 
 ### CI / release implications
 
