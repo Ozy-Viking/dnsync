@@ -405,7 +405,13 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
 }
 
 fn apply_provider_transport_defaults(server: &mut DnsServerConfig) {
-    if server.location == Some(ServerLocation::Local) {
+    let inferred_local = server.location.is_none()
+        && server.base_url.as_deref().is_some_and(|url| {
+            let host = url_host(url);
+            host.eq_ignore_ascii_case("localhost")
+                || host.parse::<IpAddr>().ok().is_some_and(is_local_ip)
+        });
+    if server.location == Some(ServerLocation::Local) || inferred_local {
         return;
     }
 
@@ -3130,5 +3136,24 @@ mod tests {
 
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("duplicate sync profile name"));
+    }
+    #[test]
+    fn cloudflare_inferred_local_server_does_not_get_provider_transport_defaults() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+              [[servers]]
+              id = "cf-localhost"
+              vendor = "cloudflare"
+              base_url = "http://localhost:5380"
+              token_env = "TOKEN"
+          "#,
+        )
+        .unwrap();
+
+        let server = cfg.selected_server(None).unwrap();
+        assert!(server.dns.is_none());
+        assert!(server.dot.is_none());
+        assert!(server.doh.is_none());
+        assert!(server.doq.is_none());
     }
 }

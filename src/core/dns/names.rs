@@ -6,8 +6,8 @@
 /// Returns `"@"` for the zone apex. If the name is outside the supplied zone,
 /// the original name is returned unchanged.
 pub fn relative_to_zone(fqdn: &str, zone_name: &str) -> String {
-    let fqdn_lower = fqdn.to_lowercase();
-    let zone_lower = zone_name.to_lowercase();
+    let fqdn_lower = fqdn.to_ascii_lowercase();
+    let zone_lower = zone_name.to_ascii_lowercase();
 
     if fqdn_lower == zone_lower {
         return "@".to_string();

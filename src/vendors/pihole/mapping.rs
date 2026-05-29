@@ -166,20 +166,17 @@ mod tests {
     }
 
     #[test]
-    fn extract_relative_name_subdomain() {
-        assert_eq!(
-            extract_relative_name("sub.example.com", "example.com"),
-            "sub"
-        );
+    fn relative_to_zone_subdomain() {
+        assert_eq!(relative_to_zone("sub.example.com", "example.com"), "sub");
     }
 
     #[test]
-    fn extract_relative_name_apex() {
+    fn relative_to_zone_apex() {
         assert_eq!(relative_to_zone("example.com", "example.com"), "@");
     }
 
     #[test]
-    fn extract_relative_name_non_matching() {
+    fn relative_to_zone_non_matching() {
         assert_eq!(relative_to_zone("other.net", "example.com"), "other.net");
     }
 }
