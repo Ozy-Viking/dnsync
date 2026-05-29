@@ -148,9 +148,10 @@ above subsume it. Mapping for users converting scripts:
 - **`--all` expands** to `--all-servers --all-types --all-transports`
   before the rules above are applied, so `--all` with `@addr` errors the
   same way `--all-servers` with `@addr` does.
-- `--server <id>` where `<id>` resolves to a cluster, not a server,
-  errors with "use `--server <member>` to pick one of <listed
-  members>". Cluster fan-out is a future feature.
+- `--server <id>` where `<id>` matches a **cluster** expands to that
+  cluster's `members`; each member is queried as its own server. Mixing a
+  cluster and one of its members (`--server home-dns --server dns1`)
+  de-duplicates so each server runs once, preserving first-seen order.
 - The top-level `--token`, `--base-url`, `--config` flags are accepted
   but unused; pass-through, no parse error (matches the existing
   `record list` behaviour).
@@ -226,18 +227,25 @@ huly.hankin.io  A  300  10.5.0.42
 huly.hankin.io  A  300  10.5.0.42
 ```
 
-**Multiple servers** (`--all-servers`, or repeated `--server`) — each
-header gains a `server=<id>` tag so blocks are attributable:
+**Multiple servers** (`--all-servers`, repeated `--server`, or a cluster
+id) — each server's blocks are grouped under a
+`=== Server: <id> (<Vendor>) ===` header, matching the cross-server
+`record list` output style:
 
 ```
 $ dns q huly.hankin.io --server dns1 --server dns2
 
-@ 10.5.0.53:53  dns  server=dns1  4ms
+=== Server: dns1 (Technitium) ===
+@ 10.5.0.53:53  dns  4ms
 huly.hankin.io  A  300  10.5.0.42
 
-@ 10.6.0.53:53  dns  server=dns2  5ms
+=== Server: dns2 (Technitium) ===
+@ 10.6.0.53:53  dns  5ms
 huly.hankin.io  A  300  10.5.0.42
 ```
+
+A cluster id expands the same way — `dns q huly.hankin.io --server
+home-dns` produces one `=== Server: ===` group per member.
 
 If a transport is requested explicitly (`--doq`) but the block is
 absent or disabled, that transport gets a header line marking the
@@ -264,13 +272,18 @@ The process exit code is the worst across transports (see §Errors).
 ```
 
 **`--json`** (stable shape, suitable for piping). One JSON object per
-invocation, with a `results` array — one entry per (server, transport)
-pair used. A single-transport query produces a single-element `results`
-array; `--all-transports` produces one entry per enabled block, and
-multiple servers add more entries. Each result carries a `"server"`
-field when it came from a named server (omitted for system/ad-hoc).
-The top-level `target.server`/`target.cluster` are populated only for a
-single named server; for a multi-server fan-out they are `null`.
+invocation. The shape depends on how many servers were queried:
+
+- **Single server, system, or ad-hoc** → a flat `results` array, one
+  entry per (server, transport) pair. A single-transport query yields a
+  one-element array; `--all-transports` yields one entry per enabled
+  block. `target.server`/`target.cluster` describe the one server.
+- **Multiple servers** (repeated `--server`, `--all-servers`, or a
+  cluster) → a `servers` array instead, each entry grouping that server's
+  `results` under its `server`/`cluster`. Top-level
+  `target.server`/`target.cluster` are `null` (ambiguous).
+
+Single-server / ad-hoc (flat):
 
 ```json
 {
@@ -282,7 +295,6 @@ single named server; for a multi-server fan-out they are `null`.
   },
   "results": [
     {
-      "server": "dns1",                // present for named results
       "resolver": {
         "transport": "doh",
         "address": null,
@@ -296,20 +308,36 @@ single named server; for a multi-server fan-out they are `null`.
       "answers": [
         { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.42" }
       ]
+    }
+  ]
+}
+```
+
+Multiple servers (grouped):
+
+```json
+{
+  "query":   { "name": "huly.hankin.io", "types": ["A"] },
+  "target":  { "kind": "named", "server": null, "cluster": null },
+  "servers": [
+    {
+      "server": "dns1",
+      "cluster": "home-dns",
+      "results": [
+        {
+          "resolver": { "transport": "dns", "address": "10.5.0.53", "port": 53 },
+          "elapsed_ms": 4,
+          "status": "noerror",
+          "answers": [
+            { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.42" }
+          ]
+        }
+      ]
     },
     {
-      "resolver": {
-        "transport": "dot",
-        "address": "10.5.0.53",
-        "port": 853,
-        "url": null,
-        "server_name": "dns1.hankin.io"
-      },
-      "elapsed_ms": 9,
-      "status": "noerror",
-      "answers": [
-        { "name": "huly.hankin.io", "type": "A", "ttl": 300, "data": "10.5.0.42" }
-      ]
+      "server": "dns2",
+      "cluster": "home-dns",
+      "results": [ /* … */ ]
     }
   ]
 }

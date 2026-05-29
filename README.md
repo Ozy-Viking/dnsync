@@ -364,6 +364,7 @@ dns q huly.hankin.io --server dns1 --dot          # force DoT
 dns q huly.hankin.io --server dns1 --dot --doh    # fan out across two
 dns q huly.hankin.io --server dns1 --all-transports # every enabled block
 dns q huly.hankin.io --server dns1 --server dns2  # several servers
+dns q huly.hankin.io --server home-dns            # a cluster, expands to members
 dns q huly.hankin.io --all-servers                # every configured server
 dns q huly.hankin.io --all                        # all servers × types × transports
 dns q huly.hankin.io @1.1.1.1                     # ad-hoc plain DNS

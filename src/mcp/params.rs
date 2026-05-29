@@ -247,8 +247,15 @@ pub struct ResolveParams {
 
     /// A configured [[servers]] entry to query. Matched case-
     /// insensitively against `server.id`. Mutually exclusive with `at`.
+    /// For multiple servers (or a cluster), use `server_ids`.
     #[serde(default)]
     pub server_id: Option<String>,
+
+    /// Configured `[[servers]]` entries and/or cluster ids to query,
+    /// repeatable. Cluster ids expand to their members. Takes precedence
+    /// over `server_id` when both are set. Mutually exclusive with `at`.
+    #[serde(default)]
+    pub server_ids: Option<Vec<String>>,
 
     /// Ad-hoc resolver. `host[:port]` or
     /// `scheme://host[:port][/path]` (udp/tcp/dns/tls/dot/https/doh/

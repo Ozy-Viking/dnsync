@@ -21,7 +21,10 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::{
-    control_plane::config::{AppConfig, DnsServerConfig, ValidationTransport},
+    control_plane::{
+        app::select_query_servers,
+        config::{AppConfig, DnsServerConfig, ValidationTransport, VendorKind},
+    },
     core::{
         dns::{
             resolver::{ResolverKind, ResolverTarget, build_resolver, classify_hickory_error},
@@ -175,6 +178,9 @@ pub struct QueryResultBlock {
     /// resolver and ad-hoc targets. Used to disambiguate headers and
     /// JSON results when fanning out across multiple servers.
     pub server_id: Option<String>,
+    /// The vendor of the named server, shown in multi-server `=== Server
+    /// ===` group headers. `None` for system/ad-hoc targets.
+    pub server_vendor: Option<VendorKind>,
     pub transport: ValidationTransport,
     pub extras: Vec<(String, String)>,
     pub url: Option<String>,
@@ -475,6 +481,8 @@ struct PlanTarget {
     transport: ValidationTransport,
     /// The configured server id this plan entry came from, when named.
     server_id: Option<String>,
+    /// The vendor of the named server, carried for group headers.
+    server_vendor: Option<VendorKind>,
     /// `Some(target)` runs the lookup; `None` records a `skipped` row
     /// without a network call (explicit transport flag on a missing
     /// or disabled block).
@@ -531,6 +539,7 @@ fn build_system_plan(_args: &QueryArgs, timeout: Duration) -> Result<QueryPlan> 
         targets: vec![PlanTarget {
             transport: ValidationTransport::Dns,
             server_id: None,
+            server_vendor: None,
             target: None,
             target_label: display,
             extras,
@@ -577,7 +586,7 @@ fn build_servers_plan(
         Error::parse("querying a configured server requires a config file; none was loaded")
     })?;
 
-    let servers = resolve_server_set(cfg, args)?;
+    let servers = select_query_servers(cfg, &args.server, args.all_servers)?;
 
     let mut named = Vec::with_capacity(servers.len());
     let mut plan_targets = Vec::new();
@@ -593,42 +602,6 @@ fn build_servers_plan(
         kind: TargetKind::Named { servers: named },
         targets: plan_targets,
     })
-}
-
-/// Resolve the set of servers to query: every configured server for
-/// `--all-servers`, or each explicitly-named `--server <ID>` (rejecting
-/// cluster ids and de-duplicating repeats).
-fn resolve_server_set<'a>(
-    cfg: &'a AppConfig,
-    args: &QueryArgs,
-) -> Result<Vec<&'a DnsServerConfig>> {
-    if args.all_servers {
-        if cfg.servers.is_empty() {
-            return Err(Error::parse(
-                "`--all-servers` was given but the config defines no `[[servers]]`",
-            ));
-        }
-        return Ok(cfg.servers.iter().collect());
-    }
-
-    let mut out: Vec<&DnsServerConfig> = Vec::new();
-    for id in &args.server {
-        if cfg.clusters.contains_key(id) {
-            let members = cfg
-                .clusters
-                .get(id)
-                .map(|c| c.members.join(", "))
-                .unwrap_or_default();
-            return Err(Error::parse(format!(
-                "'{id}' is a cluster id, not a server. Pick one of its members ({members}) with --server",
-            )));
-        }
-        let server = cfg.selected_server(Some(id))?;
-        if !out.iter().any(|existing| existing.id == server.id) {
-            out.push(server);
-        }
-    }
-    Ok(out)
 }
 
 /// Build the per-transport plan entries for a single server, honouring
@@ -700,6 +673,7 @@ fn plan_targets_for_server(
         plan_targets.push(PlanTarget {
             transport,
             server_id: Some(server.id.clone()),
+            server_vendor: Some(server.vendor),
             target: Some(target),
             target_label: label,
             extras,
@@ -723,6 +697,7 @@ fn skipped_plan_target(
     PlanTarget {
         transport,
         server_id: Some(server.id.clone()),
+        server_vendor: Some(server.vendor),
         target: None,
         target_label: format!(
             "—  (no [servers.{}] on {})",
@@ -802,6 +777,7 @@ fn build_ad_hoc_plan(at: &str, args: &QueryArgs, timeout: Duration) -> Result<Qu
         targets: vec![PlanTarget {
             transport,
             server_id: None,
+            server_vendor: None,
             target: Some(target),
             target_label: label,
             extras,
@@ -983,10 +959,8 @@ fn precedence_index(t: ValidationTransport) -> u8 {
 /// available except DoQ, which is gated behind the non-default `doq`
 /// Cargo feature.
 fn transport_compiled_in(t: ValidationTransport) -> bool {
-    match t {
-        ValidationTransport::Doq => cfg!(feature = "doq"),
-        _ => true,
-    }
+    // Everything except DoQ is always available; DoQ needs the feature.
+    !matches!(t, ValidationTransport::Doq) || cfg!(feature = "doq")
 }
 
 fn transport_word(t: ValidationTransport) -> &'static str {
@@ -1012,6 +986,7 @@ async fn run_block(
     let finish = |status: QueryStatus, records: Vec<ObservedRecord>| QueryResultBlock {
         target_label: plan.target_label.clone(),
         server_id: plan.server_id.clone(),
+        server_vendor: plan.server_vendor,
         transport: plan.transport,
         extras: plan.extras.clone(),
         url: plan.url.clone(),
@@ -1325,12 +1300,25 @@ fn print_table(blocks: &[QueryResultBlock], asked_types: &[String]) {
     let multi_type = asked_types.len() > 1;
     let multi_server = distinct_server_count(blocks) > 1;
     let mut first = true;
+    let mut current_server: Option<&str> = None;
     for block in blocks {
         if !first {
             println!();
         }
         first = false;
-        print_header(block, multi_server);
+        // When results span more than one server, group each server's
+        // blocks under a `=== Server: id (vendor) ===` header (matching
+        // the `record list` cross-server output style).
+        if multi_server && block.server_id.as_deref() != current_server {
+            current_server = block.server_id.as_deref();
+            if let Some(id) = current_server {
+                match block.server_vendor {
+                    Some(vendor) => println!("=== Server: {id} ({vendor:?}) ==="),
+                    None => println!("=== Server: {id} ==="),
+                }
+            }
+        }
+        print_header(block);
         println!();
         let rows = expand_rows(block, multi_type);
         print_rows(&rows, multi_type);
@@ -1350,15 +1338,12 @@ fn distinct_server_count(blocks: &[QueryResultBlock]) -> usize {
     ids.len()
 }
 
-fn print_header(block: &QueryResultBlock, multi_server: bool) {
+fn print_header(block: &QueryResultBlock) {
     let mut line = format!(
         "@ {}  {}",
         block.target_label,
         transport_word(block.transport)
     );
-    if multi_server && let Some(id) = block.server_id.as_deref() {
-        let _ = write!(&mut line, "  server={id}");
-    }
     for (k, v) in &block.extras {
         if v.is_empty() {
             line.push_str("  ");
@@ -1458,6 +1443,21 @@ fn print_short(blocks: &[QueryResultBlock]) {
 struct JsonOutput<'a> {
     query: JsonQuery<'a>,
     target: JsonTarget<'a>,
+    /// Flat results for the single-server, system, and ad-hoc cases
+    /// (back-compatible shape). Mutually exclusive with `servers`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    results: Option<Vec<JsonResult<'a>>>,
+    /// Per-server grouped results, emitted only when more than one
+    /// server is queried. Mutually exclusive with `results`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    servers: Option<Vec<JsonServerGroup<'a>>>,
+}
+
+#[derive(Serialize)]
+struct JsonServerGroup<'a> {
+    server: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cluster: Option<&'a str>,
     results: Vec<JsonResult<'a>>,
 }
 
@@ -1480,8 +1480,6 @@ struct JsonTarget<'a> {
 
 #[derive(Serialize)]
 struct JsonResult<'a> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    server: Option<&'a str>,
     resolver: JsonResolver<'a>,
     elapsed_ms: u128,
     status: &'a str,
@@ -1565,41 +1563,30 @@ fn build_json_value(
         },
     };
 
-    let results: Vec<JsonResult> = blocks
-        .iter()
-        .map(|b| JsonResult {
-            server: b.server_id.as_deref(),
-            resolver: JsonResolver {
-                transport: transport_word(b.transport),
-                address: b.host_for_json.as_deref(),
-                port: b.port_for_json,
-                url: b.url.as_deref(),
-                server_name: b
-                    .extras
+    // Multi-server runs emit grouped `servers: [...]`; everything else
+    // keeps the flat `results: [...]` back-compatible shape.
+    let multi_server = matches!(kind, TargetKind::Named { servers } if servers.len() > 1);
+
+    let (results, servers) = if multi_server {
+        let TargetKind::Named { servers } = kind else {
+            unreachable!("multi_server is only set for TargetKind::Named");
+        };
+        let groups = servers
+            .iter()
+            .map(|named| JsonServerGroup {
+                server: named.server_id.as_str(),
+                cluster: named.cluster.as_deref(),
+                results: blocks
                     .iter()
-                    .find(|(k, _)| k == "sni")
-                    .map(|(_, v)| v.as_str()),
-            },
-            elapsed_ms: b.elapsed.as_millis(),
-            status: b.status.json_tag(),
-            skip_reason: match &b.status {
-                QueryStatus::Skipped { reason } => Some(reason.as_str()),
-                _ => None,
-            },
-            answers: b
-                .records
-                .iter()
-                .flat_map(|r| {
-                    r.values.iter().map(move |v| JsonAnswer {
-                        name: trim_trailing_dot(&r.name).to_string(),
-                        rr_type: r.record_type.clone(),
-                        data: v.clone(),
-                        ttl: r.ttl,
-                    })
-                })
-                .collect(),
-        })
-        .collect();
+                    .filter(|b| b.server_id.as_deref() == Some(named.server_id.as_str()))
+                    .map(json_result_for_block)
+                    .collect(),
+            })
+            .collect();
+        (None, Some(groups))
+    } else {
+        (Some(blocks.iter().map(json_result_for_block).collect()), None)
+    };
 
     let out = JsonOutput {
         query: JsonQuery {
@@ -1608,8 +1595,45 @@ fn build_json_value(
         },
         target,
         results,
+        servers,
     };
     json!(out)
+}
+
+/// Build the JSON view of a single result block (resolver coordinates,
+/// status, and answers), shared by the flat and grouped shapes.
+fn json_result_for_block(b: &QueryResultBlock) -> JsonResult<'_> {
+    JsonResult {
+        resolver: JsonResolver {
+            transport: transport_word(b.transport),
+            address: b.host_for_json.as_deref(),
+            port: b.port_for_json,
+            url: b.url.as_deref(),
+            server_name: b
+                .extras
+                .iter()
+                .find(|(k, _)| k == "sni")
+                .map(|(_, v)| v.as_str()),
+        },
+        elapsed_ms: b.elapsed.as_millis(),
+        status: b.status.json_tag(),
+        skip_reason: match &b.status {
+            QueryStatus::Skipped { reason } => Some(reason.as_str()),
+            _ => None,
+        },
+        answers: b
+            .records
+            .iter()
+            .flat_map(|r| {
+                r.values.iter().map(move |v| JsonAnswer {
+                    name: trim_trailing_dot(&r.name).to_string(),
+                    rr_type: r.record_type.clone(),
+                    data: v.clone(),
+                    ttl: r.ttl,
+                })
+            })
+            .collect(),
+    }
 }
 
 // ───── Tests ─────────────────────────────────────────────────────────────────
@@ -2058,6 +2082,7 @@ mod tests {
             QueryResultBlock {
                 target_label: String::new(),
                 server_id: None,
+                server_vendor: None,
                 transport: ValidationTransport::Dns,
                 extras: Vec::new(),
                 url: None,
@@ -2089,6 +2114,73 @@ mod tests {
             ]),
             0
         );
+    }
+
+    fn result_block(server_id: &str) -> QueryResultBlock {
+        QueryResultBlock {
+            target_label: format!("{server_id}-addr"),
+            server_id: Some(server_id.to_string()),
+            server_vendor: Some(VendorKind::Technitium),
+            transport: ValidationTransport::Dns,
+            extras: Vec::new(),
+            url: None,
+            host_for_json: Some("10.5.0.53".to_string()),
+            port_for_json: Some(53),
+            elapsed: Duration::ZERO,
+            status: QueryStatus::NoError,
+            records: vec![ObservedRecord {
+                name: "huly.hankin.io.".to_string(),
+                record_type: "A".to_string(),
+                ttl: Some(300),
+                values: vec!["10.5.0.42".to_string()],
+            }],
+            asked_types: vec!["A".to_string()],
+            queried_name: "huly.hankin.io".to_string(),
+        }
+    }
+
+    #[test]
+    fn json_multi_server_uses_nested_servers_shape() {
+        let blocks = vec![result_block("dns1"), result_block("dns2")];
+        let kind = TargetKind::Named {
+            servers: vec![
+                NamedServer {
+                    server_id: "dns1".to_string(),
+                    cluster: Some("home-dns".to_string()),
+                },
+                NamedServer {
+                    server_id: "dns2".to_string(),
+                    cluster: Some("home-dns".to_string()),
+                },
+            ],
+        };
+        let v = build_json_value("huly.hankin.io", &["A".to_string()], &kind, &blocks);
+
+        // Nested `servers`, no top-level `results`, ambiguous target null.
+        assert!(v.get("results").is_none());
+        assert!(v["target"]["server"].is_null());
+        let servers = v["servers"].as_array().expect("servers array");
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0]["server"], "dns1");
+        assert_eq!(servers[0]["cluster"], "home-dns");
+        assert_eq!(servers[0]["results"][0]["answers"][0]["data"], "10.5.0.42");
+        assert_eq!(servers[1]["server"], "dns2");
+    }
+
+    #[test]
+    fn json_single_server_keeps_flat_results_shape() {
+        let blocks = vec![result_block("dns1")];
+        let kind = TargetKind::Named {
+            servers: vec![NamedServer {
+                server_id: "dns1".to_string(),
+                cluster: None,
+            }],
+        };
+        let v = build_json_value("huly.hankin.io", &["A".to_string()], &kind, &blocks);
+
+        assert!(v.get("servers").is_none());
+        assert_eq!(v["target"]["server"], "dns1");
+        assert_eq!(v["results"][0]["answers"][0]["data"], "10.5.0.42");
     }
 
     #[rstest]

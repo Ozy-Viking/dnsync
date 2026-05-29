@@ -254,6 +254,7 @@ async fn resolve_body_chase(
             domain: domain.to_string(),
             types,
             server_id: None,
+            server_ids: None,
             at: Some(server_addr.to_string()),
             transports: Some(vec!["dns".to_string()]),
             all_transports: None,
