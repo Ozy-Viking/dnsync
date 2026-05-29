@@ -230,7 +230,7 @@ pub struct SyncParams {
 /// At most one of `server_id` / `at` should be set; if both are omitted
 /// the host's system resolver is used. Transport selection mirrors the
 /// CLI: leave `transports` empty and `all_transports` unset to let the
-/// server pick the first enabled block (precedence: doh → dot → dns →
+/// server pick the first enabled block (precedence: dns → dot → doh →
 /// doq); supply a list of transports to fan out across those; or set
 /// `all_transports = true` (requires `server_id`) to query every
 /// enabled block.
