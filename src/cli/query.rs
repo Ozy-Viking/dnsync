@@ -911,20 +911,32 @@ async fn run_block(plan: PlanTarget, record_types: &[String], domain: &str) -> Q
         );
     };
 
-    // DoH bootstrap: hickory's HTTPS NameServerConfig needs an IP, but
-    // a user-supplied URL like `https://cloudflare-dns.com/dns-query`
-    // gives only a hostname. Resolve it via the system resolver before
-    // building the DoH resolver.
-    if target.transport == ValidationTransport::Doh
-        && target
-            .host
-            .as_deref()
-            .is_none_or(|h| h.parse::<std::net::IpAddr>().is_err())
-        && let Some(ref url) = target.url
-    {
-        match bootstrap_doh_host(url, target.timeout).await {
-            Ok(ip) => target.host = Some(ip),
-            Err(status) => return finish(status, Vec::new()),
+    // Bootstrap: hickory's NameServerConfig variants all need an IP address.
+    // Resolve any hostname via the system resolver before building the resolver.
+    let needs_bootstrap = target
+        .host
+        .as_deref()
+        .is_none_or(|h| h.parse::<std::net::IpAddr>().is_err());
+    if needs_bootstrap {
+        match target.transport {
+            ValidationTransport::Doh => {
+                if let Some(ref url) = target.url {
+                    match bootstrap_doh_host(url, target.timeout).await {
+                        Ok(ip) => target.host = Some(ip),
+                        Err(status) => return finish(status, Vec::new()),
+                    }
+                }
+            }
+            ValidationTransport::Dns
+            | ValidationTransport::Dot
+            | ValidationTransport::Doq => {
+                if let Some(ref host) = target.host.clone() {
+                    match bootstrap_host(host, target.transport, target.timeout).await {
+                        Ok(ip) => target.host = Some(ip),
+                        Err(status) => return finish(status, Vec::new()),
+                    }
+                }
+            }
         }
     }
 
@@ -936,34 +948,36 @@ async fn run_block(plan: PlanTarget, record_types: &[String], domain: &str) -> Q
     finish(status, records)
 }
 
-/// Resolve the host portion of a DoH URL via the system resolver and
-/// return the first IPv4-or-IPv6 address. Hickory's `https()`
-/// NameServerConfig needs an `IpAddr`; the bootstrap removes the need
-/// for users to know the IP in advance.
-async fn bootstrap_doh_host(
-    url: &str,
+/// Resolve a hostname via the system resolver, preferring IPv4 for
+/// container/CI compatibility. Returns early if `host` is already an IP.
+async fn bootstrap_host(
+    host: &str,
+    transport: ValidationTransport,
     timeout: Duration,
 ) -> std::result::Result<String, QueryStatus> {
-    let host = extract_doh_host(url).ok_or(QueryStatus::MalformedResponse)?;
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         return Ok(ip.to_string());
     }
     let resolver = build_system_resolver(timeout)?;
     let lookup = resolver.lookup_ip(host).await.map_err(|e| {
-        QueryStatus::from(classify_hickory_error(
-            ValidationTransport::Doh,
-            &e.to_string(),
-        ))
+        QueryStatus::from(classify_hickory_error(transport, &e.to_string()))
     })?;
-    // Prefer IPv4: many container/CI environments have no IPv6
-    // outbound. Fall back to whatever the system returned first if no
-    // IPv4 is present.
+    // Prefer IPv4: many container/CI environments have no IPv6 outbound.
     let ips: Vec<std::net::IpAddr> = lookup.iter().collect();
     ips.iter()
         .find(|ip| ip.is_ipv4())
         .or_else(|| ips.first())
         .map(|ip| ip.to_string())
         .ok_or(QueryStatus::NxDomain)
+}
+
+/// Resolve the host portion of a DoH URL via the system resolver.
+async fn bootstrap_doh_host(
+    url: &str,
+    timeout: Duration,
+) -> std::result::Result<String, QueryStatus> {
+    let host = extract_doh_host(url).ok_or(QueryStatus::MalformedResponse)?;
+    bootstrap_host(host, ValidationTransport::Doh, timeout).await
 }
 
 fn extract_doh_host(url: &str) -> Option<&str> {
