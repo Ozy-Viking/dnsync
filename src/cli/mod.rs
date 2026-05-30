@@ -340,6 +340,9 @@ pub enum SettingsCmd {
         show_secrets: bool,
     },
     /// Update server-level settings (Technitium only)
+    #[command(group(
+        clap::ArgGroup::new("payload").args(["key", "json"]).required(true)
+    ))]
     Set {
         /// Setting key (use with --value for a single key/value pair)
         #[arg(long, requires = "value")]
@@ -414,6 +417,9 @@ pub enum ZoneCmd {
         zone: String,
     },
     /// Set one or more zone-level options (Technitium only)
+    #[command(group(
+        clap::ArgGroup::new("payload").args(["key", "json"]).required(true)
+    ))]
     OptionsSet {
         /// Zone name, e.g. "example.com"
         zone: String,

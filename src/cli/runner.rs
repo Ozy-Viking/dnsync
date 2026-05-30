@@ -301,7 +301,13 @@ fn build_json_payload(
     if let (Some(k), Some(v)) = (key, value) {
         Ok(serde_json::json!({ k: v }))
     } else if let Some(raw) = json {
-        serde_json::from_str(&raw).map_err(|e| Error::parse(format!("invalid JSON: {e}")))
+        let value: Value =
+            serde_json::from_str(&raw).map_err(|e| Error::parse(format!("invalid JSON: {e}")))?;
+        if value.is_object() {
+            Ok(value)
+        } else {
+            Err(Error::parse("--json must be a JSON object"))
+        }
     } else {
         Err(Error::parse("provide either --key/--value or --json"))
     }

@@ -7,7 +7,7 @@ use crate::core::{
     dns::service::{
         ZoneExport, ZoneImport, ZoneOptionsRead, ZoneOptionsWrite, ZoneRead, ZoneWrite,
     },
-    error::Result,
+    error::{Error, Result},
 };
 
 /// Shared DNS zone summary.
@@ -158,5 +158,8 @@ pub async fn set_zone_options<C: ZoneOptionsWrite + ?Sized>(
     zone: &str,
     options: &Value,
 ) -> Result<Value> {
+    if !options.is_object() {
+        return Err(Error::parse("zone options must be a JSON object"));
+    }
     client.set_zone_options(zone, options).await
 }

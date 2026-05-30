@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::core::{
     dns::service::{SettingsRead, SettingsWrite},
-    error::Result,
+    error::{Error, Result},
     redaction::redact_sensitive_fields,
 };
 
@@ -39,6 +39,9 @@ pub async fn set_settings<C: SettingsWrite + ?Sized>(
     client: &C,
     settings: &Value,
 ) -> Result<Value> {
+    if !settings.is_object() {
+        return Err(Error::parse("settings must be a JSON object"));
+    }
     client.set_settings(settings).await
 }
 

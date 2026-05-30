@@ -317,6 +317,11 @@ impl ZoneOptionsWrite for TechnitiumClient {
         let obj = options
             .as_object()
             .ok_or_else(|| Error::parse("zone options must be a JSON object"))?;
+        if obj.contains_key("zone") {
+            return Err(Error::parse(
+                "zone options payload must not include reserved key 'zone'",
+            ));
+        }
         let mut params: Vec<(String, String)> = vec![("zone".into(), zone.into())];
         for (k, v) in obj {
             let s = match v {
