@@ -51,6 +51,9 @@ hickory-resolver = { version = "0.26", features = [
     "rustls-platform-verifier",
 ] }
 inquire = "0.7"
+colorchoice-clap = "1.0.8"
+time = { version = "0.3.47", features = ["formatting", "local-offset", "macros"] }
+owo-colors = "4.3.0"
 
 [dev-dependencies]
 rstest = "0.26"

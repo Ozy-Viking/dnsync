@@ -35,8 +35,9 @@ use dnslib::{
 };
 
 use clap::Parser;
+use dnslib::setup::init_tracing;
 use rmcp::ServiceExt;
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing::{info, instrument, trace};
 
 use cli::{Cli, Command, ConfigCmd, ServerEndpointCmd};
 use error::{Error, Result};
@@ -60,13 +61,7 @@ use server::DnsServer;
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     let cli = Cli::parse();
-
-    fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    init_tracing(&cli)?;
     run(cli).await?;
     Ok(())
 }
@@ -75,14 +70,24 @@ async fn run(cli: Cli) -> Result<()> {
     match run_inner(cli).await {
         Ok(()) => Ok(()),
         Err(Error::UserCancelled) => {
-            println!("bye felicia");
+            eprintln!("bye felicia");
             Ok(())
         }
         Err(e) => Err(e),
     }
 }
 
+#[instrument(
+    level = "trace",
+    skip_all,
+    fields(
+        command = ?cli.command.name(),
+        verbose = cli.verbose,
+        quiet = cli.quiet,
+    )
+)]
 async fn run_inner(cli: Cli) -> Result<()> {
+    trace!("starting run");
     if let Command::Completions { shell } = cli.command {
         cli::completions::generate_completions(shell);
         return Ok(());
@@ -126,7 +131,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
 
             ConfigCmd::Update => {
                 let report = config::update_defaults(cli.config)?;
-                println!(
+                info!(
                     "Updated config file: {} ({} default value(s) added across {} server(s))",
                     report.path.display(),
                     report.added_values,
@@ -558,6 +563,12 @@ mod tests {
             access: vec![],
             allow_zone,
             command: Command::Mcp,
+            verbose: 0,
+            quiet: 0,
+            log_filter: None,
+            color: colorchoice_clap::Color {
+                color: clap::ColorChoice::Never,
+            },
         }
     }
 
@@ -586,6 +597,12 @@ mod tests {
             access: vec![],
             allow_zone: Vec::new(),
             command: Command::Config(ConfigCmd::Init { force }),
+            verbose: 0,
+            quiet: 0,
+            log_filter: None,
+            color: colorchoice_clap::Color {
+                color: clap::ColorChoice::Never,
+            },
         }
     }
 

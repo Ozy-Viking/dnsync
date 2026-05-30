@@ -4,7 +4,7 @@ set -euo pipefail
 CRATE_NAME="${CRATE_NAME:-dnsync}"
 BIN_NAME="${BIN_NAME:-dns}"
 
-if ! cargo binstall --version >/dev/null 2>&1; then
+if ! cargo binstall -V >/dev/null 2>&1; then
     echo "error: cargo-binstall is not installed or not available via cargo binstall" >&2
     echo "Install it with:" >&2
     echo "  cargo install cargo-binstall --locked" >&2

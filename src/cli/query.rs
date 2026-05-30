@@ -19,6 +19,7 @@ use hickory_resolver::{
 };
 use serde::Serialize;
 use serde_json::json;
+use tracing::{Span, instrument};
 
 use crate::{
     control_plane::{
@@ -280,7 +281,57 @@ impl From<ValidationFailureKind> for QueryStatus {
 /// Returns an exit code (0 on success; non-zero per-status mapping).
 /// Output goes to stdout; errors that prevent any query from running
 /// (parse-time invariants, unknown `--server`) return `Err`.
+#[instrument(
+    level = "debug",
+    skip_all,
+    fields(
+        target_count = tracing::field::Empty,
+        server_ids = tracing::field::Empty,
+        record_types = tracing::field::Empty,
+        transports = tracing::field::Empty,
+        all_servers = tracing::field::Empty,
+        all_types = tracing::field::Empty,
+        all_transports = tracing::field::Empty,
+        chase = tracing::field::Empty,
+        short = tracing::field::Empty,
+        json = tracing::field::Empty,
+    )
+)]
 pub async fn run_query(config: Option<AppConfig>, args: QueryArgs) -> Result<i32> {
+    let span = Span::current();
+
+    let all_servers = args.all || args.all_servers;
+    let all_types = args.all || args.all_types;
+    let all_transports = args.all || args.all_transports;
+
+    span.record("target_count", args.targets.len());
+
+    span.record(
+        "server_ids",
+        tracing::field::display(join_or_default(&args.server, "default")),
+    );
+
+    span.record(
+        "record_types",
+        tracing::field::display(join_or_default(&args.r#type, "default")),
+    );
+
+    span.record(
+        "transports",
+        tracing::field::display(selected_transports(&args)),
+    );
+
+    span.record("all_servers", all_servers);
+    span.record("all_types", all_types);
+    span.record("all_transports", all_transports);
+
+    span.record("chase", args.chase);
+    span.record("short", args.short);
+    span.record("json", args.json);
+
+    tracing::debug!("sending query");
+    tracing::debug!("sending query");
+
     let outcome = execute_query(config, args.clone()).await?;
 
     if args.json {
@@ -297,6 +348,50 @@ pub async fn run_query(config: Option<AppConfig>, args: QueryArgs) -> Result<i32
     }
 
     Ok(exit_code_for(&outcome.blocks))
+}
+
+fn join_or_default<T>(values: &[T], default: &str) -> String
+where
+    T: std::fmt::Display,
+{
+    if values.is_empty() {
+        default.to_string()
+    } else {
+        values
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+fn selected_transports(args: &QueryArgs) -> String {
+    if args.all_transports {
+        return "dns,dot,doh,doq".to_string();
+    }
+
+    let mut transports = Vec::new();
+
+    if args.dns {
+        transports.push("dns");
+    }
+
+    if args.dot {
+        transports.push("dot");
+    }
+
+    if args.doh {
+        transports.push("doh");
+    }
+
+    if args.doq {
+        transports.push("doq");
+    }
+
+    if transports.is_empty() {
+        "default".to_string()
+    } else {
+        transports.join(",")
+    }
 }
 
 /// Programmatic entry point — runs a query and returns the per-

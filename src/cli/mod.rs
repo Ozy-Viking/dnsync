@@ -4,7 +4,7 @@ pub mod query;
 pub mod records;
 pub mod runner;
 
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ use crate::control_plane::policy::PolicyRule;
 
 // ─── Top-level CLI ───────────────────────────────────────────────────────────
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "dns", about = "DNS Sync and Control with MCP", version)]
 pub struct Cli {
     /// Config file path (defaults to $XDG_CONFIG_HOME/dnsync/config.toml or ~/.config/dnsync/config.toml)
@@ -45,9 +45,24 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Command,
+
+    /// Increase log verbosity: -v = debug, -vv = trace
+    #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
+    pub verbose: u8,
+
+    /// Decrease log verbosity: -q = warn, -qq = error, -qqq = off
+    #[arg(short, long, action = ArgAction::Count, conflicts_with = "verbose")]
+    pub quiet: u8,
+
+    /// Full tracing filter override, e.g. dnsync=trace,tower_http=warn
+    #[arg(long, env = "DNSYNC_LOG")]
+    pub log_filter: Option<String>,
+
+    #[command(flatten)]
+    pub color: colorchoice_clap::Color,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum Command {
     /// Write a starter config file
     #[command(subcommand)]
@@ -152,7 +167,28 @@ pub enum Command {
     ServerIds,
 }
 
-#[derive(Subcommand)]
+impl Command {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Command::Config(_) => "config",
+            Command::Mcp => "mcp",
+            Command::Zone(_) => "zone",
+            Command::Record(_) => "record",
+            Command::Sync { .. } => "sync",
+            Command::Cache(_) => "cache",
+            Command::Stats { .. } => "stats",
+            Command::Blocked(_) => "blocked",
+            Command::Allowed(_) => "allowed",
+            Command::Settings { .. } => "settings",
+            Command::Logs { .. } => "logs",
+            Command::Query(_) => "query",
+            Command::ServerIds => "server-ids",
+            Command::Completions { .. } => "completions",
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
 pub enum ConfigCmd {
     /// Write the starter config file and exit
     Init {
@@ -234,7 +270,7 @@ pub enum ConfigCmd {
 }
 
 /// Transport endpoint subcommands for `config server`.
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum ServerEndpointCmd {
     /// Set or clear the plain DNS (port 53) endpoint
     Dns {
@@ -358,7 +394,7 @@ pub enum SettingsCmd {
 
 // ─── Zone subcommands ────────────────────────────────────────────────────────
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum ZoneCmd {
     /// List all hosted zones
     List {
@@ -437,7 +473,7 @@ pub enum ZoneCmd {
 
 // ─── Record subcommands ──────────────────────────────────────────────────────
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum RecordCmd {
     /// List DNS records, optionally filtered to a domain
     List {
@@ -487,7 +523,7 @@ pub enum RecordCmd {
 
 // ─── Cache subcommands ───────────────────────────────────────────────────────
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum CacheCmd {
     /// Browse the DNS cache for a domain
     List {
@@ -502,7 +538,7 @@ pub enum CacheCmd {
 
 // ─── Blocked subcommands ─────────────────────────────────────────────────────
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum BlockedCmd {
     /// List all blocked domains
     List,
@@ -514,7 +550,7 @@ pub enum BlockedCmd {
 
 // ─── Allowed subcommands ─────────────────────────────────────────────────────
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum AllowedCmd {
     /// List all whitelisted domains
     List,
