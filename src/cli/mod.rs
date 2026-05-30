@@ -192,6 +192,9 @@ impl Command {
             Command::Settings { .. } => "settings",
             Command::Logs { .. } => "logs",
             Command::Query(_) => "query",
+            Command::Daemon => "daemon",
+            Command::Job(_) => "job",
+            Command::Healthcheck => "healthcheck",
             Command::ServerIds => "server-ids",
             Command::Completions { .. } => "completions",
         }
@@ -572,7 +575,7 @@ pub enum AllowedCmd {
 
 // ─── Job subcommands ─────────────────────────────────────────────────────────
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum JobCmd {
     /// List all configured jobs and their current state
     List,
