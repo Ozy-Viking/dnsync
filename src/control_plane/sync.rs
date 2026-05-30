@@ -16,12 +16,37 @@ use std::net::IpAddr;
 use tracing::{debug, instrument, trace};
 
 use crate::control_plane::config::AppConfig;
+use regex::Regex;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::records::query::{extract_zone_names, resolve_fqdn};
 use crate::core::dns::responses::{AnyRecordData, ListRecordsResponse};
 use crate::core::dns::service::{ListRecordsOptions, RecordWrite, ZoneRead};
 use crate::core::error::{Error, Result};
 use crate::vendors::runtime::VendorClient;
+
+/// Controls which categories of diff are applied during a record sync.
+#[derive(Debug, Clone)]
+pub struct SyncDiffOptions {
+    /// Add records present in source but absent from destination (new name+type combos).
+    pub create_missing: bool,
+    /// Update records where name+type matches but value differs (source wins).
+    pub overwrite_existing: bool,
+    /// Delete destination records whose name+type has no counterpart in source.
+    pub delete_destination_only: bool,
+    /// FQDN patterns — source records matching any pattern are excluded before diffing.
+    pub ignore: Vec<Regex>,
+}
+
+impl Default for SyncDiffOptions {
+    fn default() -> Self {
+        Self {
+            create_missing: true,
+            overwrite_existing: true,
+            delete_destination_only: false,
+            ignore: Vec::new(),
+        }
+    }
+}
 
 /// TTL used when a source record reports a TTL of 0 (some vendors do not
 /// expose per-record TTLs).
@@ -41,12 +66,16 @@ struct PlannedRecord {
 /// The computed difference for one zone.
 #[derive(Debug, Default)]
 struct Diff {
-    adds: Vec<PlannedRecord>,
-    deletes: Vec<PlannedRecord>,
+    /// Source records for name+type combos that don't exist in destination at all.
+    missing_adds: Vec<PlannedRecord>,
+    /// Source records for name+type combos that exist in destination but with a different value.
+    update_adds: Vec<PlannedRecord>,
+    /// Destination records being replaced by update_adds (stale values for the same name+type).
+    update_deletes: Vec<PlannedRecord>,
+    /// Destination records for name+type combos with no counterpart in source.
+    destination_only: Vec<PlannedRecord>,
+    /// Records identical in source and destination (same value + TTL).
     unchanged: usize,
-    /// Destination records whose name+type is absent from the source — left
-    /// untouched because sync is additive.
-    untouched: usize,
 }
 
 /// The plan for one zone, ready to display or apply.
@@ -236,9 +265,10 @@ async fn build_sync_plan(
 
     debug!(zone_count = zone_list.len(), "resolved zone list");
 
+    let sync_opts = SyncDiffOptions::default();
     let mut plans = Vec::with_capacity(zone_list.len());
     for zone in &zone_list {
-        plans.push(plan_zone(&from_client, &to_client, zone, &ip_map).await?);
+        plans.push(plan_zone(&from_client, &to_client, zone, &ip_map, &sync_opts).await?);
     }
 
     Ok((from_id.to_string(), to_id.to_string(), plans))
@@ -251,8 +281,9 @@ async fn plan_zone(
     to_client: &VendorClient,
     zone: &str,
     ip_map: &HashMap<IpAddr, IpAddr>,
+    sync_opts: &SyncDiffOptions,
 ) -> Result<ZonePlan> {
-    plan_zone_with_clients(from_client, to_client, zone, ip_map).await
+    plan_zone_with_clients(from_client, to_client, zone, ip_map, sync_opts).await
 }
 
 #[instrument(
@@ -265,22 +296,23 @@ async fn plan_zone_with_clients<F, T>(
     to_client: &T,
     zone: &str,
     ip_map: &HashMap<IpAddr, IpAddr>,
+    sync_opts: &SyncDiffOptions,
 ) -> Result<ZonePlan>
 where
     F: ZoneRead + ?Sized,
     T: ZoneRead + ?Sized,
 {
-    let opts = ListRecordsOptions {
+    let list_opts = ListRecordsOptions {
         all_subdomains: true,
         ..ListRecordsOptions::default()
     };
 
     let source = from_client
-        .list_records(zone, Some(zone), opts)
+        .list_records(zone, Some(zone), list_opts)
         .await
         .map_err(|e| Error::parse(format!("source: listing records for zone '{zone}': {e}")))?;
     let dest = to_client
-        .list_records(zone, Some(zone), opts)
+        .list_records(zone, Some(zone), list_opts)
         .await
         .map_err(|e| {
             Error::parse(format!(
@@ -289,21 +321,55 @@ where
             ))
         })?;
 
-    let (source_records, skipped) = collect_records(&source, zone, Some(ip_map));
+    let (mut source_records, skipped) = collect_records(&source, zone, Some(ip_map));
     trace!(source_count = source_records.len(), skipped, "source records collected");
     let (dest_records, _) = collect_records(&dest, zone, None);
 
-    let mut diff = diff_records(source_records, dest_records);
-    trace!(adds = diff.adds.len(), deletes = diff.deletes.len(), unchanged = diff.unchanged, "diff computed");
-    diff.adds.sort_by_key(sort_key);
-    diff.deletes.sort_by_key(sort_key);
+    // Filter out source records whose FQDN matches any ignore pattern.
+    if !sync_opts.ignore.is_empty() {
+        source_records.retain(|r| {
+            !sync_opts.ignore.iter().any(|pat| pat.is_match(&r.fqdn))
+        });
+    }
+
+    let diff = diff_records(source_records, dest_records);
+    trace!(
+        missing_adds = diff.missing_adds.len(),
+        update_adds = diff.update_adds.len(),
+        destination_only = diff.destination_only.len(),
+        unchanged = diff.unchanged,
+        "diff computed"
+    );
+
+    let mut adds: Vec<PlannedRecord> = Vec::new();
+    let mut deletes: Vec<PlannedRecord> = Vec::new();
+
+    if sync_opts.create_missing {
+        adds.extend(diff.missing_adds);
+    }
+    if sync_opts.overwrite_existing {
+        adds.extend(diff.update_adds);
+        deletes.extend(diff.update_deletes);
+    }
+    if sync_opts.delete_destination_only {
+        deletes.extend(diff.destination_only.iter().cloned());
+    }
+
+    let untouched = if sync_opts.delete_destination_only {
+        0
+    } else {
+        diff.destination_only.len()
+    };
+
+    adds.sort_by_key(sort_key);
+    deletes.sort_by_key(sort_key);
 
     Ok(ZonePlan {
         zone: zone.to_string(),
-        adds: diff.adds,
-        deletes: diff.deletes,
+        adds,
+        deletes,
         unchanged: diff.unchanged,
-        untouched: diff.untouched,
+        untouched,
         skipped,
     })
 }
@@ -356,12 +422,12 @@ fn collect_records(
     (out, skipped)
 }
 
-/// Compute the additive difference between source and destination records.
+/// Compute the difference between source and destination records.
 ///
 /// Records are grouped into sets by `(name, type)`. A set missing on the
-/// destination is added wholesale; a set present on both with differing values
-/// has its missing values added and its stale values removed. Sets that exist
-/// only on the destination are counted as `untouched` and never pruned.
+/// destination goes to `missing_adds`; a set present on both with differing
+/// values contributes to `update_adds` / `update_deletes`. Sets that exist
+/// only on the destination go to `destination_only`.
 fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
     let group = |records: Vec<PlannedRecord>| {
         let mut groups: HashMap<(String, String), Vec<PlannedRecord>> = HashMap::new();
@@ -386,6 +452,7 @@ fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
 
     for (key, src_recs) in &source_groups {
         let dest_recs = dest_groups.get(key);
+        let is_new = dest_recs.is_none();
         let dest_keys: Vec<(String, u32)> = dest_recs
             .map(|recs| recs.iter().map(match_key).collect())
             .unwrap_or_default();
@@ -394,24 +461,26 @@ fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
         for r in src_recs {
             if dest_keys.contains(&match_key(r)) {
                 diff.unchanged += 1;
+            } else if is_new {
+                diff.missing_adds.push(r.clone());
             } else {
-                diff.adds.push(r.clone());
+                diff.update_adds.push(r.clone());
             }
         }
         if let Some(dest_recs) = dest_recs {
             for r in dest_recs {
                 if !src_keys.contains(&match_key(r)) {
-                    diff.deletes.push(r.clone());
+                    diff.update_deletes.push(r.clone());
                 }
             }
         }
     }
 
-    diff.untouched = dest_groups
-        .iter()
-        .filter(|(key, _)| !source_groups.contains_key(*key))
-        .map(|(_, recs)| recs.len())
-        .sum();
+    for (key, recs) in &dest_groups {
+        if !source_groups.contains_key(key) {
+            diff.destination_only.extend(recs.iter().cloned());
+        }
+    }
 
     diff
 }
@@ -872,7 +941,7 @@ mod tests {
             ],
         ));
 
-        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new())
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &SyncDiffOptions::default())
             .await
             .unwrap();
 
@@ -948,7 +1017,7 @@ mod tests {
         let dest = FakeZoneRead::new(sync_test_response(zone, vec![]));
         let map = ip_map(&[("203.0.113.10", "192.0.2.10")]);
 
-        let plan = plan_zone_with_clients(&source, &dest, zone, &map)
+        let plan = plan_zone_with_clients(&source, &dest, zone, &map, &SyncDiffOptions::default())
             .await
             .unwrap();
 
@@ -995,8 +1064,8 @@ mod tests {
     #[test]
     fn diff_adds_record_set_missing_on_destination() {
         let diff = diff_records(vec![a("www.example.com", "1.1.1.1")], vec![]);
-        assert_eq!(diff.adds.len(), 1);
-        assert_eq!(diff.deletes.len(), 0);
+        assert_eq!(diff.missing_adds.len(), 1);
+        assert_eq!(diff.update_deletes.len(), 0);
         assert_eq!(diff.unchanged, 0);
     }
 
@@ -1006,10 +1075,10 @@ mod tests {
             vec![a("www.example.com", "2.2.2.2")],
             vec![a("www.example.com", "1.1.1.1")],
         );
-        assert_eq!(diff.adds.len(), 1);
-        assert_eq!(diff.deletes.len(), 1);
+        assert_eq!(diff.update_adds.len(), 1);
+        assert_eq!(diff.update_deletes.len(), 1);
         assert_eq!(diff.unchanged, 0);
-        match &diff.adds[0].record {
+        match &diff.update_adds[0].record {
             RecordData::A { ip } => assert_eq!(ip.to_string(), "2.2.2.2"),
             other => panic!("expected A, got {other:?}"),
         }
@@ -1021,8 +1090,9 @@ mod tests {
             vec![a("www.example.com", "1.1.1.1")],
             vec![a("www.example.com", "1.1.1.1")],
         );
-        assert_eq!(diff.adds.len(), 0);
-        assert_eq!(diff.deletes.len(), 0);
+        assert_eq!(diff.missing_adds.len(), 0);
+        assert_eq!(diff.update_adds.len(), 0);
+        assert_eq!(diff.update_deletes.len(), 0);
         assert_eq!(diff.unchanged, 1);
     }
 
@@ -1033,10 +1103,10 @@ mod tests {
         let mut dst = a("www.example.com", "1.1.1.1");
         dst.ttl = 3600;
         let diff = diff_records(vec![src], vec![dst]);
-        assert_eq!(diff.adds.len(), 1);
-        assert_eq!(diff.deletes.len(), 1);
+        assert_eq!(diff.update_adds.len(), 1);
+        assert_eq!(diff.update_deletes.len(), 1);
         assert_eq!(diff.unchanged, 0);
-        assert_eq!(diff.adds[0].ttl, 300);
+        assert_eq!(diff.update_adds[0].ttl, 300);
     }
 
     #[test]
@@ -1045,9 +1115,250 @@ mod tests {
             vec![a("a.example.com", "1.1.1.1")],
             vec![a("a.example.com", "1.1.1.1"), a("b.example.com", "2.2.2.2")],
         );
-        assert_eq!(diff.adds.len(), 0);
-        assert_eq!(diff.deletes.len(), 0);
+        assert_eq!(diff.missing_adds.len(), 0);
+        assert_eq!(diff.update_adds.len(), 0);
+        assert_eq!(diff.update_deletes.len(), 0);
         assert_eq!(diff.unchanged, 1);
-        assert_eq!(diff.untouched, 1);
+        assert_eq!(diff.destination_only.len(), 1);
+    }
+
+    // ── SyncDiffOptions ────────────────────────────────────────────────────────
+
+    fn make_source_dest_clients(
+        zone: &str,
+        src_records: Vec<ZoneRecord>,
+        dst_records: Vec<ZoneRecord>,
+    ) -> (FakeZoneRead, FakeZoneRead) {
+        let source = FakeZoneRead::new(sync_test_response(zone, src_records));
+        let dest = FakeZoneRead::new(sync_test_response(zone, dst_records));
+        (source, dest)
+    }
+
+    #[tokio::test]
+    async fn create_missing_false_does_not_add_new_name_types() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![zone_record("new-host.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: false,
+            overwrite_existing: true,
+            delete_destination_only: false,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.adds.len(), 0);
+        assert_eq!(plan.deletes.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn create_missing_true_adds_new_name_types() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![zone_record("new-host.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: true,
+            overwrite_existing: false,
+            delete_destination_only: false,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.adds.len(), 1);
+        assert_eq!(plan.deletes.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn overwrite_existing_false_leaves_changed_records_untouched() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" }))],
+            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: true,
+            overwrite_existing: false,
+            delete_destination_only: false,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.adds.len(), 0);
+        assert_eq!(plan.deletes.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn overwrite_existing_true_replaces_changed_records() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" }))],
+            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: false,
+            overwrite_existing: true,
+            delete_destination_only: false,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.adds.len(), 1);
+        assert_eq!(plan.deletes.len(), 1);
+        match &plan.adds[0].record {
+            RecordData::A { ip } => assert_eq!(ip.to_string(), "2.2.2.2"),
+            other => panic!("expected A, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_destination_only_false_leaves_destination_only_records() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![],
+            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: true,
+            overwrite_existing: true,
+            delete_destination_only: false,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.deletes.len(), 0);
+        assert_eq!(plan.untouched, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_destination_only_true_removes_destination_only_records() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![],
+            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: true,
+            overwrite_existing: true,
+            delete_destination_only: true,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.deletes.len(), 1);
+        assert_eq!(plan.untouched, 0);
+    }
+
+    #[tokio::test]
+    async fn ignore_pattern_filters_source_records_by_fqdn() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![
+                zone_record("web.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" })),
+                zone_record("internal.example.com", "A", 3600, json!({ "ipAddress": "10.0.0.1" })),
+            ],
+            vec![],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: true,
+            overwrite_existing: true,
+            delete_destination_only: false,
+            ignore: vec![Regex::new(r"^internal\.").unwrap()],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.adds.len(), 1);
+        assert!(plan.adds.iter().any(|r| r.fqdn == "web.example.com"));
+        assert!(!plan.adds.iter().any(|r| r.fqdn == "internal.example.com"));
+    }
+
+    #[tokio::test]
+    async fn ignore_pattern_is_case_sensitive_by_default() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![
+                zone_record("web.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" })),
+                zone_record("api.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" })),
+            ],
+            vec![],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: true,
+            overwrite_existing: true,
+            delete_destination_only: false,
+            ignore: vec![Regex::new(r"^web\.example").unwrap()],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        // web.example.com should be filtered, api.example.com should remain
+        assert_eq!(plan.adds.len(), 1);
+        assert!(plan.adds.iter().any(|r| r.fqdn == "api.example.com"));
+        assert!(!plan.adds.iter().any(|r| r.fqdn == "web.example.com"));
+    }
+
+    #[tokio::test]
+    async fn all_flags_false_produces_no_ops() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![
+                zone_record("new-host.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" })),
+                zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" })),
+            ],
+            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: false,
+            overwrite_existing: false,
+            delete_destination_only: false,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.adds.len(), 0);
+        assert_eq!(plan.deletes.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_destination_only_with_create_missing_is_full_mirror() {
+        let zone = "example.com";
+        let (source, dest) = make_source_dest_clients(
+            zone,
+            vec![zone_record("a.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record("b.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" }))],
+        );
+        let opts = SyncDiffOptions {
+            create_missing: true,
+            overwrite_existing: true,
+            delete_destination_only: true,
+            ignore: vec![],
+        };
+        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(plan.adds.len(), 1);
+        assert!(plan.adds.iter().any(|r| r.fqdn == "a.example.com"));
+        assert_eq!(plan.deletes.len(), 1);
+        assert!(plan.deletes.iter().any(|r| r.fqdn == "b.example.com"));
     }
 }
