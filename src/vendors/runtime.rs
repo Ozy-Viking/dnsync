@@ -7,7 +7,8 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, SettingsWrite, StatsRead, ZoneExport, ZoneImport, ZoneOptionsRead,
+    ZoneOptionsWrite, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 
@@ -385,6 +386,24 @@ impl ZoneExport for VendorClient {
 impl SettingsRead for VendorClient {
     async fn get_settings(&self) -> Result<Value> {
         delegate_vendor!(self, client => client.get_settings().await)
+    }
+}
+
+impl SettingsWrite for VendorClient {
+    async fn set_settings(&self, settings: &Value) -> Result<Value> {
+        delegate_vendor!(self, client => client.set_settings(settings).await)
+    }
+}
+
+impl ZoneOptionsRead for VendorClient {
+    async fn get_zone_options(&self, zone: &str) -> Result<Value> {
+        delegate_vendor!(self, client => client.get_zone_options(zone).await)
+    }
+}
+
+impl ZoneOptionsWrite for VendorClient {
+    async fn set_zone_options(&self, zone: &str, options: &Value) -> Result<Value> {
+        delegate_vendor!(self, client => client.set_zone_options(zone, options).await)
     }
 }
 

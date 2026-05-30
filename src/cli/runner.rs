@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, ZoneCmd, records},
+    cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, SettingsCmd, ZoneCmd, records},
     control_plane::config::DnsServerConfig,
     core::{
         dns::{
@@ -81,6 +81,8 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             ZoneCmd::Import { .. } => "zone import",
             ZoneCmd::Export { .. } => "zone export",
             ZoneCmd::Transfer { .. } => "zone transfer",
+            ZoneCmd::Options { .. } => "zone options",
+            ZoneCmd::OptionsSet { .. } => "zone options-set",
         },
         Command::Record(r) => match r {
             RecordCmd::List { .. } => "record list",
@@ -103,7 +105,10 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             AllowedCmd::Add { .. } => "allowed add",
             AllowedCmd::Delete { .. } => "allowed delete",
         },
-        Command::Settings { .. } => "settings",
+        Command::Settings(s) => match s {
+            SettingsCmd::Show { .. } => "settings show",
+            SettingsCmd::Set { .. } => "settings set",
+        },
         Command::Logs { .. } => "logs",
         Command::Mcp
         | Command::Config(_)
@@ -193,6 +198,16 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
                 )
                 .await?
             }
+            ZoneCmd::Options { zone } => zones::get_zone_options(client, &zone).await?,
+            ZoneCmd::OptionsSet {
+                zone,
+                key,
+                value,
+                json,
+            } => {
+                let options = build_json_payload(key, value, json)?;
+                zones::set_zone_options(client, &zone, &options).await?
+            }
         },
 
         Command::Record(cmd) => match cmd {
@@ -233,13 +248,19 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
             AllowedCmd::Delete { domain } => access_lists::delete_allowed(client, &domain).await?,
         },
 
-        Command::Settings { show_secrets } => {
-            if show_secrets {
-                settings::get_settings_unredacted(client).await?
-            } else {
-                settings::get_settings(client).await?
+        Command::Settings(cmd) => match cmd {
+            SettingsCmd::Show { show_secrets } => {
+                if show_secrets {
+                    settings::get_settings_unredacted(client).await?
+                } else {
+                    settings::get_settings(client).await?
+                }
             }
-        }
+            SettingsCmd::Set { key, value, json } => {
+                let payload = build_json_payload(key, value, json)?;
+                settings::set_settings(client, &payload).await?
+            }
+        },
 
         Command::Logs {
             lines,
@@ -267,6 +288,29 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
 
     print_result(&result)?;
     Ok(())
+}
+
+/// Build a `serde_json::Value` object from either a single `--key`/`--value`
+/// pair or a raw `--json` string. Exactly one of the two forms must be provided
+/// (enforced by clap's `requires`/`conflicts_with_all` constraints).
+fn build_json_payload(
+    key: Option<String>,
+    value: Option<String>,
+    json: Option<String>,
+) -> Result<Value> {
+    if let (Some(k), Some(v)) = (key, value) {
+        Ok(serde_json::json!({ k: v }))
+    } else if let Some(raw) = json {
+        let value: Value =
+            serde_json::from_str(&raw).map_err(|e| Error::parse(format!("invalid JSON: {e}")))?;
+        if value.is_object() {
+            Ok(value)
+        } else {
+            Err(Error::parse("--json must be a JSON object"))
+        }
+    } else {
+        Err(Error::parse("provide either --key/--value or --json"))
+    }
 }
 
 fn print_result(value: &Value) -> Result<()> {
@@ -380,5 +424,5 @@ fn days_to_ymd(mut days: u64) -> (u32, u8, u8) {
 }
 
 fn is_leap(year: u32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }

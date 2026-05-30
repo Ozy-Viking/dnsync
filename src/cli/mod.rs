@@ -118,12 +118,9 @@ pub enum Command {
     #[command(subcommand)]
     Allowed(AllowedCmd),
 
-    /// Show server settings
-    Settings {
-        /// Display sensitive settings values instead of redacting them
-        #[arg(long)]
-        show_secrets: bool,
-    },
+    /// Read or write DNS server settings (write is Technitium only)
+    #[command(subcommand)]
+    Settings(SettingsCmd),
 
     /// Fetch DNS server logs
     Logs {
@@ -332,6 +329,33 @@ pub enum ServerEndpointCmd {
     },
 }
 
+// ─── Settings subcommands ────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+pub enum SettingsCmd {
+    /// Show current server settings
+    Show {
+        /// Display sensitive values instead of redacting them
+        #[arg(long)]
+        show_secrets: bool,
+    },
+    /// Update server-level settings (Technitium only)
+    #[command(group(
+        clap::ArgGroup::new("payload").args(["key", "json"]).required(true)
+    ))]
+    Set {
+        /// Setting key (use with --value for a single key/value pair)
+        #[arg(long, requires = "value")]
+        key: Option<String>,
+        /// Setting value (use with --key)
+        #[arg(long, requires = "key")]
+        value: Option<String>,
+        /// Full or partial settings as a JSON object — alternative to --key/--value
+        #[arg(long, conflicts_with_all = &["key", "value"])]
+        json: Option<String>,
+    },
+}
+
 // ─── Zone subcommands ────────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
@@ -386,6 +410,28 @@ pub enum ZoneCmd {
         /// Delete all existing records in the destination before importing (clean replace)
         #[arg(long, default_value_t = false)]
         overwrite_zone: bool,
+    },
+    /// Show zone-level options (Technitium only)
+    Options {
+        /// Zone name, e.g. "example.com"
+        zone: String,
+    },
+    /// Set one or more zone-level options (Technitium only)
+    #[command(group(
+        clap::ArgGroup::new("payload").args(["key", "json"]).required(true)
+    ))]
+    OptionsSet {
+        /// Zone name, e.g. "example.com"
+        zone: String,
+        /// Option key (use with --value for a single key/value pair)
+        #[arg(long, requires = "value")]
+        key: Option<String>,
+        /// Option value (use with --key)
+        #[arg(long, requires = "key")]
+        value: Option<String>,
+        /// Zone options as a JSON object — alternative to --key/--value
+        #[arg(long, conflicts_with_all = &["key", "value"])]
+        json: Option<String>,
     },
 }
 
@@ -507,20 +553,20 @@ mod tests {
 
     #[test]
     fn settings_accepts_show_secrets_flag() {
-        let cli = Cli::try_parse_from(["dns", "settings", "--show-secrets"]).unwrap();
+        let cli = Cli::try_parse_from(["dns", "settings", "show", "--show-secrets"]).unwrap();
 
         assert!(matches!(
             cli.command,
-            Command::Settings { show_secrets: true }
+            Command::Settings(SettingsCmd::Show { show_secrets: true })
         ));
 
-        let cli = Cli::try_parse_from(["dns", "settings"]).unwrap();
+        let cli = Cli::try_parse_from(["dns", "settings", "show"]).unwrap();
 
         assert!(matches!(
             cli.command,
-            Command::Settings {
+            Command::Settings(SettingsCmd::Show {
                 show_secrets: false
-            }
+            })
         ));
     }
 }

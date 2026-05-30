@@ -89,6 +89,28 @@ pub struct TransferZoneParams {
     pub overwrite_zone: bool,
 }
 
+// ─── Settings write params ─────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SetSettingsParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
+    /// Partial or full settings as a JSON object — only provided keys are changed (Technitium only)
+    pub settings: serde_json::Value,
+}
+
+// ─── Zone options params ───────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SetZoneOptionsParams {
+    /// The DNS server ID to run this command against (see dns_list_servers)
+    pub server_id: String,
+    /// Zone name, e.g. "example.com"
+    pub zone: String,
+    /// Zone options as a JSON object — keys map to Technitium zone option names (Technitium only)
+    pub options: serde_json::Value,
+}
+
 // ─── Record params ─────────────────────────────────────────────────────────
 
 #[derive(Deserialize, JsonSchema)]

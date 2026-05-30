@@ -1,6 +1,10 @@
 use serde_json::Value;
 
-use crate::core::{dns::service::SettingsRead, error::Result, redaction::redact_sensitive_fields};
+use crate::core::{
+    dns::service::{SettingsRead, SettingsWrite},
+    error::{Error, Result},
+    redaction::redact_sensitive_fields,
+};
 
 /// Get DNS server settings through a vendor-neutral settings reader.
 ///
@@ -20,6 +24,25 @@ pub async fn get_settings<C: SettingsRead + ?Sized>(client: &C) -> Result<Value>
 /// Returns any error reported by the selected DNS backend.
 pub async fn get_settings_unredacted<C: SettingsRead + ?Sized>(client: &C) -> Result<Value> {
     client.get_settings().await
+}
+
+/// Write server-level settings via a vendor-neutral settings writer.
+///
+/// The `settings` value must be a JSON object. Technitium applies partial
+/// updates — only provided keys are changed.
+///
+/// # Errors
+///
+/// Returns any error reported by the selected DNS backend, including
+/// `Error::Unsupported` for vendors that do not support settings write.
+pub async fn set_settings<C: SettingsWrite + ?Sized>(
+    client: &C,
+    settings: &Value,
+) -> Result<Value> {
+    if !settings.is_object() {
+        return Err(Error::parse("settings must be a JSON object"));
+    }
+    client.set_settings(settings).await
 }
 
 #[cfg(test)]

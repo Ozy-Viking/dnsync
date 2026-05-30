@@ -25,7 +25,8 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, SettingsWrite, StatsRead, ZoneExport, ZoneImport, ZoneOptionsRead,
+    ZoneOptionsWrite, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 use crate::vendors::cloudflare::client::CloudflareClient;
@@ -69,6 +70,8 @@ impl DnsVendor for CloudflareClient {
             zone_import: true,
             zone_export: true,
             logs: false,
+            zone_options: false,
+            settings_write: false,
         }
     }
 }
@@ -368,6 +371,24 @@ impl SettingsRead for CloudflareClient {
     #[instrument(skip(self), fields(vendor = "cloudflare", operation = "get_settings"))]
     async fn get_settings(&self) -> Result<Value> {
         self.get("/user/tokens/verify", &[]).await
+    }
+}
+
+impl SettingsWrite for CloudflareClient {
+    async fn set_settings(&self, _settings: &Value) -> Result<Value> {
+        Err(Error::unsupported("Cloudflare", "settings write"))
+    }
+}
+
+impl ZoneOptionsRead for CloudflareClient {
+    async fn get_zone_options(&self, _zone: &str) -> Result<Value> {
+        Err(Error::unsupported("Cloudflare", "zone options"))
+    }
+}
+
+impl ZoneOptionsWrite for CloudflareClient {
+    async fn set_zone_options(&self, _zone: &str, _options: &Value) -> Result<Value> {
+        Err(Error::unsupported("Cloudflare", "zone options write"))
     }
 }
 

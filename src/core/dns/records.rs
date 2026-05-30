@@ -275,6 +275,15 @@ pub enum RecordData {
         #[serde(rename = "ipAddress")]
         ip: Ipv6Addr,
     },
+    /// RFC 3123 Address Prefix List  e.g. `apl --prefix 1:10.5.161.84/32 --prefix 1:10.5.161.85/32`
+    ///
+    /// Each prefix entry is a string of the form `[!]addressFamily:afdPart/prefixLength`
+    /// where `1` = IPv4 and `2` = IPv6. A leading `!` negates the entry.
+    Apl {
+        #[arg(long = "prefix")]
+        #[serde(rename = "addressPrefixes")]
+        address_prefixes: Vec<String>,
+    },
     /// Apex alias (Technitium-specific)  e.g. `aname target.example.net`
     Aname { aname: String },
     /// DNS App record  e.g. `app "Split Horizon" "SplitHorizon.SimpleAddress" '{}'`
@@ -460,6 +469,7 @@ impl RecordData {
         match self {
             Self::A { .. } => "A",
             Self::Aaaa { .. } => "AAAA",
+            Self::Apl { .. } => "APL",
             Self::Aname { .. } => "ANAME",
             Self::App { .. } => "APP",
             Self::Caa { .. } => "CAA",
@@ -487,6 +497,9 @@ impl RecordData {
         match self {
             Self::A { ip } => p.push(("ipAddress", ip.to_string())),
             Self::Aaaa { ip } => p.push(("ipAddress", ip.to_string())),
+            Self::Apl { address_prefixes } => {
+                p.push(("addressPrefixes", address_prefixes.join(" ")));
+            }
             Self::Aname { aname } => p.push(("aname", aname.clone())),
             Self::App {
                 app_name,
@@ -653,6 +666,11 @@ pub enum RecordSelector {
         #[serde(rename = "ipAddress")]
         ip: Option<Ipv6Addr>,
     },
+    Apl {
+        #[arg(long = "prefix")]
+        #[serde(rename = "addressPrefixes")]
+        address_prefixes: Option<Vec<String>>,
+    },
     Aname {
         aname: Option<String>,
     },
@@ -735,6 +753,7 @@ impl RecordSelector {
         match self {
             Self::A { .. } => "A",
             Self::Aaaa { .. } => "AAAA",
+            Self::Apl { .. } => "APL",
             Self::Aname { .. } => "ANAME",
             Self::App { .. } => "APP",
             Self::Caa { .. } => "CAA",
@@ -768,6 +787,11 @@ impl RecordSelector {
             Self::Aaaa { ip } => {
                 if let Some(v) = ip {
                     p.push(("ipAddress", v.to_string()));
+                }
+            }
+            Self::Apl { address_prefixes } => {
+                if let Some(prefixes) = address_prefixes {
+                    p.push(("addressPrefixes", prefixes.join(" ")));
                 }
             }
             Self::Aname { aname } => {
@@ -1183,5 +1207,43 @@ mod tests {
         let params = record.to_api_params();
         assert_eq!(params[0].0, "type");
         assert_eq!(params[0].1, record.type_name());
+    }
+
+    // ── APL ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn apl_type_name_is_apl() {
+        let r = RecordData::Apl {
+            address_prefixes: vec!["1:10.5.161.84/32".into()],
+        };
+        assert_eq!(r.type_name(), "APL");
+    }
+
+    #[test]
+    fn apl_to_api_params_type_is_first() {
+        let r = RecordData::Apl {
+            address_prefixes: vec!["1:10.5.161.84/32".into()],
+        };
+        let params = r.to_api_params();
+        assert_eq!(params[0], ("type", "APL".to_string()));
+    }
+
+    #[test]
+    fn apl_to_api_params_includes_address_prefixes() {
+        let r = RecordData::Apl {
+            address_prefixes: vec!["1:10.5.161.84/32".into(), "1:10.5.161.85/32".into()],
+        };
+        let map = params_map(&r);
+        assert!(map.contains_key("addressPrefixes"));
+        assert_eq!(map["addressPrefixes"], "1:10.5.161.84/32 1:10.5.161.85/32");
+    }
+
+    #[test]
+    fn apl_empty_prefixes_produces_empty_string() {
+        let r = RecordData::Apl {
+            address_prefixes: vec![],
+        };
+        let map = params_map(&r);
+        assert_eq!(map["addressPrefixes"], "");
     }
 }

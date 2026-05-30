@@ -10,7 +10,8 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::ListRecordsResponse;
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, SettingsWrite, StatsRead, ZoneExport, ZoneImport, ZoneOptionsRead,
+    ZoneOptionsWrite, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 use crate::vendors::technitium::client::TechnitiumClient;
@@ -30,6 +31,8 @@ impl DnsVendor for TechnitiumClient {
             zone_import: true,
             zone_export: true,
             logs: true,
+            zone_options: true,
+            settings_write: true,
         }
     }
 }
@@ -265,6 +268,73 @@ impl SettingsRead for TechnitiumClient {
     #[instrument(skip(self), fields(vendor = "technitium", operation = "get_settings"))]
     async fn get_settings(&self) -> Result<Value> {
         self.get("/api/settings/get", &[]).await
+    }
+}
+
+impl SettingsWrite for TechnitiumClient {
+    #[instrument(
+        skip(self, settings),
+        fields(vendor = "technitium", operation = "set_settings")
+    )]
+    async fn set_settings(&self, settings: &Value) -> Result<Value> {
+        let obj = settings
+            .as_object()
+            .ok_or_else(|| Error::parse("settings must be a JSON object"))?;
+        let params: Vec<(String, String)> = obj
+            .iter()
+            .map(|(k, v)| {
+                let s = match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (k.clone(), s)
+            })
+            .collect();
+        let param_refs: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        self.post("/api/settings/set", &param_refs).await
+    }
+}
+
+impl ZoneOptionsRead for TechnitiumClient {
+    #[instrument(
+        skip(self),
+        fields(vendor = "technitium", operation = "get_zone_options")
+    )]
+    async fn get_zone_options(&self, zone: &str) -> Result<Value> {
+        self.get("/api/zones/options/get", &[("zone", zone)]).await
+    }
+}
+
+impl ZoneOptionsWrite for TechnitiumClient {
+    #[instrument(
+        skip(self, options),
+        fields(vendor = "technitium", operation = "set_zone_options")
+    )]
+    async fn set_zone_options(&self, zone: &str, options: &Value) -> Result<Value> {
+        let obj = options
+            .as_object()
+            .ok_or_else(|| Error::parse("zone options must be a JSON object"))?;
+        if obj.contains_key("zone") {
+            return Err(Error::parse(
+                "zone options payload must not include reserved key 'zone'",
+            ));
+        }
+        let mut params: Vec<(String, String)> = vec![("zone".into(), zone.into())];
+        for (k, v) in obj {
+            let s = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            params.push((k.clone(), s));
+        }
+        let param_refs: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        self.post("/api/zones/options/set", &param_refs).await
     }
 }
 

@@ -146,8 +146,38 @@ pub trait SettingsRead {
     fn get_settings(&self) -> impl Future<Output = Result<Value>> + Send + '_;
 }
 
+pub trait SettingsWrite {
+    fn set_settings<'a>(
+        &'a self,
+        settings: &'a Value,
+    ) -> impl Future<Output = Result<Value>> + Send + 'a;
+}
+
+pub trait ZoneOptionsRead {
+    fn get_zone_options<'a>(
+        &'a self,
+        zone: &'a str,
+    ) -> impl Future<Output = Result<Value>> + Send + 'a;
+}
+
+pub trait ZoneOptionsWrite {
+    fn set_zone_options<'a>(
+        &'a self,
+        zone: &'a str,
+        options: &'a Value,
+    ) -> impl Future<Output = Result<Value>> + Send + 'a;
+}
+
 pub trait DnsRead:
-    DnsVendor + ZoneRead + CacheRead + StatsRead + AccessListRead + SettingsRead + ZoneExport + LogsRead
+    DnsVendor
+    + ZoneRead
+    + CacheRead
+    + StatsRead
+    + AccessListRead
+    + SettingsRead
+    + ZoneOptionsRead
+    + ZoneExport
+    + LogsRead
 {
 }
 
@@ -158,14 +188,33 @@ impl<T> DnsRead for T where
         + StatsRead
         + AccessListRead
         + SettingsRead
+        + ZoneOptionsRead
         + ZoneExport
         + LogsRead
 {
 }
 
-pub trait DnsWrite: ZoneWrite + RecordWrite + CacheWrite + AccessListWrite + ZoneImport {}
+pub trait DnsWrite:
+    ZoneWrite
+    + RecordWrite
+    + CacheWrite
+    + AccessListWrite
+    + ZoneImport
+    + SettingsWrite
+    + ZoneOptionsWrite
+{
+}
 
-impl<T> DnsWrite for T where T: ZoneWrite + RecordWrite + CacheWrite + AccessListWrite + ZoneImport {}
+impl<T> DnsWrite for T where
+    T: ZoneWrite
+        + RecordWrite
+        + CacheWrite
+        + AccessListWrite
+        + ZoneImport
+        + SettingsWrite
+        + ZoneOptionsWrite
+{
+}
 
 pub trait DnsService: DnsRead + DnsWrite + Send + Sync {}
 

@@ -4,8 +4,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::core::{
-    dns::service::{ZoneExport, ZoneImport, ZoneRead, ZoneWrite},
-    error::Result,
+    dns::service::{
+        ZoneExport, ZoneImport, ZoneOptionsRead, ZoneOptionsWrite, ZoneRead, ZoneWrite,
+    },
+    error::{Error, Result},
 };
 
 /// Shared DNS zone summary.
@@ -123,4 +125,41 @@ pub async fn import_zone_file<C: ZoneImport + ?Sized>(
 /// Returns any error reported by the selected DNS backend.
 pub async fn export_zone_file<C: ZoneExport + ?Sized>(client: &C, zone: &str) -> Result<String> {
     client.export_zone_file(zone).await
+}
+
+/// Get zone-level options for the named zone.
+///
+/// Returns vendor-specific zone configuration (transfer settings, type, etc.).
+/// Returns `Error::Unsupported` for vendors that do not expose zone options.
+///
+/// # Errors
+///
+/// Returns any error reported by the selected DNS backend.
+pub async fn get_zone_options<C: ZoneOptionsRead + ?Sized>(
+    client: &C,
+    zone: &str,
+) -> Result<Value> {
+    client.get_zone_options(zone).await
+}
+
+/// Set zone-level options for the named zone.
+///
+/// The `options` value must be a JSON object whose keys map to zone option
+/// names recognised by the backend. Technitium applies partial updates —
+/// only provided keys are changed.
+///
+/// Returns `Error::Unsupported` for vendors that do not support zone options write.
+///
+/// # Errors
+///
+/// Returns any error reported by the selected DNS backend.
+pub async fn set_zone_options<C: ZoneOptionsWrite + ?Sized>(
+    client: &C,
+    zone: &str,
+    options: &Value,
+) -> Result<Value> {
+    if !options.is_object() {
+        return Err(Error::parse("zone options must be a JSON object"));
+    }
+    client.set_zone_options(zone, options).await
 }
