@@ -6,6 +6,7 @@
 pub mod migrations;
 pub mod models;
 pub mod schema;
+pub mod store;
 
 use std::path::Path;
 
