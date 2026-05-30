@@ -71,6 +71,16 @@ pub enum Command {
     /// Start the MCP stdio server
     Mcp,
 
+    /// Run the sync daemon in the foreground
+    Daemon,
+
+    /// Manage daemon jobs
+    #[command(subcommand)]
+    Job(JobCmd),
+
+    /// Check if the daemon is healthy (exit 0 = healthy, exit 1 = not healthy)
+    Healthcheck,
+
     /// Manage DNS zones
     #[command(subcommand)]
     Zone(ZoneCmd),
@@ -558,6 +568,19 @@ pub enum AllowedCmd {
     Add { domain: String },
     /// Remove a domain from the whitelist
     Delete { domain: String },
+}
+
+// ─── Job subcommands ─────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+pub enum JobCmd {
+    /// List all configured jobs and their current state
+    List,
+    /// Run a single job immediately and print the outcome
+    Run {
+        /// Job ID to run
+        id: String,
+    },
 }
 
 #[cfg(test)]

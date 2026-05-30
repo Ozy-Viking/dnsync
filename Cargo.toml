@@ -60,6 +60,7 @@ chrono-tz = { version = "0.9", features = ["serde"] }
 regex = "1"
 rand = "0.8"
 async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 diesel = { version = "2", features = ["sqlite", "r2d2", "chrono"] }
 diesel_migrations = "2"

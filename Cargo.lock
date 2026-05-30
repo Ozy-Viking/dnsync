@@ -648,6 +648,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-util",
  "toml 1.1.2+spec-1.1.0",
  "toml_edit",
  "tracing",
@@ -2940,6 +2941,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

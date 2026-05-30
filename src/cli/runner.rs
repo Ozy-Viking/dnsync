@@ -118,7 +118,10 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         | Command::Completions { .. }
         | Command::ServerIds
         | Command::Sync { .. }
-        | Command::Query(_) => {
+        | Command::Query(_)
+        | Command::Daemon
+        | Command::Job(_)
+        | Command::Healthcheck => {
             unreachable!()
         }
     };
@@ -285,6 +288,10 @@ pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
         }
 
         Command::Completions { .. } | Command::ServerIds => {
+            unreachable!("handled in main")
+        }
+
+        Command::Daemon | Command::Job(_) | Command::Healthcheck => {
             unreachable!("handled in main")
         }
     };
