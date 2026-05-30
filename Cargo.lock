@@ -619,6 +619,7 @@ dependencies = [
 name = "dnsync"
 version = "0.2.3"
 dependencies = [
+ "async-trait",
  "chrono",
  "chrono-tz",
  "clap",
