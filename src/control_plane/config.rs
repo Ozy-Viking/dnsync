@@ -6,6 +6,7 @@ use std::{
 };
 
 use hickory_resolver::Resolver;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::control_plane::policy::PolicyRule;
@@ -226,6 +227,112 @@ impl std::str::FromStr for ValidationEndpointConfig {
     }
 }
 
+/// Job kind discriminant — matches the `JobKind` in `daemon::types`.
+///
+/// Defined here because it is part of the config file schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobKind {
+    RecordSync,
+    ZoneSync,
+    ZoneExport,
+}
+
+fn default_heartbeat_interval() -> String {
+    "5s".to_string()
+}
+fn default_heartbeat_timeout() -> String {
+    "20s".to_string()
+}
+fn default_shutdown_timeout() -> String {
+    "5s".to_string()
+}
+fn default_worker_threads() -> usize {
+    4
+}
+fn default_critical_threshold() -> u32 {
+    5
+}
+
+/// Daemon runtime configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DaemonConfig {
+    /// Path to the SQLite state database.
+    ///
+    /// Optional here — the runtime resolves `DNSYNC_STATE_DB` if unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_db: Option<PathBuf>,
+
+    /// How often the daemon emits a heartbeat (e.g. `"5s"`).
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval: String,
+
+    /// Time after which a missed heartbeat is treated as a fault (e.g. `"20s"`).
+    #[serde(default = "default_heartbeat_timeout")]
+    pub heartbeat_timeout: String,
+
+    /// Grace period for in-flight jobs during a graceful shutdown (e.g. `"5s"`).
+    #[serde(default = "default_shutdown_timeout")]
+    pub shutdown_timeout: String,
+
+    /// Tokio worker threads dedicated to the daemon.
+    #[serde(default = "default_worker_threads")]
+    pub worker_threads: usize,
+
+    /// Number of consecutive critical-job failures before escalating to `Fatal`.
+    #[serde(default = "default_critical_threshold")]
+    pub critical_failure_threshold: u32,
+}
+
+/// A daemon job entry — flat config struct covering all job kinds.
+///
+/// Exactly one of `schedule` or `interval` must be present.
+/// The `from`/`to` fields are required for `RecordSync` and `ZoneSync`.
+/// The `output_dir` field is required for `ZoneExport`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobConfig {
+    pub id: String,
+    pub kind: JobKind,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub critical: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub run_immediately: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jitter: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+    // RecordSync + ZoneSync fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zones: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ip_map: BTreeMap<String, String>,
+    // RecordSync-only fields
+    #[serde(default = "default_true")]
+    pub create_missing: bool,
+    #[serde(default = "default_true")]
+    pub overwrite_existing: bool,
+    #[serde(default)]
+    pub delete_destination_only: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<String>,
+    // ZoneExport-only fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_dir: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -234,32 +341,13 @@ pub struct AppConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub clusters: BTreeMap<String, ClusterConfig>,
 
-    /// Named record-sync profiles (see `dns sync`).
+    /// Daemon runtime configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon: Option<DaemonConfig>,
+
+    /// Scheduled job definitions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sync: Vec<SyncProfile>,
-}
-
-/// A named record-sync profile: copy records from one configured server to
-/// another, optionally rewriting IP addresses on A/AAAA records.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SyncProfile {
-    /// Unique profile name, invoked as `dns sync <name>`.
-    pub name: String,
-
-    /// Source server id — must match a `[[servers]]` entry.
-    pub from: String,
-
-    /// Destination server id — must match a `[[servers]]` entry.
-    pub to: String,
-
-    /// Zones to sync. Empty means every zone found on the source server.
-    #[serde(default)]
-    pub zones: Vec<String>,
-
-    /// Explicit `source = destination` IP rewrites applied to A/AAAA records.
-    #[serde(default)]
-    pub ip_map: std::collections::BTreeMap<String, String>,
+    pub jobs: Vec<JobConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -511,7 +599,8 @@ impl AppConfig {
                 validation_endpoints: Vec::new(),
             }],
             clusters: BTreeMap::new(),
-            sync: Vec::new(),
+            daemon: None,
+            jobs: Vec::new(),
         }
     }
 
@@ -525,8 +614,11 @@ impl AppConfig {
             append_server_entry(&mut doc, server);
         }
         append_cluster_entries(&mut doc, &self.clusters);
-        for profile in &self.sync {
-            append_sync_entry(&mut doc, profile);
+        if let Some(ref daemon) = self.daemon {
+            append_daemon_entry(&mut doc, daemon);
+        }
+        for job in &self.jobs {
+            append_job_entry(&mut doc, job);
         }
         Ok(doc.to_string())
     }
@@ -545,7 +637,8 @@ impl AppConfig {
                 })
                 .collect(),
             clusters: self.clusters.clone(),
-            sync: self.sync.clone(),
+            daemon: self.daemon.clone(),
+            jobs: self.jobs.clone(),
         }
     }
 
@@ -621,42 +714,7 @@ impl AppConfig {
             validate_validation_endpoints(server)?;
         }
         validate_clusters(&self.clusters, &ids)?;
-
-        let mut sync_names = std::collections::HashSet::new();
-        for profile in &self.sync {
-            if profile.name.trim().is_empty() {
-                return Err(Error::config(
-                    "config contains a sync profile with an empty name",
-                ));
-            }
-            if !sync_names.insert(profile.name.to_lowercase()) {
-                return Err(Error::config(format!(
-                    "config contains duplicate sync profile name '{}'",
-                    profile.name
-                )));
-            }
-            if !ids.contains(&profile.from.to_lowercase()) {
-                return Err(Error::config(format!(
-                    "sync profile '{}' references unknown source server '{}'",
-                    profile.name, profile.from
-                )));
-            }
-            if !ids.contains(&profile.to.to_lowercase()) {
-                return Err(Error::config(format!(
-                    "sync profile '{}' references unknown destination server '{}'",
-                    profile.name, profile.to
-                )));
-            }
-            if profile.from.to_lowercase() == profile.to.to_lowercase() {
-                return Err(Error::config(format!(
-                    "sync profile '{}' has identical source and destination server '{}'",
-                    profile.name, profile.from
-                )));
-            }
-            for (src, dst) in &profile.ip_map {
-                validate_ip_pair(&profile.name, src, dst)?;
-            }
-        }
+        validate_jobs(&self.jobs, &ids)?;
 
         Ok(())
     }
@@ -1390,34 +1448,208 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     }
 }
 
-/// Append a `[[sync]]` profile entry to a toml_edit document without touching
-/// any existing content.
-fn append_sync_entry(doc: &mut toml_edit::DocumentMut, profile: &SyncProfile) {
+/// Validate a single `ip_map` job context entry.
+fn validate_ip_pair_for_job(job_id: &str, src: &str, dst: &str) -> Result<()> {
+    let source: IpAddr = src.parse().map_err(|_| {
+        Error::config(format!(
+            "job '{job_id}': '{src}' is not a valid IP address"
+        ))
+    })?;
+    let dest: IpAddr = dst.parse().map_err(|_| {
+        Error::config(format!(
+            "job '{job_id}': '{dst}' is not a valid IP address"
+        ))
+    })?;
+    if source.is_ipv4() != dest.is_ipv4() {
+        return Err(Error::config(format!(
+            "job '{job_id}': IP mapping '{src}' = '{dst}' mixes IPv4 and IPv6"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate all job entries.
+fn validate_jobs(jobs: &[JobConfig], server_ids: &HashSet<String>) -> Result<()> {
+    let mut job_ids: HashSet<String> = HashSet::new();
+    for job in jobs {
+        if job.id.trim().is_empty() {
+            return Err(Error::config("config contains a job with an empty id"));
+        }
+        if !job_ids.insert(job.id.to_lowercase()) {
+            return Err(Error::config(format!(
+                "config contains duplicate job id '{}'",
+                job.id
+            )));
+        }
+
+        // Exactly one of schedule / interval.
+        match (job.schedule.is_some(), job.interval.is_some()) {
+            (true, true) => {
+                return Err(Error::config(format!(
+                    "job '{}' specifies both 'schedule' and 'interval'; use only one",
+                    job.id
+                )));
+            }
+            (false, false) => {
+                return Err(Error::config(format!(
+                    "job '{}' must specify either 'schedule' or 'interval'",
+                    job.id
+                )));
+            }
+            _ => {}
+        }
+
+        match job.kind {
+            JobKind::RecordSync | JobKind::ZoneSync => {
+                let from = job.from.as_deref().unwrap_or("").trim();
+                let to = job.to.as_deref().unwrap_or("").trim();
+
+                if from.is_empty() {
+                    return Err(Error::config(format!(
+                        "job '{}' of kind {:?} requires 'from'",
+                        job.id, job.kind
+                    )));
+                }
+                if to.is_empty() {
+                    return Err(Error::config(format!(
+                        "job '{}' of kind {:?} requires 'to'",
+                        job.id, job.kind
+                    )));
+                }
+                if !server_ids.contains(&from.to_lowercase()) {
+                    return Err(Error::config(format!(
+                        "job '{}' references unknown source server '{from}'",
+                        job.id
+                    )));
+                }
+                if !server_ids.contains(&to.to_lowercase()) {
+                    return Err(Error::config(format!(
+                        "job '{}' references unknown destination server '{to}'",
+                        job.id
+                    )));
+                }
+                if from.to_lowercase() == to.to_lowercase() {
+                    return Err(Error::config(format!(
+                        "job '{}' has identical source and destination server '{from}'",
+                        job.id
+                    )));
+                }
+            }
+            JobKind::ZoneExport => {
+                if job
+                    .output_dir
+                    .as_deref()
+                    .is_none_or(|s| s.trim().is_empty())
+                {
+                    return Err(Error::config(format!(
+                        "job '{}' of kind zone_export requires 'output_dir'",
+                        job.id
+                    )));
+                }
+            }
+        }
+
+        for (src, dst) in &job.ip_map {
+            validate_ip_pair_for_job(&job.id, src, dst)?;
+        }
+
+        for pattern in &job.ignore {
+            Regex::new(pattern).map_err(|e| {
+                Error::config(format!(
+                    "job '{}': ignore pattern '{pattern}' is not valid regex: {e}",
+                    job.id
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Append the `[daemon]` table to a toml_edit document.
+fn append_daemon_entry(doc: &mut toml_edit::DocumentMut, daemon: &DaemonConfig) {
+    use toml_edit::{Item, Table, value};
+
+    let mut tbl = Table::new();
+    tbl.decor_mut().set_prefix("\n");
+
+    if let Some(ref p) = daemon.state_db {
+        tbl["state_db"] = value(p.to_string_lossy().as_ref());
+    }
+    tbl["heartbeat_interval"] = value(daemon.heartbeat_interval.as_str());
+    tbl["heartbeat_timeout"] = value(daemon.heartbeat_timeout.as_str());
+    tbl["shutdown_timeout"] = value(daemon.shutdown_timeout.as_str());
+    tbl["worker_threads"] = value(daemon.worker_threads as i64);
+    tbl["critical_failure_threshold"] = value(daemon.critical_failure_threshold as i64);
+
+    doc["daemon"] = Item::Table(tbl);
+}
+
+/// Append a `[[jobs]]` entry to a toml_edit document.
+fn append_job_entry(doc: &mut toml_edit::DocumentMut, job: &JobConfig) {
     use toml_edit::{Array, ArrayOfTables, Item, Table, value};
 
     let mut tbl = Table::new();
-    // Blank line before each [[sync]] header for readability.
     tbl.decor_mut().set_prefix("\n");
 
-    tbl["name"] = value(profile.name.as_str());
-    tbl["from"] = value(profile.from.as_str());
-    tbl["to"] = value(profile.to.as_str());
+    tbl["id"] = value(job.id.as_str());
+    tbl["kind"] = value(match job.kind {
+        JobKind::RecordSync => "record_sync",
+        JobKind::ZoneSync => "zone_sync",
+        JobKind::ZoneExport => "zone_export",
+    });
+    tbl["enabled"] = value(job.enabled);
+    tbl["critical"] = value(job.critical);
 
-    let mut zones = Array::new();
-    for zone in &profile.zones {
-        zones.push(zone.as_str());
+    if let Some(ref s) = job.schedule {
+        tbl["schedule"] = value(s.as_str());
     }
-    tbl["zones"] = value(zones);
+    if let Some(ref i) = job.interval {
+        tbl["interval"] = value(i.as_str());
+    }
+    if let Some(ref tz) = job.timezone {
+        tbl["timezone"] = value(tz.as_str());
+    }
+    tbl["run_immediately"] = value(job.run_immediately);
+    if let Some(ref j) = job.jitter {
+        tbl["jitter"] = value(j.as_str());
+    }
+    tbl["dry_run"] = value(job.dry_run);
 
-    if !profile.ip_map.is_empty() {
+    if let Some(ref f) = job.from {
+        tbl["from"] = value(f.as_str());
+    }
+    if let Some(ref t) = job.to {
+        tbl["to"] = value(t.as_str());
+    }
+    if !job.zones.is_empty() {
+        let mut zones = Array::new();
+        for z in &job.zones {
+            zones.push(z.as_str());
+        }
+        tbl["zones"] = value(zones);
+    }
+    if !job.ip_map.is_empty() {
         let mut map_tbl = Table::new();
-        for (src, dst) in &profile.ip_map {
+        for (src, dst) in &job.ip_map {
             map_tbl[src.as_str()] = value(dst.as_str());
         }
         tbl["ip_map"] = Item::Table(map_tbl);
     }
+    tbl["create_missing"] = value(job.create_missing);
+    tbl["overwrite_existing"] = value(job.overwrite_existing);
+    tbl["delete_destination_only"] = value(job.delete_destination_only);
+    if !job.ignore.is_empty() {
+        let mut ignore = Array::new();
+        for p in &job.ignore {
+            ignore.push(p.as_str());
+        }
+        tbl["ignore"] = value(ignore);
+    }
+    if let Some(ref out) = job.output_dir {
+        tbl["output_dir"] = value(out.as_str());
+    }
 
-    match doc.entry("sync") {
+    match doc.entry("jobs") {
         toml_edit::Entry::Occupied(mut e) => {
             if let Some(aot) = e.get_mut().as_array_of_tables_mut() {
                 aot.push(tbl);
@@ -1433,24 +1665,6 @@ fn append_sync_entry(doc: &mut toml_edit::DocumentMut, profile: &SyncProfile) {
 
 /// Validate a single `ip_map` entry: both sides must parse as IP addresses of
 /// the same family.
-fn validate_ip_pair(profile: &str, src: &str, dst: &str) -> Result<()> {
-    let source: IpAddr = src.parse().map_err(|_| {
-        Error::config(format!(
-            "sync profile '{profile}': '{src}' is not a valid IP address"
-        ))
-    })?;
-    let dest: IpAddr = dst.parse().map_err(|_| {
-        Error::config(format!(
-            "sync profile '{profile}': '{dst}' is not a valid IP address"
-        ))
-    })?;
-    if source.is_ipv4() != dest.is_ipv4() {
-        return Err(Error::config(format!(
-            "sync profile '{profile}': IP mapping '{src}' = '{dst}' mixes IPv4 and IPv6"
-        )));
-    }
-    Ok(())
-}
 
 fn write_default_config(path: &Path, force: bool) -> Result<()> {
     if path.exists() && !force {
@@ -3002,9 +3216,9 @@ mod tests {
         assert_eq!(server.location, Some(ServerLocation::External));
     }
 
-    // ── sync profiles ─────────────────────────────────────────────────────────
+    // ── jobs ─────────────────────────────────────────────────────────────────
 
-    fn sync_config() -> &'static str {
+    fn two_server_config() -> &'static str {
         r#"
             [[servers]]
             id = "cf"
@@ -3013,129 +3227,364 @@ mod tests {
             [[servers]]
             id = "home"
             token = "tok"
-
-            [[sync]]
-            name = "split"
-            from = "cf"
-            to = "home"
-            zones = ["example.com"]
-
-            [sync.ip_map]
-            "203.0.113.10" = "192.168.1.10"
         "#
     }
 
     #[test]
-    fn parses_and_validates_sync_profile() {
-        let config: AppConfig = toml::from_str(sync_config()).expect("should parse");
-        config.validate().expect("sync profile should validate");
-
-        assert_eq!(config.sync.len(), 1);
-        let profile = &config.sync[0];
-        assert_eq!(profile.name, "split");
-        assert_eq!(profile.from, "cf");
-        assert_eq!(profile.to, "home");
-        assert_eq!(profile.zones, ["example.com"]);
-        assert_eq!(
-            profile.ip_map.get("203.0.113.10").map(String::as_str),
-            Some("192.168.1.10")
-        );
-    }
-
-    #[test]
-    fn sync_profile_round_trips_through_render_toml() {
-        let config: AppConfig = toml::from_str(sync_config()).expect("should parse");
-        let rendered = config.render_toml().expect("should render");
-        let reparsed: AppConfig =
-            toml::from_str(&rendered).expect("rendered sync config should parse back");
-        reparsed
-            .validate()
-            .expect("reparsed config should validate");
-        assert_eq!(reparsed.sync.len(), 1);
-        assert_eq!(reparsed.sync[0].name, "split");
-        assert_eq!(
-            reparsed.sync[0]
-                .ip_map
-                .get("203.0.113.10")
-                .map(String::as_str),
-            Some("192.168.1.10")
-        );
-    }
-
-    #[test]
-    fn rejects_sync_profile_with_unknown_server() {
-        let config: AppConfig = toml::from_str(
+    fn parses_minimal_record_sync_job() {
+        let toml = concat!(
             r#"
-                [[servers]]
-                id = "cf"
-                token = "tok"
+            [[servers]]
+            id = "cf"
+            token = "tok"
 
-                [[sync]]
-                name = "bad"
-                from = "cf"
-                to = "missing"
-            "#,
-        )
-        .expect("should parse before validation");
+            [[servers]]
+            id = "home"
+            token = "tok"
 
+            [[jobs]]
+            id = "sync-cf-home"
+            kind = "record_sync"
+            interval = "5m"
+            from = "cf"
+            to = "home"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        config.validate().expect("should validate");
+        assert_eq!(config.jobs.len(), 1);
+        let job = &config.jobs[0];
+        assert_eq!(job.id, "sync-cf-home");
+        assert_eq!(job.kind, JobKind::RecordSync);
+        assert_eq!(job.interval.as_deref(), Some("5m"));
+        assert_eq!(job.from.as_deref(), Some("cf"));
+        assert_eq!(job.to.as_deref(), Some("home"));
+        assert!(job.enabled);
+        assert!(!job.critical);
+    }
+
+    #[test]
+    fn parses_full_record_sync_job_with_all_fields() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "src"
+            token = "tok"
+
+            [[servers]]
+            id = "dst"
+            token = "tok"
+
+            [[jobs]]
+            id = "full-job"
+            kind = "record_sync"
+            enabled = true
+            critical = true
+            schedule = "*/5 * * * *"
+            timezone = "America/New_York"
+            run_immediately = true
+            jitter = "30s"
+            dry_run = true
+            from = "src"
+            to = "dst"
+            zones = ["example.com", "internal.lan"]
+            create_missing = false
+            overwrite_existing = false
+            delete_destination_only = true
+            ignore = ["^_dmarc\\."]
+
+            [jobs.ip_map]
+            "203.0.113.10" = "192.168.1.10"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        config.validate().expect("should validate");
+        let job = &config.jobs[0];
+        assert_eq!(job.id, "full-job");
+        assert!(job.critical);
+        assert_eq!(job.schedule.as_deref(), Some("*/5 * * * *"));
+        assert_eq!(job.timezone.as_deref(), Some("America/New_York"));
+        assert!(job.run_immediately);
+        assert_eq!(job.jitter.as_deref(), Some("30s"));
+        assert!(job.dry_run);
+        assert_eq!(job.zones, ["example.com", "internal.lan"]);
+        assert!(!job.create_missing);
+        assert!(!job.overwrite_existing);
+        assert!(job.delete_destination_only);
+        assert_eq!(job.ignore, ["^_dmarc\\."]);
+        assert_eq!(
+            job.ip_map.get("203.0.113.10").map(String::as_str),
+            Some("192.168.1.10")
+        );
+    }
+
+    #[test]
+    fn parses_zone_sync_job() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "primary"
+            token = "tok"
+
+            [[servers]]
+            id = "secondary"
+            token = "tok"
+
+            [[jobs]]
+            id = "zone-sync"
+            kind = "zone_sync"
+            interval = "1h"
+            from = "primary"
+            to = "secondary"
+            zones = ["example.com"]
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        config.validate().expect("should validate");
+        let job = &config.jobs[0];
+        assert_eq!(job.kind, JobKind::ZoneSync);
+    }
+
+    #[test]
+    fn parses_zone_export_job() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "primary"
+            token = "tok"
+
+            [[jobs]]
+            id = "zone-export"
+            kind = "zone_export"
+            interval = "1d"
+            output_dir = "/tmp/zones"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        config.validate().expect("should validate");
+        let job = &config.jobs[0];
+        assert_eq!(job.kind, JobKind::ZoneExport);
+        assert_eq!(job.output_dir.as_deref(), Some("/tmp/zones"));
+    }
+
+    #[test]
+    fn parses_daemon_config() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [daemon]
+            state_db = "/var/lib/dnsync/state.db"
+            heartbeat_interval = "10s"
+            worker_threads = 8
+            critical_failure_threshold = 3
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        config.validate().expect("should validate");
+        let daemon = config.daemon.as_ref().expect("daemon should be present");
+        assert_eq!(
+            daemon.state_db.as_ref().map(|p| p.to_string_lossy().to_string()).as_deref(),
+            Some("/var/lib/dnsync/state.db")
+        );
+        assert_eq!(daemon.heartbeat_interval, "10s");
+        assert_eq!(daemon.worker_threads, 8);
+        assert_eq!(daemon.critical_failure_threshold, 3);
+        // defaults
+        assert_eq!(daemon.heartbeat_timeout, "20s");
+        assert_eq!(daemon.shutdown_timeout, "5s");
+    }
+
+    #[test]
+    fn rejects_duplicate_job_ids() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "cf"
+            token = "tok"
+
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[jobs]]
+            id = "sync"
+            kind = "record_sync"
+            interval = "5m"
+            from = "cf"
+            to = "home"
+
+            [[jobs]]
+            id = "SYNC"
+            kind = "record_sync"
+            interval = "5m"
+            from = "home"
+            to = "cf"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
         let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("unknown destination server"));
+        assert!(err.to_string().contains("duplicate job id"));
     }
 
     #[test]
-    fn rejects_sync_profile_with_family_mismatched_ip_map() {
-        let config: AppConfig = toml::from_str(
+    fn rejects_job_with_both_schedule_and_interval() {
+        let toml = concat!(
             r#"
-                [[servers]]
-                id = "cf"
-                token = "tok"
+            [[servers]]
+            id = "cf"
+            token = "tok"
 
-                [[servers]]
-                id = "home"
-                token = "tok"
+            [[servers]]
+            id = "home"
+            token = "tok"
 
-                [[sync]]
-                name = "bad"
-                from = "cf"
-                to = "home"
+            [[jobs]]
+            id = "both"
+            kind = "record_sync"
+            schedule = "*/5 * * * *"
+            interval = "5m"
+            from = "cf"
+            to = "home"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("both 'schedule' and 'interval'"));
+    }
 
-                [sync.ip_map]
-                "203.0.113.10" = "fd00::1"
-            "#,
-        )
-        .expect("should parse before validation");
+    #[test]
+    fn rejects_job_with_neither_schedule_nor_interval() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "cf"
+            token = "tok"
 
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[jobs]]
+            id = "neither"
+            kind = "record_sync"
+            from = "cf"
+            to = "home"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("either 'schedule' or 'interval'"));
+    }
+
+    #[test]
+    fn rejects_record_sync_job_missing_from() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[jobs]]
+            id = "no-from"
+            kind = "record_sync"
+            interval = "5m"
+            to = "home"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("requires 'from'"));
+    }
+
+    #[test]
+    fn rejects_record_sync_job_missing_to() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[jobs]]
+            id = "no-to"
+            kind = "record_sync"
+            interval = "5m"
+            from = "home"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("requires 'to'"));
+    }
+
+    #[test]
+    fn rejects_record_sync_job_same_from_to() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[jobs]]
+            id = "same"
+            kind = "record_sync"
+            interval = "5m"
+            from = "home"
+            to = "home"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("identical source and destination"));
+    }
+
+    #[test]
+    fn rejects_zone_export_job_missing_output_dir() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[jobs]]
+            id = "no-output"
+            kind = "zone_export"
+            interval = "1d"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("requires 'output_dir'"));
+    }
+
+    #[test]
+    fn rejects_invalid_ip_map_entry_in_job() {
+        let toml = concat!(
+            r#"
+            [[servers]]
+            id = "cf"
+            token = "tok"
+
+            [[servers]]
+            id = "home"
+            token = "tok"
+
+            [[jobs]]
+            id = "bad-ip"
+            kind = "record_sync"
+            interval = "5m"
+            from = "cf"
+            to = "home"
+
+            [jobs.ip_map]
+            "203.0.113.10" = "fd00::1"
+            "#
+        );
+        let config: AppConfig = toml::from_str(toml).expect("should parse");
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("IPv4 and IPv6"));
-    }
-
-    #[test]
-    fn rejects_duplicate_sync_profile_names() {
-        let config: AppConfig = toml::from_str(
-            r#"
-                [[servers]]
-                id = "cf"
-                token = "tok"
-
-                [[servers]]
-                id = "home"
-                token = "tok"
-
-                [[sync]]
-                name = "dup"
-                from = "cf"
-                to = "home"
-
-                [[sync]]
-                name = "DUP"
-                from = "home"
-                to = "cf"
-            "#,
-        )
-        .expect("should parse before validation");
-
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("duplicate sync profile name"));
     }
     #[test]
     fn cloudflare_inferred_local_server_does_not_get_provider_transport_defaults() {

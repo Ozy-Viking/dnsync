@@ -54,6 +54,11 @@ inquire = "0.7"
 colorchoice-clap = "1.0.8"
 time = { version = "0.3.47", features = ["formatting", "local-offset", "macros"] }
 owo-colors = "4.3.0"
+cron = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = { version = "0.9", features = ["serde"] }
+regex = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 rstest = "0.26"

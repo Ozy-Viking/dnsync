@@ -11,22 +11,10 @@ pub async fn handle_sync(
     to_policy: &Policy,
     p: SyncParams,
 ) -> Result<CallToolResult, McpError> {
-    let profile_zones = p
-        .profile
-        .as_deref()
-        .and_then(|name| {
-            config
-                .sync
-                .iter()
-                .find(|profile| profile.name.eq_ignore_ascii_case(name))
-        })
-        .map(|profile| profile.zones.as_slice())
-        .unwrap_or(&[]);
-    let effective_zones = if p.zones.is_empty() {
-        profile_zones
-    } else {
-        p.zones.as_slice()
-    };
+    // Named sync profiles have been superseded by [[jobs]]; zone resolution
+    // now relies solely on the explicit `zones` parameter or server allow-lists.
+    let _ = config; // config retained for future use
+    let effective_zones = p.zones.as_slice();
     let zone_check = if effective_zones.is_empty()
         && (from_policy.allowed_zones.is_some() || to_policy.allowed_zones.is_some())
     {

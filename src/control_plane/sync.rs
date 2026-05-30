@@ -179,41 +179,24 @@ async fn build_sync_plan(
         ));
     };
 
-    // Resolve the profile, if one was named.
-    let profile = match profile {
-        Some(name) => Some(
-            cfg.sync
-                .iter()
-                .find(|p| p.name.eq_ignore_ascii_case(name))
-                .ok_or_else(|| {
-                    Error::config(format!(
-                        "config does not define a sync profile named '{name}'"
-                    ))
-                })?,
-        ),
-        None => None,
-    };
-
-    // From/to: CLI flag wins, then the profile.
-    let from_id = from
-        .or_else(|| profile.map(|p| p.from.as_str()))
-        .ok_or_else(|| {
-            Error::parse("sync requires a source server: name a profile or pass --from")
-        })?;
-    let to_id = to
-        .or_else(|| profile.map(|p| p.to.as_str()))
-        .ok_or_else(|| {
-            Error::parse("sync requires a destination server: name a profile or pass --to")
-        })?;
-
-    // IP map: profile entries first, then CLI --map (which overrides).
-    let mut ip_map: HashMap<IpAddr, IpAddr> = HashMap::new();
-    if let Some(p) = profile {
-        for (src, dst) in &p.ip_map {
-            let (s, d) = parse_ip_pair(&format!("{src}={dst}"))?;
-            ip_map.insert(s, d);
-        }
+    // Named sync profiles have been superseded by `[[jobs]]` in Phase 1.
+    // Profile-based sync will be re-wired in a later phase.
+    if profile.is_some() {
+        return Err(Error::config(
+            "named sync profiles are no longer supported; use [[jobs]] in the config file instead",
+        ));
     }
+
+    // From/to: CLI flags are required when no profile is given.
+    let from_id = from.ok_or_else(|| {
+        Error::parse("sync requires a source server: pass --from")
+    })?;
+    let to_id = to.ok_or_else(|| {
+        Error::parse("sync requires a destination server: pass --to")
+    })?;
+
+    // IP map: CLI --map flags.
+    let mut ip_map: HashMap<IpAddr, IpAddr> = HashMap::new();
     for spec in maps {
         let (s, d) = parse_ip_pair(spec)?;
         ip_map.insert(s, d);
@@ -226,11 +209,9 @@ async fn build_sync_plan(
     let from_client = VendorClient::from_server(from_server)?;
     let to_client = VendorClient::from_server(to_server)?;
 
-    // Zones: CLI wins, then the profile, then every zone on the source.
+    // Zones: CLI wins, then every zone on the source.
     let zone_list: Vec<String> = if !zones.is_empty() {
         zones.to_vec()
-    } else if let Some(p) = profile.filter(|p| !p.zones.is_empty()) {
-        p.zones.clone()
     } else {
         const PAGE_SIZE: u32 = 1000;
         let mut page = 1;

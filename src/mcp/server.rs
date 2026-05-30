@@ -976,28 +976,22 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<SyncParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::debug!(tool = "dns_sync", from = ?p.from, to = ?p.to, profile = ?p.profile, apply = p.apply, "MCP tool invoked");
-        let profile = p.profile.as_deref().and_then(|name| {
-            self.config
-                .sync
-                .iter()
-                .find(|profile| profile.name.eq_ignore_ascii_case(name))
-        });
+        tracing::debug!(tool = "dns_sync", from = ?p.from, to = ?p.to, apply = p.apply, "MCP tool invoked");
+        // Named sync profiles have been superseded by [[jobs]]; `from` and `to`
+        // must now be specified explicitly.
         let from_id = p
             .from
             .as_deref()
-            .or_else(|| profile.map(|profile| profile.from.as_str()))
             .ok_or_else(|| {
                 mcp_err(crate::core::error::Error::parse(
-                    "sync requires a source server: name a profile or pass from",
+                    "sync requires a source server: pass from",
                 ))
             })?;
         let to_id =
             p.to.as_deref()
-                .or_else(|| profile.map(|profile| profile.to.as_str()))
                 .ok_or_else(|| {
                     mcp_err(crate::core::error::Error::parse(
-                        "sync requires a destination server: name a profile or pass to",
+                        "sync requires a destination server: pass to",
                     ))
                 })?;
         let (_, from_policy) = self.resolve_server(from_id).map_err(mcp_err)?;

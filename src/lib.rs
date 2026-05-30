@@ -12,6 +12,7 @@ compile_error!(
 pub mod cli;
 pub mod control_plane;
 pub mod core;
+pub mod daemon;
 pub mod formatter;
 pub mod mcp;
 pub mod vendors;
