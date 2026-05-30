@@ -17,7 +17,7 @@ use chrono::Utc;
 use rand::SeedableRng;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::control_plane::config::{AppConfig, JobKind};
 use crate::daemon::{
@@ -79,17 +79,21 @@ fn parse_duration(s: &str) -> Duration {
 // ─── run ───────────────────────────────────────────────────────────────────────
 
 /// Run the daemon until `cancel` is triggered or ctrl-c is received.
+#[instrument(skip(config, cancel), fields(daemon_id))]
 pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), String> {
     let daemon_id = uuid::Uuid::new_v4().to_string();
+    tracing::Span::current().record("daemon_id", &daemon_id.as_str());
     let started_at = Utc::now().to_rfc3339();
 
     // ── 1. Open state DB ──────────────────────────────────────────────────────
     let db_path = resolve_state_db(&config);
+    debug!(db_path = %db_path.display(), "opening state DB");
     let pool = db::open(&db_path)?;
     let store = DaemonStateStore::new(pool);
 
     // ── 2. Spawn DB writer task ───────────────────────────────────────────────
     let (db_write_tx, db_write_rx) = mpsc::channel::<DbWriteRequest>(256);
+    info!("starting DB writer task");
     spawn_db_writer(DaemonStateStore::new(db::open(&db_path)?), db_write_rx).await;
 
     // ── 3. Write startup health row ───────────────────────────────────────────
@@ -149,10 +153,12 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
 
     // ── 5. Spawn worker pool ──────────────────────────────────────────────────
     let num_workers = config.daemon.as_ref().map_or(4, |d| d.worker_threads);
+    info!(num_workers = num_workers, "starting worker pool");
     let job_tx = spawn_workers(num_workers, 64, executors, db_write_tx.clone()).await;
 
     // ── 6. Build scheduled jobs list ─────────────────────────────────────────
     let mut scheduled_jobs: Vec<ScheduledJob> = Vec::new();
+    debug!(total_jobs = config.jobs.len(), "building scheduled jobs list");
     for job in &config.jobs {
         let schedule_str = job
             .schedule
@@ -180,6 +186,11 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
             .map(parse_duration)
             .unwrap_or(Duration::ZERO);
 
+        debug!(
+            job_id = %job.id,
+            enabled = job.enabled,
+            "scheduled job registered"
+        );
         scheduled_jobs.push(ScheduledJob {
             id: job.id.clone(),
             cron_expr,
@@ -191,6 +202,7 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
 
     // ── 7. Fire run_immediately jobs right away ────────────────────────────────
     for job in config.jobs.iter().filter(|j| j.run_immediately && j.enabled) {
+        info!(job_id = %job.id, "triggering run_immediately job");
         let trigger = JobTrigger {
             job_id: job.id.clone(),
             scheduled_at: Utc::now(),
@@ -209,6 +221,7 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
         .unwrap_or(Duration::from_secs(5));
 
     // ── 9. Scheduling loop ────────────────────────────────────────────────────
+    info!("entering scheduling loop");
 
     loop {
         let mut rng = rand::rngs::StdRng::from_entropy();
@@ -230,8 +243,22 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
             break;
         };
 
+        debug!(
+            job_id = %next_job.id,
+            fire_time = %fire_time,
+            "scheduler tick: next job selected"
+        );
+
         let fire_time_with_jitter =
             apply_jitter(fire_time, next_job.jitter_max, &mut rng);
+
+        if fire_time_with_jitter != fire_time {
+            debug!(
+                job_id = %next_job.id,
+                fire_time_with_jitter = %fire_time_with_jitter,
+                "jitter applied to fire time"
+            );
+        }
 
         let sleep_duration = (fire_time_with_jitter - now)
             .to_std()
@@ -242,6 +269,7 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
 
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
+                info!(job_id = %next_job.id, scheduled_at = %fire_time, "triggering scheduled job");
                 let trigger = JobTrigger {
                     job_id: next_job.id.clone(),
                     scheduled_at: fire_time,
@@ -264,6 +292,7 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
 
     // ── 10. Graceful shutdown ─────────────────────────────────────────────────
     // Drop job_tx so workers drain and exit.
+    info!("draining worker pool (dropping job_tx)");
     drop(job_tx);
 
     // Wait up to shutdown_timeout for in-flight jobs to finish.

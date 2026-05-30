@@ -7,6 +7,8 @@
 
 use std::time::{Duration, Instant};
 
+use tracing::{debug, info, instrument, warn};
+
 use crate::control_plane::config::AppConfig;
 use crate::control_plane::sync::run_sync_json;
 
@@ -20,8 +22,10 @@ pub struct ZoneSyncExecutor {
 
 #[async_trait::async_trait]
 impl JobExecutor for ZoneSyncExecutor {
+    #[instrument(skip(self, ctx), fields(job_id = %self.job_id, run_id = %ctx.run_id))]
     async fn execute(&self, ctx: &JobContext) -> (JobOutcome, Duration) {
         let Some(job) = self.config.jobs.iter().find(|j| j.id == self.job_id) else {
+            warn!(job_id = %self.job_id, "ZoneSync job not found in config");
             return (
                 JobOutcome::Failure {
                     error: "job not found".to_string(),
@@ -29,6 +33,15 @@ impl JobExecutor for ZoneSyncExecutor {
                 Duration::ZERO,
             );
         };
+
+        debug!(
+            job_id = %self.job_id,
+            run_id = %ctx.run_id,
+            from = ?job.from,
+            to = ?job.to,
+            dry_run = ctx.dry_run,
+            "ZoneSyncExecutor: executing job"
+        );
 
         let ip_map_vec: Vec<String> = job
             .ip_map
@@ -52,28 +65,35 @@ impl JobExecutor for ZoneSyncExecutor {
         let elapsed = start.elapsed();
 
         if !apply {
+            info!(job_id = %self.job_id, run_id = %ctx.run_id, duration_ms = elapsed.as_millis(), "ZoneSync dry run complete");
             return (JobOutcome::DryRun, elapsed);
         }
 
         match result {
-            Err(e) => (
-                JobOutcome::Failure {
-                    error: e.to_string(),
-                },
-                elapsed,
-            ),
+            Err(e) => {
+                warn!(job_id = %self.job_id, run_id = %ctx.run_id, error = %e, duration_ms = elapsed.as_millis(), "ZoneSync failed");
+                (
+                    JobOutcome::Failure {
+                        error: e.to_string(),
+                    },
+                    elapsed,
+                )
+            }
             Ok(value) => {
                 if value.get("error").is_some() {
+                    let error_msg = value["error"]
+                        .as_str()
+                        .unwrap_or("unknown error")
+                        .to_string();
+                    warn!(job_id = %self.job_id, run_id = %ctx.run_id, error = %error_msg, duration_ms = elapsed.as_millis(), "ZoneSync returned error in result");
                     (
                         JobOutcome::Failure {
-                            error: value["error"]
-                                .as_str()
-                                .unwrap_or("unknown error")
-                                .to_string(),
+                            error: error_msg,
                         },
                         elapsed,
                     )
                 } else {
+                    info!(job_id = %self.job_id, run_id = %ctx.run_id, duration_ms = elapsed.as_millis(), "ZoneSync completed successfully");
                     (JobOutcome::Success, elapsed)
                 }
             }

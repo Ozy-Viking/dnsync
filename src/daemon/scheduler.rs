@@ -10,6 +10,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
+use tracing::debug;
 
 /// A job definition used by the scheduler.
 pub struct ScheduledJob {
@@ -69,10 +70,23 @@ pub fn next_job_to_fire<'a>(
     jobs: &'a [ScheduledJob],
     now: DateTime<Utc>,
 ) -> Option<(&'a ScheduledJob, DateTime<Utc>)> {
-    jobs.iter()
+    let result = jobs
+        .iter()
         .filter(|j| j.enabled)
-        .filter_map(|j| next_after(j, now).map(|t| (j, t)))
-        .min_by_key(|(_, t)| *t)
+        .filter_map(|j| {
+            let t = next_after(j, now)?;
+            debug!(job_id = %j.id, next_fire_time = %t, "computed next fire time for job");
+            Some((j, t))
+        })
+        .min_by_key(|(_, t)| *t);
+
+    if let Some((job, fire_time)) = &result {
+        debug!(job_id = %job.id, fire_time = %fire_time, "next job to fire selected");
+    } else {
+        debug!("no enabled jobs with a future fire time");
+    }
+
+    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,7 @@
 //! Daemon health aggregation logic.
 
+use tracing::trace;
+
 use crate::daemon::types::{HealthState, JobStatus};
 
 /// Return the worst `HealthState` from an iterator of states.
@@ -19,22 +21,37 @@ pub fn worst_state<I: Iterator<Item = HealthState>>(states: I) -> HealthState {
 pub fn aggregate_daemon_health(jobs: &[JobStatus], critical_threshold: u32) -> HealthState {
     let enabled: Vec<&JobStatus> = jobs.iter().filter(|j| j.enabled).collect();
 
+    trace!(
+        total_jobs = jobs.len(),
+        enabled_jobs = enabled.len(),
+        "aggregating daemon health"
+    );
+
     if enabled.is_empty() {
+        trace!("no enabled jobs; overall health is Healthy");
         return HealthState::Healthy;
     }
 
     // Check critical escalation: ALL critical jobs must have failed >= threshold times.
     let critical_jobs: Vec<&JobStatus> = enabled.iter().copied().filter(|j| j.critical).collect();
+    trace!(
+        critical_jobs = critical_jobs.len(),
+        critical_threshold,
+        "checking critical job escalation"
+    );
     if !critical_jobs.is_empty()
         && critical_jobs
             .iter()
             .all(|j| j.consecutive_failures >= critical_threshold)
     {
+        trace!("all critical jobs exceeded failure threshold; escalating to Fatal");
         return HealthState::Fatal;
     }
 
     // Aggregate worst state across all enabled jobs.
-    worst_state(enabled.iter().map(|j| j.state))
+    let state = worst_state(enabled.iter().map(|j| j.state));
+    trace!(overall_health = ?state, "aggregated health state computed");
+    state
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use tracing::{debug, info, instrument, warn};
 
 use crate::control_plane::config::{AppConfig, JobKind};
 use crate::daemon::{
@@ -88,18 +89,22 @@ fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecuto
 /// List all configured jobs and their current status from the state DB.
 ///
 /// Jobs that have never run will have `state = "unknown"`.
+#[instrument(skip(config))]
 pub async fn list_jobs(config: &AppConfig) -> Result<Vec<JobSummary>, String> {
     if config.jobs.is_empty() {
+        debug!("no jobs configured; returning empty list");
         return Ok(vec![]);
     }
 
     let db_path = resolve_state_db(config);
+    debug!(db_path = %db_path.display(), "resolved state DB path");
 
     // Open DB only if it already exists — if it doesn't, we have no run history.
     let store_opt: Option<Arc<DaemonStateStore>> = if db_path.exists() {
         let pool = db::open(&db_path)?;
         Some(Arc::new(DaemonStateStore::new(pool)))
     } else {
+        warn!(db_path = %db_path.display(), "state DB does not exist; job statuses will be unknown");
         None
     };
 
@@ -153,12 +158,14 @@ pub async fn list_jobs(config: &AppConfig) -> Result<Vec<JobSummary>, String> {
         });
     }
 
+    info!(job_count = summaries.len(), "job list assembled");
     Ok(summaries)
 }
 
 // ─── run_job ───────────────────────────────────────────────────────────────────
 
 /// Run a single job immediately (manual trigger), wait for it to finish, return outcome.
+#[instrument(skip(config), fields(job_id = %job_id))]
 pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, String> {
     // Verify the job exists.
     if config.jobs.iter().find(|j| j.id == job_id).is_none() {
@@ -170,6 +177,7 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let started_at = Utc::now();
+    info!(run_id = %run_id, trigger = "manual", "job triggered");
 
     let ctx = JobContext {
         run_id: run_id.clone(),
@@ -179,6 +187,18 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
     };
 
     let (outcome, duration) = executor.execute(&ctx).await;
+
+    let outcome_str = match &outcome {
+        JobOutcome::Success => "success",
+        JobOutcome::Failure { .. } => "failure",
+        JobOutcome::DryRun => "dry_run",
+    };
+    info!(
+        run_id = %run_id,
+        outcome = outcome_str,
+        duration_ms = duration.as_millis(),
+        "job finished"
+    );
 
     // Persist to DB if possible.
     let db_path = resolve_state_db(config);
@@ -268,10 +288,13 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
 /// Returns `Ok(true)` if `daemon_state = "live"` and `overall_health != "fatal"`.
 /// Returns `Ok(false)` if the DB exists but the daemon is not healthy.
 /// Returns `Err` if the DB does not exist (daemon never started).
+#[instrument(skip(config))]
 pub async fn healthcheck(config: &AppConfig) -> Result<bool, String> {
     let db_path = resolve_state_db(config);
+    debug!(db_path = %db_path.display(), "resolved state DB path for healthcheck");
 
     if !db_path.exists() {
+        warn!(db_path = %db_path.display(), "state DB does not exist; daemon has never started");
         return Err("state database does not exist (daemon has never started)".to_string());
     }
 
@@ -283,11 +306,21 @@ pub async fn healthcheck(config: &AppConfig) -> Result<bool, String> {
         .map_err(|e| format!("load_daemon_health panicked: {e}"))??;
 
     match health {
-        None => Err("no health record found in state database".to_string()),
+        None => {
+            warn!("no health record found in state database");
+            Err("no health record found in state database".to_string())
+        }
         Some(row) => {
             let is_live = row.daemon_state == "live";
             let is_not_fatal = row.overall_health != "fatal";
-            Ok(is_live && is_not_fatal)
+            let healthy = is_live && is_not_fatal;
+            info!(
+                daemon_state = %row.daemon_state,
+                overall_health = %row.overall_health,
+                healthy,
+                "healthcheck result"
+            );
+            Ok(healthy)
         }
     }
 }

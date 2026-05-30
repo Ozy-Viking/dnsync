@@ -4,6 +4,7 @@
 //! from an async context). No DNS logic lives here.
 
 use diesel::prelude::*;
+use tracing::debug;
 
 use super::models::{DaemonHealthRow, JobRunRow, JobStatusRow};
 use super::schema::{daemon_health, job_runs, job_status};
@@ -23,6 +24,7 @@ impl DaemonStateStore {
 
     /// Upsert the daemon health singleton row (always `id = 1`).
     pub fn save_daemon_health(&self, row: DaemonHealthRow) -> Result<(), String> {
+        debug!(daemon_state = %row.daemon_state, overall_health = %row.overall_health, "DB write: save_daemon_health");
         let mut conn = self
             .pool
             .get()
@@ -36,11 +38,13 @@ impl DaemonStateStore {
             .execute(&mut conn)
             .map_err(|e| format!("save_daemon_health failed: {e}"))?;
 
+        debug!("DB write: save_daemon_health succeeded");
         Ok(())
     }
 
     /// Upsert a job status row keyed by `job_id`.
     pub fn save_job_status(&self, row: JobStatusRow) -> Result<(), String> {
+        debug!(job_id = %row.job_id, current_state = %row.current_state, consecutive_failures = row.consecutive_failures, "DB write: save_job_status");
         let mut conn = self
             .pool
             .get()
@@ -54,11 +58,13 @@ impl DaemonStateStore {
             .execute(&mut conn)
             .map_err(|e| format!("save_job_status failed: {e}"))?;
 
+        debug!(job_id = %row.job_id, "DB write: save_job_status succeeded");
         Ok(())
     }
 
     /// Append a new job run row (insert only — run history is immutable).
     pub fn append_job_run(&self, row: JobRunRow) -> Result<(), String> {
+        debug!(run_id = %row.run_id, job_id = %row.job_id, outcome = ?row.outcome, duration_ms = ?row.duration_ms, "DB write: append_job_run");
         let mut conn = self
             .pool
             .get()
@@ -69,11 +75,13 @@ impl DaemonStateStore {
             .execute(&mut conn)
             .map_err(|e| format!("append_job_run failed: {e}"))?;
 
+        debug!(run_id = %row.run_id, "DB write: append_job_run succeeded");
         Ok(())
     }
 
     /// Load the daemon health singleton row, or `None` if it has never been saved.
     pub fn load_daemon_health(&self) -> Result<Option<DaemonHealthRow>, String> {
+        debug!("DB read: load_daemon_health");
         let mut conn = self
             .pool
             .get()
@@ -85,11 +93,13 @@ impl DaemonStateStore {
             .optional()
             .map_err(|e| format!("load_daemon_health failed: {e}"))?;
 
+        debug!(found = row.is_some(), "DB read: load_daemon_health complete");
         Ok(row)
     }
 
     /// Load the current status for a single job, or `None` if not found.
     pub fn load_job_status(&self, job_id: &str) -> Result<Option<JobStatusRow>, String> {
+        debug!(job_id, "DB read: load_job_status");
         let mut conn = self
             .pool
             .get()
@@ -101,12 +111,14 @@ impl DaemonStateStore {
             .optional()
             .map_err(|e| format!("load_job_status failed: {e}"))?;
 
+        debug!(job_id, found = row.is_some(), "DB read: load_job_status complete");
         Ok(row)
     }
 
     /// Load up to `limit` run history rows for `job_id`, ordered by
     /// `started_at` descending (most recent first).
     pub fn load_job_runs(&self, job_id: &str, limit: usize) -> Result<Vec<JobRunRow>, String> {
+        debug!(job_id, limit, "DB read: load_job_runs");
         let mut conn = self
             .pool
             .get()
@@ -119,6 +131,7 @@ impl DaemonStateStore {
             .load::<JobRunRow>(&mut conn)
             .map_err(|e| format!("load_job_runs failed: {e}"))?;
 
+        debug!(job_id, row_count = rows.len(), "DB read: load_job_runs complete");
         Ok(rows)
     }
 }

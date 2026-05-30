@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::sync::mpsc;
-use tracing::{warn, error};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::daemon::{
     db::{
@@ -42,17 +42,20 @@ pub async fn spawn_workers(
     executors: Arc<dyn Fn(&str) -> Option<Arc<dyn JobExecutor>> + Send + Sync>,
     db_write_tx: mpsc::Sender<DbWriteRequest>,
 ) -> mpsc::Sender<JobTrigger> {
+    info!(num_workers, queue_capacity, "spawning worker pool");
     let (job_tx, job_rx) = mpsc::channel::<JobTrigger>(queue_capacity);
     // Wrap the receiver in Arc<Mutex> so it can be shared across workers.
     let job_rx = Arc::new(tokio::sync::Mutex::new(job_rx));
 
-    for _ in 0..num_workers {
+    for worker_id in 0..num_workers {
         let job_rx = Arc::clone(&job_rx);
         let executors = Arc::clone(&executors);
         let db_write_tx = db_write_tx.clone();
 
         tokio::spawn(async move {
+            debug!(worker_id, "worker started");
             loop {
+                trace!(worker_id, "worker waiting for job");
                 let trigger = {
                     let mut rx = job_rx.lock().await;
                     rx.recv().await
@@ -60,21 +63,26 @@ pub async fn spawn_workers(
 
                 let trigger = match trigger {
                     Some(t) => t,
-                    None => break, // channel closed
+                    None => {
+                        debug!(worker_id, "job channel closed; worker exiting");
+                        break; // channel closed
+                    }
                 };
 
                 let job_id = trigger.job_id.clone();
+                trace!(worker_id, job_id = %job_id, "worker received job trigger");
 
                 let executor = match executors(&job_id) {
                     Some(e) => e,
                     None => {
-                        warn!(job_id = %job_id, "no executor found for job — skipping");
+                        warn!(worker_id, job_id = %job_id, "no executor found for job — skipping");
                         continue;
                     }
                 };
 
                 let run_id = uuid::Uuid::new_v4().to_string();
                 let started_at = Utc::now();
+                info!(worker_id, job_id = %job_id, run_id = %run_id, "job started");
                 let ctx = JobContext {
                     run_id: run_id.clone(),
                     job_id: job_id.clone(),
@@ -98,6 +106,15 @@ pub async fn spawn_workers(
                     JobOutcome::Failure { error } => Some(error.clone()),
                     _ => None,
                 };
+
+                info!(
+                    worker_id,
+                    job_id = %job_id,
+                    run_id = %run_id,
+                    outcome = outcome_str,
+                    duration_ms = duration.as_millis(),
+                    "job finished"
+                );
 
                 let job_run = JobRunRow {
                     run_id: run_id.clone(),
@@ -135,14 +152,16 @@ pub async fn spawn_workers(
                     },
                     last_error_summary: error_summary,
                     consecutive_failures,
-                    last_run_id: Some(run_id),
+                    last_run_id: Some(run_id.clone()),
                 };
 
+                trace!(worker_id, job_id = %job_id, run_id = %run_id, "sending JobRun to DB writer");
                 if let Err(e) = db_write_tx.send(DbWriteRequest::JobRun(job_run)).await {
-                    error!(error = %e, "failed to send JobRun to DB writer");
+                    error!(worker_id, job_id = %job_id, run_id = %run_id, error = %e, "failed to send JobRun to DB writer");
                 }
+                trace!(worker_id, job_id = %job_id, run_id = %run_id, "sending JobStatus to DB writer");
                 if let Err(e) = db_write_tx.send(DbWriteRequest::JobStatus(job_status)).await {
-                    error!(error = %e, "failed to send JobStatus to DB writer");
+                    error!(worker_id, job_id = %job_id, run_id = %run_id, error = %e, "failed to send JobStatus to DB writer");
                 }
             }
         });
@@ -164,10 +183,12 @@ pub async fn spawn_db_writer(
     // Wrap in Arc so it can be cloned into each spawn_blocking call.
     let store = Arc::new(store);
 
+    info!("DB writer task started");
     tokio::spawn(async move {
         while let Some(req) = db_write_rx.recv().await {
             match req {
                 DbWriteRequest::JobRun(row) => {
+                    debug!(run_id = %row.run_id, job_id = %row.job_id, outcome = ?row.outcome, "DB writer: writing JobRun");
                     let store = Arc::clone(&store);
                     match tokio::task::spawn_blocking(move || store.append_job_run(row)).await {
                         Err(e) => error!(error = %e, "DB writer task panicked on JobRun"),
@@ -176,6 +197,7 @@ pub async fn spawn_db_writer(
                     }
                 }
                 DbWriteRequest::JobStatus(row) => {
+                    debug!(job_id = %row.job_id, current_state = %row.current_state, "DB writer: writing JobStatus");
                     let store = Arc::clone(&store);
                     match tokio::task::spawn_blocking(move || store.save_job_status(row)).await {
                         Err(e) => error!(error = %e, "DB writer task panicked on JobStatus"),
@@ -185,6 +207,7 @@ pub async fn spawn_db_writer(
                 }
             }
         }
+        debug!("DB writer task: channel closed, exiting");
     });
 }
 
