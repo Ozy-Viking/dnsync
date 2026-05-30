@@ -3,4 +3,5 @@
 pub mod db;
 pub mod health;
 pub mod schedule;
+pub mod scheduler;
 pub mod types;
