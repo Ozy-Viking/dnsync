@@ -6,3 +6,4 @@ pub mod health;
 pub mod schedule;
 pub mod scheduler;
 pub mod types;
+pub mod worker;
