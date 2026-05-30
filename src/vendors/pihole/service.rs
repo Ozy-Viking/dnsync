@@ -19,7 +19,8 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, SettingsWrite, StatsRead, ZoneExport, ZoneImport, ZoneOptionsRead,
+    ZoneOptionsWrite, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 use crate::vendors::pihole::client::PiholeClient;
@@ -42,6 +43,8 @@ impl DnsVendor for PiholeClient {
             zone_import: false,
             zone_export: false,
             logs: false,
+            zone_options: false,
+            settings_write: false,
         }
     }
 }
@@ -328,6 +331,24 @@ impl SettingsRead for PiholeClient {
     #[instrument(skip(self), fields(vendor = "pihole", operation = "get_settings"))]
     async fn get_settings(&self) -> Result<Value> {
         self.get("/api/config", &[]).await
+    }
+}
+
+impl SettingsWrite for PiholeClient {
+    async fn set_settings(&self, _settings: &Value) -> Result<Value> {
+        Err(Error::unsupported("Pi-hole", "settings write"))
+    }
+}
+
+impl ZoneOptionsRead for PiholeClient {
+    async fn get_zone_options(&self, _zone: &str) -> Result<Value> {
+        Err(Error::unsupported("Pi-hole", "zone options"))
+    }
+}
+
+impl ZoneOptionsWrite for PiholeClient {
+    async fn set_zone_options(&self, _zone: &str, _options: &Value) -> Result<Value> {
+        Err(Error::unsupported("Pi-hole", "zone options write"))
     }
 }
 

@@ -925,6 +925,48 @@ impl DnsServer {
         settings_tools::handle_get_settings(&client, &policy, show_secrets).await
     }
 
+    #[tool(
+        description = "Write server-level settings on a DNS server (Technitium only). \
+    Accepts a JSON object — only provided keys are changed. Requires write access. \
+    Use `server_id` from dns_list_servers. Example: {\"zoneTransferAllowedNetworks\": [\"10.0.0.0/8\"]}."
+    )]
+    async fn dns_set_settings(
+        &self,
+        Parameters(p): Parameters<SetSettingsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_set_settings", "MCP tool invoked");
+        let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
+        settings_tools::handle_set_settings(&client, &policy, &p.settings).await
+    }
+
+    #[tool(
+        description = "Get zone-level options for a zone on the DNS server (Technitium only). \
+    Returns transfer settings, zone type, and other per-zone configuration. \
+    Use `server_id` from dns_list_servers."
+    )]
+    async fn dns_get_zone_options(
+        &self,
+        Parameters(p): Parameters<ZoneParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_get_zone_options", "MCP tool invoked");
+        let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
+        zone_tools::handle_get_zone_options(&client, &policy, p).await
+    }
+
+    #[tool(
+        description = "Set zone-level options for a zone on the DNS server (Technitium only). \
+    Accepts a JSON object — only provided keys are changed. Requires write access. \
+    Use `server_id` from dns_list_servers."
+    )]
+    async fn dns_set_zone_options(
+        &self,
+        Parameters(p): Parameters<SetZoneOptionsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(tool = "dns_set_zone_options", "MCP tool invoked");
+        let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
+        zone_tools::handle_set_zone_options(&client, &policy, p).await
+    }
+
     // ── Logs ──────────────────────────────────────────────────────────────
 
     /// Retrieve DNS server logs from the specified configured backend.
@@ -1114,8 +1156,9 @@ mod tests {
         let server = make_server(AppConfig::default());
         let result = server.dns_version().await.unwrap();
         assert!(!result.is_error.unwrap_or(false));
-        let value: serde_json::Value = serde_json::from_str(&result.content[0].as_text().unwrap().text)
-            .expect("output should be valid JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text)
+                .expect("output should be valid JSON");
         assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
     }
 }

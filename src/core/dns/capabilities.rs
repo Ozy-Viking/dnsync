@@ -9,4 +9,6 @@ pub struct VendorCapabilities {
     pub zone_import: bool,
     pub zone_export: bool,
     pub logs: bool,
+    pub zone_options: bool,
+    pub settings_write: bool,
 }

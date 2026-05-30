@@ -5,6 +5,19 @@ use crate::{
     mcp::helpers::run_json,
 };
 
+pub async fn handle_set_settings<C: DnsService + Send + Sync>(
+    client: &C,
+    policy: &Policy,
+    settings: &serde_json::Value,
+) -> Result<CallToolResult, McpError> {
+    Ok(run_json(
+        "dns_set_settings",
+        policy.check_write(),
+        settings::set_settings(client, settings),
+    )
+    .await)
+}
+
 pub async fn handle_get_settings<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
@@ -40,8 +53,8 @@ mod tests {
                 responses::ListRecordsResponse,
                 service::{
                     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor,
-                    ListRecordsOptions, RecordWrite, SettingsRead, StatsRead, ZoneExport,
-                    ZoneImport, ZoneRead, ZoneWrite,
+                    ListRecordsOptions, RecordWrite, SettingsRead, SettingsWrite, StatsRead,
+                    ZoneExport, ZoneImport, ZoneOptionsRead, ZoneOptionsWrite, ZoneRead, ZoneWrite,
                 },
             },
             error::Result,
@@ -204,6 +217,24 @@ mod tests {
         }
     }
 
+    impl SettingsWrite for FakeDnsService {
+        async fn set_settings(&self, settings: &Value) -> Result<Value> {
+            Ok(settings.clone())
+        }
+    }
+
+    impl ZoneOptionsRead for FakeDnsService {
+        async fn get_zone_options(&self, _zone: &str) -> Result<Value> {
+            unreachable!("not used by settings handler")
+        }
+    }
+
+    impl ZoneOptionsWrite for FakeDnsService {
+        async fn set_zone_options(&self, _zone: &str, _options: &Value) -> Result<Value> {
+            unreachable!("not used by settings handler")
+        }
+    }
+
     impl LogsRead for FakeDnsService {
         async fn get_logs(&self, _options: LogsOptions) -> Result<Vec<LogLine>> {
             unreachable!("not used by settings handler")
@@ -248,6 +279,37 @@ mod tests {
 
         assert_eq!(value["version"], "13.4.1");
         assert_eq!(value["tsigKeys"][0]["sharedSecret"], "actual-secret");
+    }
+
+    #[tokio::test]
+    async fn handle_set_settings_requires_write_policy() {
+        let client = FakeDnsService {
+            settings: json!({"version": "13.4.1"}),
+        };
+        let policy = Policy::new([PolicyRule::Read], None);
+
+        let result = handle_set_settings(&client, &policy, &json!({"key": "val"}))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content[0].as_text().unwrap();
+        assert!(text.text.contains("does not permit write operations"));
+    }
+
+    #[tokio::test]
+    async fn handle_set_settings_succeeds_with_write_policy() {
+        let client = FakeDnsService {
+            settings: json!({"version": "13.4.1"}),
+        };
+        let policy = Policy::new([PolicyRule::Write], None);
+        let payload = json!({"zoneTransferAllowedNetworks": ["10.0.0.0/8"]});
+
+        let result = handle_set_settings(&client, &policy, &payload)
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(false));
     }
 
     #[tokio::test]

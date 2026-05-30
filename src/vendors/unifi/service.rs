@@ -22,7 +22,8 @@ use crate::core::dns::records::RecordData;
 use crate::core::dns::responses::{ListRecordsResponse, ZoneInfo, ZoneRecord};
 use crate::core::dns::service::{
     AccessListRead, AccessListWrite, CacheRead, CacheWrite, DnsVendor, ListRecordsOptions,
-    RecordWrite, SettingsRead, StatsRead, ZoneExport, ZoneImport, ZoneRead, ZoneWrite,
+    RecordWrite, SettingsRead, SettingsWrite, StatsRead, ZoneExport, ZoneImport, ZoneOptionsRead,
+    ZoneOptionsWrite, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
 
@@ -50,6 +51,8 @@ impl DnsVendor for UnifiClient {
             zone_import: false,
             zone_export: false,
             logs: false,
+            zone_options: false,
+            settings_write: false,
         }
     }
 }
@@ -283,6 +286,24 @@ impl SettingsRead for UnifiClient {
             "resolvedSiteId": resolved,
             "sites": sites,
         }))
+    }
+}
+
+impl SettingsWrite for UnifiClient {
+    async fn set_settings(&self, _settings: &Value) -> Result<Value> {
+        Err(Error::unsupported("UniFi", "settings write"))
+    }
+}
+
+impl ZoneOptionsRead for UnifiClient {
+    async fn get_zone_options(&self, _zone: &str) -> Result<Value> {
+        Err(Error::unsupported("UniFi", "zone options"))
+    }
+}
+
+impl ZoneOptionsWrite for UnifiClient {
+    async fn set_zone_options(&self, _zone: &str, _options: &Value) -> Result<Value> {
+        Err(Error::unsupported("UniFi", "zone options write"))
     }
 }
 
