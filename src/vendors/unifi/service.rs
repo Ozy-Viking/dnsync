@@ -69,7 +69,7 @@ impl ZoneRead for UnifiClient {
 
     #[instrument(
         skip(self, _options),
-        fields(vendor = "unifi", operation = "list_records")
+        fields(vendor = "unifi", operation = "list_records", domain, zone = ?zone)
     )]
     async fn list_records<'a>(
         &'a self,
@@ -128,7 +128,7 @@ impl ZoneWrite for UnifiClient {
 // ─── RecordWrite ──────────────────────────────────────────────────────────────
 
 impl RecordWrite for UnifiClient {
-    #[instrument(skip(self, record), fields(vendor = "unifi", operation = "add_record"))]
+    #[instrument(skip(self, record), fields(vendor = "unifi", operation = "add_record", zone, domain))]
     async fn add_record<'a>(
         &'a self,
         zone: &'a str,
@@ -145,7 +145,7 @@ impl RecordWrite for UnifiClient {
 
     #[instrument(
         skip(self, type_params),
-        fields(vendor = "unifi", operation = "delete_record")
+        fields(vendor = "unifi", operation = "delete_record", zone, domain)
     )]
     async fn delete_record<'a>(
         &'a self,

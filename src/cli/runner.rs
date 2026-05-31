@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::{
     cli::{AllowedCmd, BlockedCmd, CacheCmd, Command, RecordCmd, SettingsCmd, ZoneCmd, records},
@@ -14,6 +15,7 @@ use crate::{
 };
 
 #[allow(clippy::too_many_arguments)]
+#[instrument(level = "debug", skip_all, fields(server_count = selected.len(), json))]
 pub async fn run_record_list_across_servers(
     selected: &[&DnsServerConfig],
     domain: Option<&str>,
@@ -26,6 +28,7 @@ pub async fn run_record_list_across_servers(
     let mut printed_servers = 0usize;
 
     for server in selected {
+        tracing::trace!(server_id = %server.id, "fetching records from server");
         let client = VendorClient::from_server(server)?;
         let response = dns_records::query::list_records_for_query(
             &client,

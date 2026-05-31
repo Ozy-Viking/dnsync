@@ -32,6 +32,7 @@ impl HttpClient {
             builder = builder.no_proxy();
         }
         let http = builder.build().map_err(Error::Network)?;
+        tracing::debug!(base_url = %base_url, no_proxy, "HTTP client constructed");
         Ok(Self {
             http,
             base_url,
@@ -68,6 +69,7 @@ impl HttpClient {
             "http.request",
             method,
             path,
+            base_url = %self.base_url,
             http.status = tracing::field::Empty
         );
         async {

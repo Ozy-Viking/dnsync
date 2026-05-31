@@ -1,6 +1,7 @@
 //! Zone transfer orchestration between configured servers.
 
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::{
     control_plane::config::{AppConfig, DnsServerConfig},
@@ -17,6 +18,11 @@ pub struct ZoneTransferResult {
     pub import_result: Value,
 }
 
+#[instrument(
+    level = "debug",
+    skip(app_config),
+    fields(zone, from = from_id, to = to_id, overwrite, overwrite_zone)
+)]
 pub async fn transfer_zone(
     app_config: Option<&AppConfig>,
     zone: &str,
@@ -36,6 +42,7 @@ pub async fn transfer_zone(
 
     let zone_file = server_export_zone(from_server, zone).await?;
     let bytes = zone_file.len();
+    tracing::debug!(bytes, "zone exported");
     let file_name = format!("{zone}.txt");
     let import_result = server_import_zone(
         to_server,
@@ -46,6 +53,7 @@ pub async fn transfer_zone(
         overwrite_zone,
     )
     .await?;
+    tracing::debug!("zone imported");
 
     Ok(ZoneTransferResult {
         zone: zone.to_string(),
@@ -56,6 +64,7 @@ pub async fn transfer_zone(
     })
 }
 
+#[instrument(level = "trace", skip(server), fields(server_id = %server.id, zone))]
 async fn server_export_zone(server: &DnsServerConfig, zone: &str) -> Result<String> {
     VendorClient::export_zone_for_server(server, zone).await
 }

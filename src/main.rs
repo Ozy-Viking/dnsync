@@ -487,6 +487,11 @@ fn build_endpoint_update(
     }
 }
 
+#[instrument(
+    level = "debug",
+    skip(cli, app_config),
+    fields(server_count = tracing::field::Empty)
+)]
 async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
     if cli.token.is_some() || cli.base_url.is_some() || !cli.servers.is_empty() {
         return Err(Error::parse(
@@ -496,6 +501,7 @@ async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
     }
 
     let config = app_config.unwrap_or_default();
+    tracing::Span::current().record("server_count", config.servers.len());
     tracing::info!("Starting MCP server (stdio)");
     let dns_server = DnsServer::new(config, cli.access, cli.allow_zone);
     let transport = (tokio::io::stdin(), tokio::io::stdout());
@@ -510,6 +516,7 @@ async fn run_mcp(cli: Cli, app_config: Option<AppConfig>) -> Result<()> {
     Ok(())
 }
 
+#[instrument(level = "trace", skip_all)]
 async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     cli: Cli,
     client: C,
@@ -524,6 +531,11 @@ async fn run_with_client<C: DnsService + Clone + Send + Sync + 'static>(
     }
 }
 
+#[instrument(
+    level = "debug",
+    skip(app_config),
+    fields(zone, from = from_id, to = to_id, overwrite, overwrite_zone)
+)]
 async fn run_zone_transfer(
     app_config: Option<&config::AppConfig>,
     zone: &str,
@@ -532,14 +544,10 @@ async fn run_zone_transfer(
     overwrite: bool,
     overwrite_zone: bool,
 ) -> Result<()> {
-    tracing::info!(
-        zone = %zone,
-        from = %from_id,
-        "Exporting zone"
-    );
     let result =
         transfer::transfer_zone(app_config, zone, from_id, to_id, overwrite, overwrite_zone)
             .await?;
+    tracing::debug!(bytes = result.bytes, "zone transfer complete");
     if !result.import_result.is_null() {
         let pretty = serde_json::to_string_pretty(&result.import_result)
             .map_err(|e| Error::parse(format!("serialise error: {e}")))?;

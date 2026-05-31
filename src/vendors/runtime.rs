@@ -47,6 +47,7 @@ impl VendorClient {
     }
 
     pub fn from_server(server: &DnsServerConfig) -> Result<Self> {
+        tracing::debug!(server_id = %server.id, vendor = ?server.vendor, "building vendor client");
         match server.vendor {
             #[cfg(feature = "technitium")]
             VendorKind::Technitium => Ok(Self::Technitium(
@@ -79,6 +80,7 @@ impl VendorClient {
     }
 
     pub async fn export_zone_for_server(server: &DnsServerConfig, zone: &str) -> Result<String> {
+        tracing::debug!(server_id = %server.id, vendor = ?server.vendor, zone, "exporting zone");
         let _ = zone;
         // Keep unsupported vendors from resolving credentials before reporting
         // capability errors; zone transfer should fail on support, not auth.
@@ -121,6 +123,7 @@ impl VendorClient {
         overwrite: bool,
         overwrite_zone: bool,
     ) -> Result<Value> {
+        tracing::debug!(server_id = %server.id, vendor = ?server.vendor, zone, overwrite, overwrite_zone, "importing zone");
         let _ = (zone, &file_name, &file_bytes, overwrite, overwrite_zone);
         // Keep unsupported vendors from resolving credentials before reporting
         // capability errors; zone transfer should fail on support, not auth.

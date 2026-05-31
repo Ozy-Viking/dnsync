@@ -69,13 +69,15 @@ impl DnsServer {
             )
         };
 
-        Self {
+        let result = Self {
             config: Arc::new(config),
             cli_access: Arc::new(cli_access),
             cli_allow_zone: Arc::new(cli_allow_zone),
             startup_info,
             tool_router: Self::tool_router(),
-        }
+        };
+        tracing::debug!(server_count = result.config.servers.len(), "MCP server initialised");
+        result
     }
 
     /// Resolve a configured DNS backend by its identifier and produce a client and policy for calling it.
@@ -106,6 +108,7 @@ impl DnsServer {
     /// // let srv = DnsServer::new(app_config, vec![], vec![]);
     /// // let (client, policy) = srv.resolve_server("primary")?;
     /// ```
+    #[tracing::instrument(level = "debug", skip(self), fields(server_id))]
     fn resolve_server(
         &self,
         server_id: &str,
@@ -122,6 +125,7 @@ impl DnsServer {
             })?;
         let client = VendorClient::from_server(server)?;
         let policy = Policy::for_server(server, &self.cli_access, &self.cli_allow_zone)?;
+        tracing::trace!(server_id, vendor = ?server.vendor, "server resolved");
         Ok((client, policy))
     }
 
@@ -167,7 +171,7 @@ impl DnsServer {
     Shows each server's ID, vendor, and base URL. \
     Call this first to discover server IDs — pass `server_id` to every other tool.")]
     async fn dns_list_servers(&self) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_list_servers", "MCP tool invoked");
+        tracing::debug!(tool = "dns_list_servers", "MCP tool invoked");
 
         let servers: Vec<serde_json::Value> = self
             .config
@@ -193,7 +197,7 @@ impl DnsServer {
     Token values are redacted; token_env references are preserved."
     )]
     async fn dns_get_config(&self) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_get_config", "MCP tool invoked");
+        tracing::debug!(tool = "dns_get_config", "MCP tool invoked");
         let redacted = self.config.redact();
         let toml = redacted.render_toml().map_err(mcp_err)?;
         Ok(crate::mcp::helpers::text_result(toml))
@@ -201,7 +205,7 @@ impl DnsServer {
 
     #[tool(description = "Return the dnsync binary version reported by this MCP server.")]
     async fn dns_version(&self) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_version", "MCP tool invoked");
+        tracing::debug!(tool = "dns_version", "MCP tool invoked");
         Ok(crate::mcp::helpers::json_result(serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
         })))
@@ -235,7 +239,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ListZonesParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_list_zones", "MCP tool invoked");
+        tracing::debug!(tool = "dns_list_zones", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_list_zones(&client, &policy, p).await
     }
@@ -275,8 +279,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<CreateZoneParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_create_zone", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, "tool invoked");
+        tracing::debug!(tool = "dns_create_zone", server_id = %p.server_id, zone = %p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_create_zone(&client, &policy, p).await
     }
@@ -314,8 +317,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ZoneParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_delete_zone", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, "tool invoked");
+        tracing::debug!(tool = "dns_delete_zone", server_id = %p.server_id, zone = %p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_delete_zone(&client, &policy, p).await
     }
@@ -336,8 +338,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ZoneParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_enable_zone", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, "tool invoked");
+        tracing::debug!(tool = "dns_enable_zone", server_id = %p.server_id, zone = %p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_enable_zone(&client, &policy, p).await
     }
@@ -362,8 +363,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ZoneParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_disable_zone", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, "tool invoked");
+        tracing::debug!(tool = "dns_disable_zone", server_id = %p.server_id, zone = %p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_disable_zone(&client, &policy, p).await
     }
@@ -395,8 +395,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ImportZoneFileParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_import_zone_file", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, "tool invoked");
+        tracing::debug!(tool = "dns_import_zone_file", server_id = %p.server_id, zone = %p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_import_zone_file(&client, &policy, p).await
     }
@@ -428,8 +427,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ExportZoneFileParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_export_zone_file", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, "tool invoked");
+        tracing::debug!(tool = "dns_export_zone_file", server_id = %p.server_id, zone = %p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_export_zone_file(&client, &policy, p).await
     }
@@ -440,7 +438,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<TransferZoneParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_transfer_zone", "MCP tool invoked");
+        tracing::debug!(tool = "dns_transfer_zone", zone = %p.zone, from = %p.from, to = %p.to, "MCP tool invoked");
         let (_, from_policy) = self.resolve_server(&p.from).map_err(mcp_err)?;
         let (_, to_policy) = self.resolve_server(&p.to).map_err(mcp_err)?;
         let check = from_policy
@@ -493,8 +491,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ListRecordsParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_list_records", "MCP tool invoked");
-        tracing::debug!(domain = ?p.domain, zone = ?p.zone, "tool invoked");
+        tracing::debug!(tool = "dns_list_records", server_id = %p.server_id, domain = ?p.domain, zone = ?p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         record_tools::handle_list_records(&client, &policy, p).await
     }
@@ -528,8 +525,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<AddRecordParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_add_record", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_add_record", server_id = %p.server_id, zone = %p.zone, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         record_tools::handle_add_record(&client, &policy, p).await
     }
@@ -566,8 +562,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DeleteRecordParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_delete_record", "MCP tool invoked");
-        tracing::debug!(zone = %p.zone, domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_delete_record", server_id = %p.server_id, zone = %p.zone, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         record_tools::handle_delete_record(&client, &policy, p).await
     }
@@ -601,8 +596,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_list_cache", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_list_cache", server_id = %p.server_id, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         cache_tools::handle_list_cache(&client, &policy, p).await
     }
@@ -637,8 +631,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_delete_cache_zone", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_delete_cache_zone", server_id = %p.server_id, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         cache_tools::handle_delete_cache_zone(&client, &policy, p).await
     }
@@ -668,7 +661,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ServerScopeParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_flush_cache", "MCP tool invoked");
+        tracing::debug!(tool = "dns_flush_cache", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         cache_tools::handle_flush_cache(&client, &policy).await
     }
@@ -713,11 +706,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<StatsParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_get_stats", "MCP tool invoked");
-        tracing::debug!(
-            stats_type = p.stats_type.as_deref().unwrap_or("LastDay"),
-            "tool invoked"
-        );
+        tracing::debug!(tool = "dns_get_stats", server_id = %p.server_id, stats_type = p.stats_type.as_deref().unwrap_or("LastDay"), "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         stats_tools::handle_get_stats(&client, &policy, p).await
     }
@@ -747,7 +736,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ServerScopeParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_list_blocked_zones", "MCP tool invoked");
+        tracing::debug!(tool = "dns_list_blocked_zones", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         access_lists::handle_list_blocked(&client, &policy).await
     }
@@ -778,8 +767,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_add_blocked_zone", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_add_blocked_zone", server_id = %p.server_id, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         access_lists::handle_add_blocked(&client, &policy, p).await
     }
@@ -810,8 +798,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_delete_blocked_zone", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_delete_blocked_zone", server_id = %p.server_id, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         access_lists::handle_delete_blocked(&client, &policy, p).await
     }
@@ -838,7 +825,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ServerScopeParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_list_allowed_zones", "MCP tool invoked");
+        tracing::debug!(tool = "dns_list_allowed_zones", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         access_lists::handle_list_allowed(&client, &policy).await
     }
@@ -862,8 +849,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_add_allowed_zone", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_add_allowed_zone", server_id = %p.server_id, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         access_lists::handle_add_allowed(&client, &policy, p).await
     }
@@ -887,8 +873,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<DomainParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_delete_allowed_zone", "MCP tool invoked");
-        tracing::debug!(domain = %p.domain, "tool invoked");
+        tracing::debug!(tool = "dns_delete_allowed_zone", server_id = %p.server_id, domain = %p.domain, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         access_lists::handle_delete_allowed(&client, &policy, p).await
     }
@@ -919,7 +904,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ServerScopeParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_get_settings", "MCP tool invoked");
+        tracing::debug!(tool = "dns_get_settings", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         let show_secrets = self.show_settings_secrets(&p.server_id).map_err(mcp_err)?;
         settings_tools::handle_get_settings(&client, &policy, show_secrets).await
@@ -934,7 +919,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<SetSettingsParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_set_settings", "MCP tool invoked");
+        tracing::debug!(tool = "dns_set_settings", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         settings_tools::handle_set_settings(&client, &policy, &p.settings).await
     }
@@ -948,7 +933,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ZoneParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_get_zone_options", "MCP tool invoked");
+        tracing::debug!(tool = "dns_get_zone_options", server_id = %p.server_id, zone = %p.zone, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_get_zone_options(&client, &policy, p).await
     }
@@ -962,7 +947,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<SetZoneOptionsParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_set_zone_options", "MCP tool invoked");
+        tracing::debug!(tool = "dns_set_zone_options", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         zone_tools::handle_set_zone_options(&client, &policy, p).await
     }
@@ -978,7 +963,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<LogsParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_logs", "MCP tool invoked");
+        tracing::debug!(tool = "dns_logs", server_id = %p.server_id, "MCP tool invoked");
         let (client, policy) = self.resolve_server(&p.server_id).map_err(mcp_err)?;
         logs_tools::handle_logs(&client, &policy, p).await
     }
@@ -991,7 +976,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<SyncParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_sync", "MCP tool invoked");
+        tracing::debug!(tool = "dns_sync", from = ?p.from, to = ?p.to, profile = ?p.profile, apply = p.apply, "MCP tool invoked");
         let profile = p.profile.as_deref().and_then(|name| {
             self.config
                 .sync
@@ -1046,7 +1031,7 @@ impl DnsServer {
         &self,
         Parameters(p): Parameters<ResolveParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(tool = "dns_resolve", "MCP tool invoked");
+        tracing::debug!(tool = "dns_resolve", domain = %p.domain, at = ?p.at, server_id = ?p.server_id, "MCP tool invoked");
         resolve_tools::handle_resolve(&self.config, &self.cli_access, &self.cli_allow_zone, p).await
     }
 }
