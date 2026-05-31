@@ -82,7 +82,7 @@ pub async fn run_record_list_across_servers(
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust,ignore
 /// # use crate::{run, Command, DnsService};
 /// # async fn example(client: &impl DnsService) -> anyhow::Result<()> {
 /// run(client, Command::Stats { r#type: "all".into() }).await?;

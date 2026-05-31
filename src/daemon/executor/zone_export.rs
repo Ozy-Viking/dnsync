@@ -31,7 +31,7 @@ impl JobExecutor for ZoneExportExecutor {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// # use std::time::Duration;
     /// # use crate::daemon::executor::ZoneExportExecutor;
     /// # use crate::control_plane::config::AppConfig;

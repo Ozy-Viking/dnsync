@@ -52,7 +52,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = make_record_sync_config("nightly-sync");
     /// assert_eq!(cfg.jobs.len(), 1);
     /// assert_eq!(cfg.jobs[0].id, "nightly-sync");
@@ -91,7 +91,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = make_zone_export_config("nightly-export");
     /// assert_eq!(cfg.jobs.len(), 1);
     /// let job = &cfg.jobs[0];

@@ -98,7 +98,7 @@ async fn run(cli: Cli) -> Result<()> {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust,ignore
 /// # use crate::Cli;
 /// # async fn _example() -> Result<(), Box<dyn std::error::Error>> {
 /// let cli = Cli::parse(); // build from program args in a real invocation

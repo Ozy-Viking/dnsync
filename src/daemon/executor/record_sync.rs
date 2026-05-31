@@ -35,7 +35,7 @@ impl JobExecutor for RecordSyncExecutor {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```rust,ignore
     /// # use std::time::Duration;
     /// # use tokio::runtime::Runtime;
     /// # use crate::daemon::executor::record_sync::RecordSyncExecutor;

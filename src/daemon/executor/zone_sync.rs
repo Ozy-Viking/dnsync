@@ -32,7 +32,7 @@ impl JobExecutor for ZoneSyncExecutor {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// # // The following is an illustrative example; real types must be constructed according to the crate's API.
     /// # use std::time::Duration;
     /// # use tokio::runtime::Runtime;

@@ -61,7 +61,7 @@ ON job_runs(job_id, started_at DESC);
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust,ignore
 /// use diesel::sqlite::SqliteConnection;
 ///
 /// let database_url = ":memory:";

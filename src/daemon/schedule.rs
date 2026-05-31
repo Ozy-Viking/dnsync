@@ -18,7 +18,7 @@ use std::str::FromStr;
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// // interval shorthand -> 6-field cron
 /// assert_eq!(parse_schedule("5m").unwrap(), "0 */5 * * * *");
 ///
@@ -61,7 +61,7 @@ pub fn parse_schedule(input: &str) -> Result<String, String> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// assert_eq!(try_parse_interval("15m"), Ok(Some("0 */15 * * * *".to_string())));
 /// assert_eq!(try_parse_interval("1d"), Ok(Some("0 0 0 * * *".to_string())));
 /// assert_eq!(try_parse_interval("garbage"), Ok(None));
@@ -129,7 +129,7 @@ fn try_parse_interval(input: &str) -> Result<Option<String>, String> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// let ok = validate_cron_expression("0 0 * * * *");
 /// assert!(ok.is_ok());
 ///

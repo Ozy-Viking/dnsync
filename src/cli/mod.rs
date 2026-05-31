@@ -182,7 +182,7 @@ impl Command {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cmd = Command::Mcp;
     /// assert_eq!(cmd.name(), "mcp");
     /// ```

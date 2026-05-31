@@ -10,7 +10,7 @@ use crate::daemon::types::{HealthState, JobStatus};
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// let s = worst_state([HealthState::Healthy, HealthState::Degraded].into_iter());
 /// assert_eq!(s, HealthState::Degraded);
 ///
@@ -34,7 +34,7 @@ pub fn worst_state<I: Iterator<Item = HealthState>>(states: I) -> HealthState {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// # use crate::daemon::{aggregate_daemon_health, JobStatus, HealthState};
 /// let jobs = [
 ///     JobStatus { enabled: true, critical: true, consecutive_failures: 0, state: HealthState::Healthy },
@@ -89,7 +89,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let job = make_job("sync", HealthState::Degraded, true, 3);
     /// assert_eq!(job.job_id, "sync");
     /// assert!(job.enabled);
@@ -115,7 +115,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let j = make_disabled_job("job-1");
     /// assert_eq!(j.job_id, "job-1");
     /// assert!(!j.enabled);

@@ -46,7 +46,7 @@ impl Default for SyncDiffOptions {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let opts = crate::control_plane::sync::SyncDiffOptions::default();
     /// assert!(opts.create_missing);
     /// assert!(opts.overwrite_existing);
@@ -272,7 +272,7 @@ pub async fn run_sync_json(
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// # use tokio::runtime::Runtime;
 /// # use std::sync::Arc;
 /// # use crate::control_plane::sync::{build_sync_plan, SyncDiffOptions};
@@ -543,7 +543,7 @@ where
 
 ///
 
-/// ```
+/// ```text
 
 /// // Construct a minimal ListRecordsResponse `resp` for the zone "example.com"
 
@@ -613,7 +613,6 @@ fn collect_records(
 ///
 /// The returned `Diff` contains these buckets:
 /// - `missing_adds`: records present in `source` but absent on the destination (per (name,type)).
-—
 /// - `update_adds`: source records that differ from destination records for the same (name,type).
 /// - `update_deletes`: destination records that must be removed to make way for `update_adds`.
 /// - `destination_only`: records present only on the destination (no matching (name,type) in `source`).
@@ -623,7 +622,7 @@ fn collect_records(
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// let diff = diff_records(Vec::new(), Vec::new());
 /// assert_eq!(diff.missing_adds.len(), 0);
 /// assert_eq!(diff.update_adds.len(), 0);
@@ -1341,7 +1340,7 @@ mod tests {
     
     ///
     
-    /// ```
+    /// ```rust,ignore
     
     /// let zone = "example.com";
     

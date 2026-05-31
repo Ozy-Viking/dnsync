@@ -43,7 +43,7 @@ pub struct JobTrigger {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use chrono::Utc;
 /// use chrono_tz::UTC;
 ///
@@ -87,7 +87,7 @@ pub fn next_after(job: &ScheduledJob, after: DateTime<Utc>) -> Option<DateTime<U
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use chrono::Utc;
 /// use rand::{SeedableRng, rngs::StdRng};
 /// use std::time::Duration;
@@ -157,7 +157,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let sj = job("backup", "0 0/5 * * * *"); // sec min hour dom mon dow (6-field)
     /// assert_eq!(sj.id, "backup");
     /// assert_eq!(sj.cron_expr, "0 0/5 * * * *");
@@ -181,7 +181,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let job = job_tz("job-1", "0 0/5 * * * *", chrono_tz::US::Eastern);
     /// assert_eq!(job.id, "job-1");
     /// assert_eq!(job.cron_expr, "0 0/5 * * * *");

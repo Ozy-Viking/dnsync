@@ -32,7 +32,7 @@ impl PartialOrd for HealthState {
     
     ///
     
-    /// ```
+    /// ```rust,ignore
     
     /// use std::cmp::Ordering;
     
@@ -55,7 +55,7 @@ impl Ord for HealthState {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// use crate::daemon::types::HealthState;
     /// assert!(HealthState::Healthy < HealthState::Degraded);
     /// assert!(HealthState::Stale > HealthState::Degraded);

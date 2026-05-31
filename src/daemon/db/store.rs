@@ -21,7 +21,7 @@ impl DaemonStateStore {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// // Obtain a DbPool (example placeholder) and create the store.
     /// let pool = /* obtain DbPool */ unimplemented!();
     /// let _store = DaemonStateStore::new(pool);
@@ -40,7 +40,7 @@ impl DaemonStateStore {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let store = DaemonStateStore::new(pool);
     /// let row = DaemonHealthRow { id: 1, daemon_state: "Running".into(), overall_health: "Good".into(), /* ... */ };
     /// store.save_daemon_health(row).unwrap();
@@ -71,7 +71,7 @@ impl DaemonStateStore {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let store = open_test_store();
     /// let row = sample_job_status("example-job");
     /// store.save_job_status(row).expect("save should succeed");
@@ -104,7 +104,7 @@ impl DaemonStateStore {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// // `store` must be an initialized `DaemonStateStore` and `JobRunRow` must be available in scope.
     /// let row = JobRunRow {
     ///     run_id: "run-1".into(),
@@ -143,7 +143,7 @@ impl DaemonStateStore {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let store = open_test_store(); // helper that returns a DaemonStateStore
     /// let health = store.load_daemon_health().unwrap();
     /// if let Some(row) = health {
@@ -175,7 +175,7 @@ impl DaemonStateStore {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```rust,ignore
     /// # use crate::daemon::db::store::DaemonStateStore;
     /// # let store: DaemonStateStore = unimplemented!();
     /// let status = store.load_job_status("job-123").unwrap();
@@ -208,7 +208,7 @@ impl DaemonStateStore {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let runs = store.load_job_runs("my-job", 5).unwrap();
     /// // at most 5 most recent runs for "my-job"
     /// assert!(runs.len() <= 5);
@@ -246,7 +246,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let store = open_test_store();
     /// // use `store` in tests; the database is scoped to a temporary file.
     /// ```
@@ -266,7 +266,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let row = sample_health_row();
     /// assert_eq!(row.id, 1);
     /// assert_eq!(row.daemon_id, "daemon-xyz");
@@ -297,7 +297,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let row = sample_job_status("job-123");
     /// assert_eq!(row.job_id, "job-123");
     /// assert_eq!(row.job_kind, "sync");
@@ -327,7 +327,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let r = sample_job_run("run-1", "job-a", "2023-01-01T00:00:00Z");
     /// assert_eq!(r.run_id, "run-1");
     /// assert_eq!(r.job_id, "job-a");

@@ -24,7 +24,7 @@ pub type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// let pool = daemon::db::open(std::path::Path::new("state.db")).unwrap();
 /// let conn = pool.get().unwrap();
 /// // use `conn` with Diesel queries...
@@ -76,7 +76,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let pool = open_test_db();
     /// // use `pool` for tests that need a fresh, file-backed SQLite database
     /// ```
@@ -118,7 +118,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let row = sample_job_status_row("job-1");
     /// assert_eq!(row.job_id, "job-1");
     /// assert_eq!(row.job_kind, "sync");

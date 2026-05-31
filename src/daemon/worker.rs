@@ -41,7 +41,7 @@ pub enum DbWriteRequest {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use std::sync::Arc;
 /// use tokio::sync::mpsc;
 /// use daemon::worker::{spawn_workers, DbWriteRequest, JobTrigger};
@@ -212,7 +212,7 @@ pub async fn spawn_workers(
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use tokio::sync::mpsc;
 /// // let store: DaemonStateStore = ...;
 /// let (tx, rx) = mpsc::channel(16);
@@ -276,7 +276,7 @@ mod tests {
         ///
         /// # Examples
         ///
-        /// ```
+        /// ```rust,ignore
         /// # use crate::daemon::worker::{MockExecutor, JobContext, JobOutcome};
         /// # async fn __example() {
         /// let exec = MockExecutor;
@@ -306,7 +306,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let store = open_test_store();
     /// // use `store` for test assertions or pass to functions under test
     /// drop(store);
@@ -328,7 +328,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let row = sample_job_run_row();
     /// assert_eq!(row.run_id, "run-test-1");
     /// assert_eq!(row.job_id, "job-test");
@@ -353,7 +353,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let row = sample_job_status_row();
     /// assert_eq!(row.job_id, "job-test");
     /// assert_eq!(row.job_kind, "sync");

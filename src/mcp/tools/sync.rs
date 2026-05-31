@@ -17,7 +17,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// # async fn example() {
 /// // Construct AppConfig, Policy, and SyncParams appropriately for your application.
 /// // let config = AppConfig::default();

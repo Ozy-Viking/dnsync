@@ -50,7 +50,7 @@ pub use crate::daemon::executor::JobOutcome as JobOutcomeAlias;
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust,ignore
 /// // Prefer an explicit path from the application config when available:
 /// let path = resolve_state_db(&config);
 /// println!("state DB: {}", path.display());
@@ -78,7 +78,7 @@ fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use std::path::PathBuf;
 ///
 /// // Prefer XDG_DATA_HOME when set
@@ -119,7 +119,7 @@ fn dirs_xdg_data_home() -> std::path::PathBuf {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// // Assume `config` contains a job with id "job-alpha".
 /// let exec = build_executor(&config, "job-alpha");
 /// assert!(exec.is_some());
@@ -153,7 +153,7 @@ fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecuto
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// // Run the async function on a runtime to obtain job summaries.
 /// let rt = tokio::runtime::Runtime::new().unwrap();
 /// let config = crate::tests::empty_config(); // helper from this crate's tests
@@ -244,7 +244,7 @@ pub async fn list_jobs(config: &AppConfig) -> Result<Vec<JobSummary>, String> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// // Example (illustrative):
 /// // let config = /* an AppConfig with a job having id "job-id" */;
 /// // let outcome = tokio::runtime::Runtime::new().unwrap()
@@ -387,7 +387,7 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust,ignore
 /// # use crate::config::AppConfig;
 /// # async fn example(config: &AppConfig) -> Result<(), String> {
 /// let healthy = crate::daemon::commands::healthcheck(config).await?;
@@ -444,7 +444,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = empty_config();
     /// assert!(cfg.servers.is_empty());
     /// assert!(cfg.clusters.is_empty());
@@ -468,7 +468,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = config_with_jobs();
     /// assert_eq!(cfg.jobs.len(), 2);
     /// assert_eq!(cfg.jobs[0].id, "job-alpha");

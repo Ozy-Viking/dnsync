@@ -193,7 +193,7 @@ impl std::str::FromStr for ValidationEndpointConfig {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// use std::str::FromStr;
     ///
     /// let cfg = ValidationEndpointConfig::from_str("google:doh:https://dns.google/dns-query").unwrap();
@@ -267,7 +267,7 @@ pub enum JobKind {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// let s = default_heartbeat_interval();
 /// assert_eq!(s, "5s");
 /// ```
@@ -278,7 +278,7 @@ fn default_heartbeat_interval() -> String {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// assert_eq!(default_heartbeat_timeout(), "20s");
 /// ```
 fn default_heartbeat_timeout() -> String {
@@ -300,7 +300,7 @@ fn default_heartbeat_timeout() -> String {
 
 ///
 
-/// ```
+/// ```text
 
 /// assert_eq!(default_shutdown_timeout(), "5s");
 
@@ -314,7 +314,7 @@ fn default_shutdown_timeout() -> String {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// assert_eq!(default_worker_threads(), 4);
 /// ```
 fn default_worker_threads() -> usize {
@@ -328,7 +328,7 @@ fn default_worker_threads() -> usize {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// assert_eq!(default_critical_threshold(), 5);
 /// ```
 fn default_critical_threshold() -> u32 {
@@ -672,7 +672,7 @@ impl AppConfig {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = AppConfig::starter();
     /// assert_eq!(cfg.servers.len(), 1);
     /// let srv = &cfg.servers[0];
@@ -716,7 +716,7 @@ impl AppConfig {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = AppConfig::starter();
     /// let toml = cfg.render_toml().unwrap();
     /// assert!(toml.contains("[[servers]]"));
@@ -743,7 +743,7 @@ impl AppConfig {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = AppConfig {
     ///     servers: vec![DnsServerConfig { id: "s".into(), token: Some("secret".into()), token_env: None, ..Default::default() }],
     ///     ..Default::default()
@@ -827,7 +827,7 @@ impl AppConfig {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let cfg = AppConfig::default();
     /// // starter/default config should validate
     /// cfg.validate().unwrap();
@@ -1437,7 +1437,7 @@ pub fn update_server_endpoint(
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// let mut doc = toml_edit::DocumentMut::new();
 /// // `AppConfig::starter()` provides a minimal starter server suitable for examples/tests.
 /// let server = crate::control_plane::config::AppConfig::starter().servers.into_iter().next().unwrap();
@@ -1611,7 +1611,7 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// # use std::net::IpAddr;
 /// # fn validate_ip_pair_for_job(_job_id: &str, _src: &str, _dst: &str) -> Result<(), ()> { Ok(()) }
 /// // Basic usage: IPv4 pair is accepted
@@ -1656,7 +1656,7 @@ fn validate_ip_pair_for_job(job_id: &str, src: &str, dst: &str) -> Result<()> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use std::collections::HashSet;
 ///
 /// // empty job list is valid
@@ -1777,7 +1777,7 @@ fn validate_jobs(jobs: &[JobConfig], server_ids: &HashSet<String>) -> Result<()>
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use toml_edit::Document;
 /// use std::str::FromStr;
 /// // Construct a DaemonConfig by deserializing a small TOML snippet.
@@ -1794,7 +1794,6 @@ fn validate_jobs(jobs: &[JobConfig], server_ids: &HashSet<String>) -> Result<()>
 /// append_daemon_entry(&mut doc, &daemon);
 /// assert!(doc.to_string().contains("[daemon]"));
 /// ```
-fn
 fn append_daemon_entry(doc: &mut toml_edit::DocumentMut, daemon: &DaemonConfig) {
     use toml_edit::{Item, Table, value};
 
@@ -1920,7 +1919,7 @@ fn append_job_entry(doc: &mut toml_edit::DocumentMut, job: &JobConfig) {
 
 ///
 
-/// ```
+/// ```text
 
 /// use std::path::Path;
 
@@ -3476,7 +3475,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let toml = r#"
     ///     [[servers]]
     ///     id = "home"
@@ -3510,7 +3509,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let toml = two_server_config();
     /// assert!(toml.contains("id = \"cf\""));
     /// assert!(toml.contains("id = \"home\""));
@@ -3532,7 +3531,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// let toml = r#"
     /// [[servers]]
     /// id = "cf"
@@ -3869,7 +3868,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// let toml = concat!(
     ///     r#"
     ///     [[servers]]

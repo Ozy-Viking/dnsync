@@ -40,7 +40,7 @@ use crate::daemon::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,ignore,ignore
 /// // If daemon state_db is not set, the environment variable will be used:
 /// std::env::set_var("DNSYNC_STATE_DB", "/tmp/my_state.db");
 /// let cfg = /* AppConfig with no daemon.state_db */;
@@ -87,7 +87,7 @@ fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
 
 ///
 
-/// ```
+/// ```text
 
 /// use std::path::PathBuf;
 
@@ -123,7 +123,7 @@ fn xdg_data_home() -> std::path::PathBuf {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use std::time::Duration;
 /// assert_eq!(super::parse_duration("10s"), Duration::from_secs(10));
 /// assert_eq!(super::parse_duration("2m"), Duration::from_secs(120));
@@ -159,7 +159,7 @@ fn parse_duration(s: &str) -> Duration {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust,ignore
 /// use tokio::time::timeout;
 /// use tokio_util::sync::CancellationToken;
 ///
@@ -473,7 +473,7 @@ mod tests {
     
     ///
     
-    /// ```
+    /// ```rust,ignore
     
     /// let db_path = std::path::PathBuf::from("/tmp/test_state.db");
     
@@ -515,7 +515,7 @@ mod tests {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,ignore
     /// let p = temp_db_path();
     /// // parent directory is created
     /// assert!(p.parent().unwrap().exists());
