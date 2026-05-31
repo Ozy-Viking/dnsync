@@ -44,6 +44,20 @@ mod tests {
     use crate::control_plane::config::{AppConfig, JobConfig, JobKind};
     use std::collections::BTreeMap;
 
+    /// Create an `AppConfig` containing a single enabled `RecordSync` job with the given `job_id`.
+    ///
+    /// The returned configuration has empty `servers` and `clusters`, no `daemon`, and one `JobConfig`:
+    /// `kind = JobKind::RecordSync`, `from = Some("src-server")`, `to = Some("dst-server")`,
+    /// `schedule = Some("@hourly")`, `create_missing = true`, `overwrite_existing = true`, and `output_dir = None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = make_record_sync_config("nightly-sync");
+    /// assert_eq!(cfg.jobs.len(), 1);
+    /// assert_eq!(cfg.jobs[0].id, "nightly-sync");
+    /// assert_eq!(cfg.jobs[0].kind, JobKind::RecordSync);
+    /// ```
     fn make_record_sync_config(job_id: &str) -> AppConfig {
         AppConfig {
             servers: vec![],
@@ -73,6 +87,18 @@ mod tests {
         }
     }
 
+    /// Create an `AppConfig` with a single enabled `ZoneExport` job using the provided job id and sensible defaults for tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = make_zone_export_config("nightly-export");
+    /// assert_eq!(cfg.jobs.len(), 1);
+    /// let job = &cfg.jobs[0];
+    /// assert_eq!(job.id, "nightly-export");
+    /// assert!(matches!(job.kind, JobKind::ZoneExport));
+    /// assert_eq!(job.output_dir.as_deref(), Some("/tmp/zones"));
+    /// ```
     fn make_zone_export_config(job_id: &str) -> AppConfig {
         AppConfig {
             servers: vec![],

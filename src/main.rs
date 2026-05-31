@@ -80,14 +80,39 @@ async fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// Dispatches CLI commands and executes the corresponding application actions.
+///
+/// This function is the main command dispatcher used by the CLI. It inspects the
+/// provided `Cli` command and performs the requested operation, including:
+/// - generating shell completions and printing configured server IDs,
+/// - running queries and configuration subcommands (init, print, update, add, server),
+/// - running daemon-related commands (daemon runtime, job list/run, healthcheck),
+/// - starting the MCP server,
+/// - performing cross-server record listing, zone transfer, and sync operations,
+/// - and constructing a vendor client for single-server commands before delegating
+///   to the command runner.
+///
+/// Errors encountered while handling a command are returned as `Error`; some
+/// terminal conditions intentionally call `std::process::exit` (for example,
+/// query exit codes and failing job outcomes).
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crate::Cli;
+/// # async fn _example() -> Result<(), Box<dyn std::error::Error>> {
+/// let cli = Cli::parse(); // build from program args in a real invocation
+/// run_inner(cli).await?;
+/// # Ok(()) }
+/// ```
 #[instrument(
-    level = "trace",
-    skip_all,
-    fields(
-        command = ?cli.command.name(),
-        verbose = cli.verbose,
-        quiet = cli.quiet,
-    )
+level = "trace",
+skip_all,
+fields(
+command = ?cli.command.name(),
+verbose = cli.verbose,
+quiet = cli.quiet,
+)
 )]
 async fn run_inner(cli: Cli) -> Result<()> {
     trace!("starting run");

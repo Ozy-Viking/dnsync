@@ -38,6 +38,21 @@ pub struct SyncDiffOptions {
 }
 
 impl Default for SyncDiffOptions {
+    /// Default synchronization options used when none are specified.
+    ///
+    /// The defaults enable creating destination-missing records and overwriting differing
+    /// existing records, disable deletion of destination-only records, and use no ignore
+    /// patterns.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let opts = crate::control_plane::sync::SyncDiffOptions::default();
+    /// assert!(opts.create_missing);
+    /// assert!(opts.overwrite_existing);
+    /// assert!(!opts.delete_destination_only);
+    /// assert!(opts.ignore.is_empty());
+    /// ```
     fn default() -> Self {
         Self {
             create_missing: true,
@@ -96,15 +111,29 @@ pub struct SyncApplySummary {
     pub failures: usize,
 }
 
-/// Run a record sync.
+/// Synchronise DNS records between a configured source and destination server.
 ///
-/// `profile` selects a named `[[sync]]` profile from the config; `from`, `to`,
-/// `zones` and `maps` are CLI overrides that take precedence over the profile.
+/// Builds a zone-level plan of record additions and deletions (optionally applying IP mappings and ignore rules),
+/// prints the plan as pretty JSON or a formatted table, and — when `apply` is true and there are changes — writes
+/// the planned additions and deletions to the destination server. The function returns an error when configuration,
+/// server/zone resolution, or IP mapping parsing fails, or when any record write fails while applying changes.
 ///
 /// # Errors
 ///
-/// Returns an error if the config, servers, zones, or IP mappings cannot be
-/// resolved, or — when `apply` is set — if any record write fails.
+/// Returns an error if the configuration is missing or invalid, if the selected source/destination servers or zones
+/// cannot be resolved, if IP mapping specifications cannot be parsed, or — when `apply` is set — if any record write fails.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use control_plane::sync::{run_sync, SyncDiffOptions};
+/// // Example: dry-run sync from server "from-id" to "to-id" with default diff options.
+/// let diff_opts = SyncDiffOptions::default();
+/// // Run inside an async runtime:
+/// tokio::runtime::Runtime::new().unwrap().block_on(async {
+///     let _ = run_sync(None, None, Some("from-id"), Some("to-id"), &[], &[], false, false, diff_opts).await;
+/// });
+/// ```
 #[allow(clippy::too_many_arguments)]
 #[instrument(
     level = "debug",
@@ -156,6 +185,41 @@ pub async fn run_sync(
     Ok(())
 }
 
+/// Build and optionally apply a record-level synchronization plan between two configured DNS servers, returning a JSON representation of the plan and (when changes are applied) an application summary.
+///
+/// The returned JSON contains `from` and `to` server ids, a `zones` array with per-zone `add` and `remove` lists and counts (`unchanged`, `untouched`, `skipped`), and, when `apply` is true and changes were applied, an `apply_summary` object.
+///
+/// # Returns
+///
+/// A JSON value describing the computed sync plan. When `apply` is true and the plan contains changes, the JSON also contains an `apply_summary` object with `applied` and `failures` counts.
+///
+/// # Errors
+///
+/// Propagates errors from plan construction, server/client resolution, and record write operations. When `apply` is true, any write failures cause an error to be returned after attempting all operations.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use std::sync::Arc;
+/// # use regex::Regex;
+/// # use crate::control_plane::sync::{run_sync_json, SyncDiffOptions};
+/// # use crate::config::AppConfig;
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let cfg: Arc<AppConfig> = Arc::new(AppConfig::load_default().unwrap());
+/// let diff_opts = SyncDiffOptions { ignore: Vec::<Regex>::new(), ..Default::default() };
+/// let json = run_sync_json(
+///     Some(&cfg),
+///     None,                 // profile (not used)
+///     Some("source-id"),    // from server id
+///     Some("dest-id"),      // to server id
+///     &[],                  // zones (empty = discover from source)
+///     &[],                  // ip maps
+///     false,                // apply = dry run
+///     diff_opts,
+/// ).await.unwrap();
+/// println!("{}", json);
+/// # });
+/// ```
 #[allow(clippy::too_many_arguments)]
 #[instrument(
     level = "debug",
@@ -190,6 +254,46 @@ pub async fn run_sync_json(
     Ok(out)
 }
 
+/// Builds a per-zone synchronization plan between two configured DNS servers.
+///
+/// The returned tuple contains the selected source server id, the selected
+/// destination server id, and a vector of per-zone `ZonePlan`s describing
+/// additions, deletions, and counts needed to make the destination match the
+/// source according to `diff_opts`.
+///
+/// # Errors
+///
+/// Returns an error when:
+/// - `app_config` is `None` or the selected server ids are not present in the config.
+/// - a `profile` is supplied (named sync profiles are not supported).
+/// - `from` or `to` server ids are not provided.
+/// - any `maps` entry fails to parse as an IP pair.
+/// - listing zones on the source or planning any zone fails.
+///
+/// # Examples
+///
+/// ```
+/// # use tokio::runtime::Runtime;
+/// # use std::sync::Arc;
+/// # use crate::control_plane::sync::{build_sync_plan, SyncDiffOptions};
+/// # use crate::config::AppConfig;
+/// # // The following is a usage example — in real code supply a valid AppConfig and servers.
+/// let rt = Runtime::new().unwrap();
+/// let cfg: Arc<AppConfig> = Arc::new(AppConfig::default()); // placeholder
+/// let diff_opts = SyncDiffOptions::default();
+/// let result = rt.block_on(async {
+///     build_sync_plan(
+///         Some(&*cfg),
+///         None,                 // profile (unsupported)
+///         Some("source-id"),    // --from
+///         Some("dest-id"),      // --to
+///         &[],                  // zones (empty -> discover)
+///         &[],                  // maps
+///         diff_opts,
+///     ).await
+/// });
+/// assert!(result.is_ok() || result.is_err()); // placeholder assertion for example
+/// ```
 #[allow(clippy::too_many_arguments)]
 #[instrument(
     level = "debug",
@@ -287,6 +391,23 @@ async fn plan_zone(
     plan_zone_with_clients(from_client, to_client, zone, ip_map, sync_opts).await
 }
 
+/// Builds a per-zone plan by comparing source and destination records and
+/// producing lists of planned additions and deletions along with counts.
+///
+/// The comparison reads all records (including subdomains) from both clients,
+/// applies the optional `ip_map` rewrites to source A/AAAA records, and
+/// filters source records whose FQDN matches any regex in `sync_opts.ignore`.
+/// Which diff buckets become planned additions or deletions is controlled by
+/// `sync_opts`:
+/// - `create_missing` includes source-only record-sets as additions.
+/// - `overwrite_existing` includes differing record-sets as additions and the
+///   corresponding destination records as deletions.
+/// - `delete_destination_only` includes destination-only record-sets as
+///   deletions (when false, those are counted as `untouched`).
+///
+/// On success returns a `ZonePlan` containing sorted `adds` and `deletes`,
+/// the number of `unchanged` records, `untouched` destination-only records (or
+/// 0 when deletions are enabled), and `skipped` source records.
 #[instrument(
     level = "trace",
     skip(from_client, to_client, ip_map),
@@ -382,9 +503,67 @@ where
     })
 }
 
-/// Turn a vendor record-list response into syncable [`PlannedRecord`]s,
-/// applying `ip_map` when one is supplied. Returns the records plus the count
-/// of records skipped because they are disabled or not syncable.
+/// Convert a vendor record-list response into a list of syncable records.
+
+///
+
+/// This filters out records that are disabled or not writable by the record API,
+
+/// optionally rewrites A/AAAA addresses using `ip_map`, and normalizes TTLs
+
+/// where a vendor reports zero TTL.
+
+///
+
+/// # Parameters
+
+///
+
+/// - `response`: vendor `ListRecordsResponse` containing zones and records.
+
+/// - `zone`: the zone name used to resolve record FQDNs.
+
+/// - `ip_map`: optional mapping of source IP -> destination IP applied to A and AAAA records.
+
+///
+
+/// # Returns
+
+///
+
+/// A tuple where the first element is a vector of `PlannedRecord` ready for
+
+/// planning/apply, and the second element is the count of records skipped
+
+/// because they were disabled, server-managed, or otherwise not writable.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// // Construct a minimal ListRecordsResponse `resp` for the zone "example.com"
+
+/// // and call `collect_records(&resp, "example.com", None)`.
+
+/// // The returned vector contains PlannedRecord entries and the skipped count.
+
+/// # use std::net::IpAddr;
+
+/// # use std::collections::HashMap;
+
+/// # // (omitted: build a ListRecordsResponse matching the crate's types)
+
+/// # let resp = ListRecordsResponse { zones: vec![] };
+
+/// let (records, skipped) = collect_records(&resp, "example.com", None);
+
+/// assert!(skipped >= 0);
+
+/// ```
 fn collect_records(
     response: &ListRecordsResponse,
     zone: &str,
@@ -430,12 +609,28 @@ fn collect_records(
     (out, skipped)
 }
 
-/// Compute the difference between source and destination records.
+/// Compute per-(name,type) differences between source and destination planned records.
 ///
-/// Records are grouped into sets by `(name, type)`. A set missing on the
-/// destination goes to `missing_adds`; a set present on both with differing
-/// values contributes to `update_adds` / `update_deletes`. Sets that exist
-/// only on the destination go to `destination_only`.
+/// The returned `Diff` contains these buckets:
+/// - `missing_adds`: records present in `source` but absent on the destination (per (name,type)).
+—
+/// - `update_adds`: source records that differ from destination records for the same (name,type).
+/// - `update_deletes`: destination records that must be removed to make way for `update_adds`.
+/// - `destination_only`: records present only on the destination (no matching (name,type) in `source`).
+/// - `unchanged`: count of source records whose canonical value and TTL exactly match a destination record.
+///
+/// A record is considered unchanged only when both its canonical value and its TTL match a destination record; TTL differences cause the record to be treated as an update (the source TTL will be used for adds).
+///
+/// # Examples
+///
+/// ```
+/// let diff = diff_records(Vec::new(), Vec::new());
+/// assert_eq!(diff.missing_adds.len(), 0);
+/// assert_eq!(diff.update_adds.len(), 0);
+/// assert_eq!(diff.update_deletes.len(), 0);
+/// assert_eq!(diff.destination_only.len(), 0);
+/// assert_eq!(diff.unchanged, 0);
+/// ```
 fn diff_records(source: Vec<PlannedRecord>, dest: Vec<PlannedRecord>) -> Diff {
     let group = |records: Vec<PlannedRecord>| {
         let mut groups: HashMap<(String, String), Vec<PlannedRecord>> = HashMap::new();
@@ -1132,6 +1327,33 @@ mod tests {
 
     // ── SyncDiffOptions ────────────────────────────────────────────────────────
 
+    /// Create paired `FakeZoneRead` clients for a zone using the provided source and destination records.
+    
+    ///
+    
+    /// The returned tuple is `(source_client, dest_client)`, each initialized with a `ListRecordsResponse` for
+    
+    /// `zone` containing the corresponding records. Intended for use in unit tests that exercise planning and diffing.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```
+    
+    /// let zone = "example.com";
+    
+    /// let src = vec![/* ZoneRecord fixtures for source */];
+    
+    /// let dst = vec![/* ZoneRecord fixtures for destination */];
+    
+    /// let (source_client, dest_client) = make_source_dest_clients(zone, src, dst);
+    
+    /// // `source_client` and `dest_client` can now be passed to functions that list records.
+    
+    /// ```
     fn make_source_dest_clients(
         zone: &str,
         src_records: Vec<ZoneRecord>,
@@ -1297,6 +1519,11 @@ mod tests {
         assert!(!plan.adds.iter().any(|r| r.fqdn == "internal.example.com"));
     }
 
+    /// Verifies that ignore regexes in `SyncDiffOptions` match FQDNs case-sensitively by default.
+    ///
+    /// The test builds a source zone containing `web.example.com` and `api.example.com`,
+    /// sets an ignore pattern that matches `web.example` (lowercase), and asserts that
+    /// only `api.example.com` remains in the planned additions while `web.example.com` is filtered.
     #[tokio::test]
     async fn ignore_pattern_is_case_sensitive_by_default() {
         let zone = "example.com";
@@ -1323,6 +1550,12 @@ mod tests {
         assert!(!plan.adds.iter().any(|r| r.fqdn == "web.example.com"));
     }
 
+    /// Verifies that when all diff options are disabled, no add or delete operations are planned.
+    ///
+    /// Creates source and destination records such that there are source-only and differing records,
+    /// then constructs `SyncDiffOptions` with `create_missing`, `overwrite_existing`, and
+    /// `delete_destination_only` all set to `false`. Asserts that the resulting `ZonePlan` contains
+    /// zero `adds` and zero `deletes`.
     #[tokio::test]
     async fn all_flags_false_produces_no_ops() {
         let zone = "example.com";

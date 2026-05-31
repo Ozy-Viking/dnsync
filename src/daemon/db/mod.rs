@@ -16,11 +16,19 @@ use diesel::sqlite::SqliteConnection;
 /// A single-writer connection pool for the daemon state database.
 pub type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 
-/// Opens (or creates) the SQLite state database at `path`, runs schema
-/// migrations, and returns a connection pool.
+/// Open or create the SQLite state database at `path` and return a pooled connection.
 ///
-/// WAL mode is enabled inside the migration SQL so it applies to the
-/// very first connection that creates the file.
+/// Runs the schema migrations before returning; the included migration SQL enables
+/// SQLite WAL mode when the database file is first created so the first connection
+/// applies that setting.
+///
+/// # Examples
+///
+/// ```
+/// let pool = daemon::db::open(std::path::Path::new("state.db")).unwrap();
+/// let conn = pool.get().unwrap();
+/// // use `conn` with Diesel queries...
+/// ```
 pub fn open(path: &Path) -> Result<DbPool, String> {
     // Ensure the parent directory exists.
     if let Some(parent) = path.parent() {
@@ -60,11 +68,18 @@ mod tests {
     use crate::daemon::db::schema::{daemon_health, job_runs, job_status};
     use diesel::prelude::*;
 
-    /// Helper: open a temporary file-backed SQLite database for each test.
+    /// Creates and opens a temporary file-backed SQLite database and returns its connection pool.
     ///
-    /// We use a temp *file* rather than `:memory:` because r2d2 may open
-    /// multiple connections (even with max_size=1 it creates a connection to
-    /// validate), and each `:memory:` connection is an independent database.
+    /// The database file is placed in a per-process subdirectory of the system temporary directory
+    /// and named with a UUID to avoid collisions. A file-backed database is used instead of
+    /// `:memory:` so multiple r2d2 connections share the same database.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let pool = open_test_db();
+    /// // use `pool` for tests that need a fresh, file-backed SQLite database
+    /// ```
     fn open_test_db() -> DbPool {
         let dir =
             std::env::temp_dir().join(format!("dnsync-db-test-{}", std::process::id()));
@@ -95,6 +110,22 @@ mod tests {
         }
     }
 
+    /// Creates a sample `JobStatusRow` populated with typical test values.
+    ///
+    /// The returned row has `job_id` set to the provided value, `job_kind` set to `"sync"`,
+    /// `current_state` set to `"healthy"`, `enabled` set to `1`, `consecutive_failures` set to `0`,
+    /// and all timestamp and error fields set to `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let row = sample_job_status_row("job-1");
+    /// assert_eq!(row.job_id, "job-1");
+    /// assert_eq!(row.job_kind, "sync");
+    /// assert_eq!(row.current_state, "healthy");
+    /// assert_eq!(row.consecutive_failures, 0);
+    /// assert!(row.last_started_at.is_none());
+    /// ```
     fn sample_job_status_row(job_id: &str) -> JobStatusRow {
         JobStatusRow {
             job_id: job_id.to_string(),

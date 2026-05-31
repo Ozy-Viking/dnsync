@@ -50,8 +50,24 @@ CREATE INDEX IF NOT EXISTS idx_job_runs_job_id_started_at
 ON job_runs(job_id, started_at DESC);
 ";
 
-/// Runs all schema migrations on an open connection.
-/// Uses `batch_execute` which supports multiple semicolon-separated statements.
+/// Apply the embedded SQLite schema (INIT_SQL) to the given open connection.
+///
+/// This executes all semicolon-separated statements in `INIT_SQL` on `conn`.
+///
+/// # Errors
+///
+/// Returns `Err(String)` if executing the statements fails; the error string is
+/// formatted as `migration failed: {e}` where `{e}` is the underlying Diesel error.
+///
+/// # Examples
+///
+/// ```no_run
+/// use diesel::sqlite::SqliteConnection;
+///
+/// let database_url = ":memory:";
+/// let mut conn = SqliteConnection::establish(database_url).expect("connect");
+/// super::run_migrations(&mut conn).expect("migrations applied");
+/// ```
 pub fn run_migrations(conn: &mut SqliteConnection) -> Result<(), String> {
     conn.batch_execute(INIT_SQL)
         .map_err(|e| format!("migration failed: {e}"))

@@ -24,12 +24,43 @@ pub enum HealthState {
 }
 
 impl PartialOrd for HealthState {
+    /// Compare two health states and produce their ordering based on severity.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```
+    
+    /// use std::cmp::Ordering;
+    
+    /// let a = crate::daemon::types::HealthState::Healthy;
+    
+    /// let b = crate::daemon::types::HealthState::Fatal;
+    
+    /// assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
+    
+    /// ```
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for HealthState {
+    /// Compare two `HealthState` values according to their severity ranking.
+    ///
+    /// The severity ordering is: `Healthy` < `Degraded` < `Stale` < `Fatal`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crate::daemon::types::HealthState;
+    /// assert!(HealthState::Healthy < HealthState::Degraded);
+    /// assert!(HealthState::Stale > HealthState::Degraded);
+    /// assert_eq!(HealthState::Fatal.cmp(&HealthState::Fatal), std::cmp::Ordering::Equal);
+    /// ```
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         fn rank(s: &HealthState) -> u8 {
             match s {

@@ -36,6 +36,25 @@ pub use crate::daemon::executor::JobOutcome as JobOutcomeAlias;
 
 // ─── Helper: resolve state DB path ────────────────────────────────────────────
 
+/// Resolve the filesystem path to the daemon state database following the configured precedence.
+///
+/// Resolution precedence:
+/// 1. `config.daemon.state_db` if present.
+/// 2. `DNSYNC_STATE_DB` environment variable if set.
+/// 3. XDG data home default: `<xdg_data_home>/dnsync/state.db`, where `xdg_data_home` is
+///    `XDG_DATA_HOME` or `$HOME/.local/share`, or `.` if neither is available.
+///
+/// # Returns
+///
+/// A `PathBuf` pointing to the resolved state database file.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Prefer an explicit path from the application config when available:
+/// let path = resolve_state_db(&config);
+/// println!("state DB: {}", path.display());
+/// ```
 fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
     if let Some(ref daemon) = config.daemon
         && let Some(ref p) = daemon.state_db
@@ -51,6 +70,35 @@ fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
     dirs_xdg_data_home().join("dnsync").join("state.db")
 }
 
+/// Determine the XDG data home directory path using environment fallbacks.
+///
+/// Checks the `XDG_DATA_HOME` environment variable first. If unset, falls back to
+/// `$HOME/.local/share` when `HOME` is present. If neither variable is set,
+/// returns the current directory (`.`).
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+///
+/// // Prefer XDG_DATA_HOME when set
+/// std::env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
+/// assert_eq!(dirs_xdg_data_home(), PathBuf::from("/tmp/xdg_data_home"));
+/// std::env::remove_var("XDG_DATA_HOME");
+///
+/// // Fall back to HOME/.local/share when HOME is set
+/// std::env::set_var("HOME", "/home/alice");
+/// assert_eq!(
+///     dirs_xdg_data_home(),
+///     PathBuf::from("/home/alice").join(".local").join("share")
+/// );
+/// std::env::remove_var("HOME");
+///
+/// // When neither is set, return the current directory
+/// std::env::remove_var("XDG_DATA_HOME");
+/// std::env::remove_var("HOME");
+/// assert_eq!(dirs_xdg_data_home(), PathBuf::from("."));
+/// ```
 fn dirs_xdg_data_home() -> std::path::PathBuf {
     if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
         return std::path::PathBuf::from(xdg);
@@ -65,6 +113,17 @@ fn dirs_xdg_data_home() -> std::path::PathBuf {
 
 // ─── Helper: build executor for a job ─────────────────────────────────────────
 
+/// Constructs a job executor for the configured job identified by `job_id`.
+///
+/// If a job with the given `job_id` exists in `config.jobs`, returns an `Arc<dyn JobExecutor>` whose concrete type corresponds to the job's `JobKind` (`RecordSyncExecutor`, `ZoneSyncExecutor`, or `ZoneExportExecutor`). Returns `None` when no matching job is found.
+///
+/// # Examples
+///
+/// ```
+/// // Assume `config` contains a job with id "job-alpha".
+/// let exec = build_executor(&config, "job-alpha");
+/// assert!(exec.is_some());
+/// ```
 fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecutor>> {
     let job = config.jobs.iter().find(|j| j.id == job_id)?;
     let executor: Arc<dyn JobExecutor> = match job.kind {
@@ -86,9 +145,21 @@ fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecuto
 
 // ─── list_jobs ─────────────────────────────────────────────────────────────────
 
-/// List all configured jobs and their current status from the state DB.
+/// Produce a list of all configured jobs, merging each job's configuration with any available
+/// status information from the daemon state database.
 ///
-/// Jobs that have never run will have `state = "unknown"`.
+/// Jobs with no recorded status will have `state` set to `"unknown"`, `last_run_at` set to
+/// `None`, and `consecutive_failures` set to `0`.
+///
+/// # Examples
+///
+/// ```
+/// // Run the async function on a runtime to obtain job summaries.
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// let config = crate::tests::empty_config(); // helper from this crate's tests
+/// let summaries = rt.block_on(crate::daemon::commands::list_jobs(&config)).unwrap();
+/// assert!(summaries.is_empty());
+/// ```
 #[instrument(skip(config))]
 pub async fn list_jobs(config: &AppConfig) -> Result<Vec<JobSummary>, String> {
     if config.jobs.is_empty() {
@@ -164,7 +235,23 @@ pub async fn list_jobs(config: &AppConfig) -> Result<Vec<JobSummary>, String> {
 
 // ─── run_job ───────────────────────────────────────────────────────────────────
 
-/// Run a single job immediately (manual trigger), wait for it to finish, return outcome.
+/// Trigger a configured job immediately and return its outcome.
+///
+/// Attempts to persist the run record and updated job status to the state database when the database can be opened; if persistence fails after the DB is opened, an `Err(String)` is returned. If the configured job id is not found, returns an error describing the missing job.
+///
+/// # Returns
+/// `JobOutcome` describing the job result; on failure returns an error message (`String`).
+///
+/// # Examples
+///
+/// ```
+/// // Example (illustrative):
+/// // let config = /* an AppConfig with a job having id "job-id" */;
+/// // let outcome = tokio::runtime::Runtime::new().unwrap()
+/// //     .block_on(run_job(&config, "job-id"))
+/// //     .unwrap();
+/// // assert!(matches!(outcome, JobOutcome::Success | JobOutcome::Failure { .. } | JobOutcome::DryRun));
+/// ```
 #[instrument(skip(config), fields(job_id = %job_id))]
 pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, String> {
     // Verify the job exists.
@@ -290,11 +377,24 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
 
 // ─── healthcheck ──────────────────────────────────────────────────────────────
 
-/// Check daemon health from the state DB.
+/// Check daemon health by reading the daemon state database.
 ///
-/// Returns `Ok(true)` if `daemon_state = "live"` and `overall_health != "fatal"`.
-/// Returns `Ok(false)` if the DB exists but the daemon is not healthy.
-/// Returns `Err` if the DB does not exist (daemon never started).
+/// Returns `Ok(true)` when the stored daemon state equals `"live"` and the overall health is not `"fatal"`,
+/// `Ok(false)` when the DB exists but the stored state indicates the daemon is not healthy.
+///
+/// # Errors
+/// Returns `Err` when the state DB file does not exist or when no health record is found in the DB.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crate::config::AppConfig;
+/// # async fn example(config: &AppConfig) -> Result<(), String> {
+/// let healthy = crate::daemon::commands::healthcheck(config).await?;
+/// println!("daemon healthy: {}", healthy);
+/// # Ok(())
+/// # }
+/// ```
 #[instrument(skip(config))]
 pub async fn healthcheck(config: &AppConfig) -> Result<bool, String> {
     let db_path = resolve_state_db(config);
@@ -340,6 +440,17 @@ mod tests {
     use crate::control_plane::config::{AppConfig, JobConfig, JobKind};
     use std::collections::BTreeMap;
 
+    /// Creates an AppConfig with no servers, no clusters, no daemon configuration, and no jobs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = empty_config();
+    /// assert!(cfg.servers.is_empty());
+    /// assert!(cfg.clusters.is_empty());
+    /// assert!(cfg.daemon.is_none());
+    /// assert!(cfg.jobs.is_empty());
+    /// ```
     fn empty_config() -> AppConfig {
         AppConfig {
             servers: vec![],
@@ -349,6 +460,20 @@ mod tests {
         }
     }
 
+    /// Create an AppConfig containing two sample jobs for use in unit tests.
+    ///
+    /// The returned config contains:
+    /// - `job-alpha`: a record sync job scheduled `@hourly` (enabled).
+    /// - `job-beta`: a zone export job scheduled `@daily` (disabled) with `output_dir` set to `/tmp/zones`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = config_with_jobs();
+    /// assert_eq!(cfg.jobs.len(), 2);
+    /// assert_eq!(cfg.jobs[0].id, "job-alpha");
+    /// assert_eq!(cfg.jobs[1].id, "job-beta");
+    /// ```
     fn config_with_jobs() -> AppConfig {
         let job1 = JobConfig {
             id: "job-alpha".to_string(),

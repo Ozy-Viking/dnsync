@@ -5,6 +5,28 @@ use crate::{
     mcp::{helpers::run_json, params::SyncParams},
 };
 
+/// Perform an MCP `dns_sync` tool call after validating read/write permissions and zone constraints.
+///
+/// If either `from_policy` or `to_policy` defines an allow-list of zones and the provided `p.zones` is empty,
+/// this function returns a policy violation error requiring explicit `zones` (and `from`/`to`) in the tool call.
+/// On success it executes the sync with the provided parameters and default `SyncDiffOptions`.
+///
+/// # Returns
+///
+/// `CallToolResult` with the tool execution outcome, or an `McpError` if policy checks fail.
+///
+/// # Examples
+///
+/// ```
+/// # async fn example() {
+/// // Construct AppConfig, Policy, and SyncParams appropriately for your application.
+/// // let config = AppConfig::default();
+/// // let from_policy = Policy::allow_read(...);
+/// // let to_policy = Policy::allow_write(...);
+/// // let params = SyncParams { zones: vec!["example.com".into()], ..Default::default() };
+/// // let res = handle_sync(&config, &from_policy, &to_policy, params).await;
+/// # }
+/// ```
 pub async fn handle_sync(
     config: &AppConfig,
     from_policy: &Policy,

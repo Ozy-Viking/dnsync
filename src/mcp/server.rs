@@ -970,6 +970,33 @@ impl DnsServer {
 
     // ── Sync ──────────────────────────────────────────────────────────────
 
+    /// Synchronize DNS records from one configured server to another.
+    ///
+    /// This tool requires both `from` and `to` server IDs to be provided in `SyncParams`;
+    /// named sync profiles are not used. By default the operation is a dry-run; set
+    /// `apply` in `SyncParams` to `true` to apply changes. If `from` or `to` is missing
+    /// the call fails with a parse-style configuration error indicating the missing argument.
+    ///
+    /// # Parameters
+    ///
+    /// - `p.from` and `p.to`: server IDs identifying the source and destination servers.
+    ///
+    /// # Returns
+    ///
+    /// A `CallToolResult` describing the sync outcome on success, or an `McpError` on failure.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Construct sync parameters (dry-run)
+    /// let params = crate::mcp::tools::sync::SyncParams {
+    ///     from: Some("source-server".into()),
+    ///     to: Some("dest-server".into()),
+    ///     apply: Some(false),
+    ///     ..Default::default()
+    /// };
+    /// // Call within an async context: `server.dns_sync(Parameters(params)).await?;`
+    /// ```
     #[tool(description = "Sync records between two configured servers. \
     Dry-run by default; set `apply` to true to write changes.")]
     async fn dns_sync(

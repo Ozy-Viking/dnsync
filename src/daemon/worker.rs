@@ -31,12 +31,34 @@ pub enum DbWriteRequest {
 
 // ─── spawn_workers ─────────────────────────────────────────────────────────────
 
-/// Spawn `num_workers` worker tasks.
+/// Spawn a pool of worker tasks that consume `JobTrigger`s from a bounded queue,
+/// execute them via job-specific `JobExecutor`s, and forward `JobRun` and `JobStatus`
+/// write requests to the provided DB writer channel.
 ///
-/// Each worker pulls from the shared `job_rx`, calls the appropriate executor,
-/// then sends results to `db_write_tx`.
+/// The returned `mpsc::Sender<JobTrigger>` is the enqueue handle for submitting jobs.
+/// Workers share a single receiver protected by an async mutex and exit when the job
+/// channel is closed.
 ///
-/// Returns the sender side so callers can enqueue jobs.
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use tokio::sync::mpsc;
+/// use daemon::worker::{spawn_workers, DbWriteRequest, JobTrigger};
+///
+/// // A trivial executor factory that never finds an executor.
+/// let executors: Arc<dyn Fn(&str) -> Option<std::sync::Arc<dyn daemon::worker::JobExecutor>> + Send + Sync> =
+///     Arc::new(|_id| None);
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let (db_write_tx, _db_write_rx) = mpsc::channel::<DbWriteRequest>(8);
+///     let job_tx = spawn_workers(2, 16, executors, db_write_tx).await;
+///
+///     // `job_tx` can now be used to enqueue `JobTrigger` values.
+///     // job_tx.send(JobTrigger { job_id: "example".into(), trigger_kind: ..., dry_run: false }).await.unwrap();
+/// }
+/// ```
 pub async fn spawn_workers(
     num_workers: usize,
     queue_capacity: usize,
@@ -183,10 +205,20 @@ pub async fn spawn_workers(
 
 // ─── spawn_db_writer ───────────────────────────────────────────────────────────
 
-/// Spawn the DB writer task. Owns a `DaemonStateStore`.
+/// Start a background task that serially processes `DbWriteRequest` messages using the provided `DaemonStateStore`.
 ///
-/// Processes `DbWriteRequest` messages serially, ensuring single-writer
-/// access to SQLite.
+/// Each incoming request is executed on a blocking thread so SQLite access is serialized through the single writer task.
+/// The task logs failures from blocking calls and exits when the request channel closes.
+///
+/// # Examples
+///
+/// ```
+/// use tokio::sync::mpsc;
+/// // let store: DaemonStateStore = ...;
+/// let (tx, rx) = mpsc::channel(16);
+/// let _handle = spawn_db_writer(store, rx);
+/// // send DbWriteRequest messages to `tx`
+/// ```
 pub fn spawn_db_writer(
     store: DaemonStateStore,
     mut db_write_rx: mpsc::Receiver<DbWriteRequest>,
@@ -240,11 +272,45 @@ mod tests {
 
     #[async_trait::async_trait]
     impl JobExecutor for MockExecutor {
+        /// A test/mock executor that always reports a successful run with a fixed short duration.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # use crate::daemon::worker::{MockExecutor, JobContext, JobOutcome};
+        /// # async fn __example() {
+        /// let exec = MockExecutor;
+        /// // `ctx` can be any valid `JobContext` for tests; fields omitted here for brevity.
+        /// let ctx = JobContext {
+        ///     run_id: "run".into(),
+        ///     job_id: "job".into(),
+        ///     trigger: Default::default(),
+        ///     dry_run: false,
+        /// };
+        /// let (outcome, dur) = exec.execute(&ctx).await;
+        /// assert_eq!(outcome, JobOutcome::Success);
+        /// assert_eq!(dur.as_millis(), 10);
+        /// # }
+        /// ```
         async fn execute(&self, _ctx: &JobContext) -> (JobOutcome, Duration) {
             (JobOutcome::Success, Duration::from_millis(10))
         }
     }
 
+    /// Creates a temporary `DaemonStateStore` backed by a uniquely named SQLite file in the system
+    /// temporary directory.
+    ///
+    /// The directory and file are created under `std::env::temp_dir()` with a PID-based prefix and a
+    /// UUID filename to avoid collisions. Panics if the temporary directory cannot be created or the
+    /// test database fails to open.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = open_test_store();
+    /// // use `store` for test assertions or pass to functions under test
+    /// drop(store);
+    /// ```
     #[allow(dead_code)]
     fn open_test_store() -> DaemonStateStore {
         let dir =
@@ -258,6 +324,17 @@ mod tests {
         DaemonStateStore::new(pool)
     }
 
+    /// Constructs a sample `JobRunRow` representing a successful test run.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let row = sample_job_run_row();
+    /// assert_eq!(row.run_id, "run-test-1");
+    /// assert_eq!(row.job_id, "job-test");
+    /// assert_eq!(row.outcome.as_deref(), Some("success"));
+    /// assert_eq!(row.duration_ms, Some(10));
+    /// ```
     fn sample_job_run_row() -> JobRunRow {
         JobRunRow {
             run_id: "run-test-1".to_string(),
@@ -272,6 +349,18 @@ mod tests {
         }
     }
 
+    /// Construct a representative `JobStatusRow` for tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let row = sample_job_status_row();
+    /// assert_eq!(row.job_id, "job-test");
+    /// assert_eq!(row.job_kind, "sync");
+    /// assert_eq!(row.enabled, 1);
+    /// assert_eq!(row.current_state, "healthy");
+    /// assert_eq!(row.consecutive_failures, 0);
+    /// ```
     fn sample_job_status_row() -> JobStatusRow {
         JobStatusRow {
             job_id: "job-test".to_string(),

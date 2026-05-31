@@ -72,6 +72,22 @@ pub async fn run_record_list_across_servers(
     Ok(())
 }
 
+/// Execute a CLI command using the provided DNS service client.
+///
+/// This dispatches the supplied `command` to the appropriate handler on `client`,
+/// performing command-specific output (printing tables or JSON, writing exported
+/// zone files, etc.) and printing the final result to stdout when applicable.
+/// Certain subcommands (for example record list and zone export) have dedicated
+/// output paths handled before the generic dispatch.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crate::{run, Command, DnsService};
+/// # async fn example(client: &impl DnsService) -> anyhow::Result<()> {
+/// run(client, Command::Stats { r#type: "all".into() }).await?;
+/// # Ok(()) }
+/// ```
 #[tracing::instrument(skip(client, command), fields(command = tracing::field::Empty))]
 pub async fn run<C: DnsService>(client: &C, command: Command) -> Result<()> {
     let cmd_name = match &command {

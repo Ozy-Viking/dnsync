@@ -183,6 +183,27 @@ pub struct ValidationEndpointConfig {
 impl std::str::FromStr for ValidationEndpointConfig {
     type Err = String;
 
+    /// Parses a validation endpoint from a `name:transport:address` string.
+    ///
+    /// The expected input is three colon-separated parts: `name:transport:address`.
+    /// Valid transports are `dns`, `doh`, `dot`, and `doq` (case-insensitive).
+    /// For the `doh` transport the third part is interpreted as the DoH `url` and the `address` field is left empty;
+    /// for the other transports the third part becomes the `address` and the `url` field is left `None`.
+    /// Returns an error message when the input is malformed or the transport is unsupported.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::str::FromStr;
+    ///
+    /// let cfg = ValidationEndpointConfig::from_str("google:doh:https://dns.google/dns-query").unwrap();
+    /// assert_eq!(cfg.name, "google");
+    /// assert!(matches!(cfg.transport, ValidationTransport::Doh));
+    /// assert_eq!(cfg.url.as_deref(), Some("https://dns.google/dns-query"));
+    ///
+    /// let cfg2 = ValidationEndpointConfig::from_str("local:dns:1.1.1.1:53");
+    /// assert!(cfg2.is_ok());
+    /// ```
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         let mut parts = value.splitn(3, ':');
         let name = parts
@@ -238,18 +259,78 @@ pub enum JobKind {
     ZoneExport,
 }
 
+/// Provides the default heartbeat interval string used by the daemon.
+///
+/// # Returns
+///
+/// A string containing the interval formatted as a duration literal, e.g. `"5s"`.
+///
+/// # Examples
+///
+/// ```
+/// let s = default_heartbeat_interval();
+/// assert_eq!(s, "5s");
+/// ```
 fn default_heartbeat_interval() -> String {
     "5s".to_string()
 }
+/// Default heartbeat timeout value as a string.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(default_heartbeat_timeout(), "20s");
+/// ```
 fn default_heartbeat_timeout() -> String {
     "20s".to_string()
 }
+/// Default shutdown timeout string used by the daemon configuration.
+
+///
+
+/// # Returns
+
+///
+
+/// `"5s"` representing five seconds.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// assert_eq!(default_shutdown_timeout(), "5s");
+
+/// ```
 fn default_shutdown_timeout() -> String {
     "5s".to_string()
 }
+/// Default number of worker threads used by the daemon.
+///
+/// Returns the default thread count: `4`.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(default_worker_threads(), 4);
+/// ```
 fn default_worker_threads() -> usize {
     4
 }
+/// Default critical failure threshold for the daemon.
+///
+/// # Returns
+///
+/// The default threshold value: `5`.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(default_critical_threshold(), 5);
+/// ```
 fn default_critical_threshold() -> u32 {
     5
 }
@@ -579,6 +660,26 @@ impl McpPermissions {
 }
 
 impl AppConfig {
+    /// Create a starter `AppConfig` populated with one default server for bootstrapping.
+    ///
+    /// The returned configuration contains:
+    /// - a single `DnsServerConfig` with `id = "default"`, vendor `Technitium`,
+    ///   `base_url` set to the Technitium default, `token_env = "DNSYNC_TECHNITIUM_API_TOKEN"`,
+    ///   and default MCP permissions;
+    /// - empty `clusters`;
+    /// - no `daemon`;
+    /// - no `jobs`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = AppConfig::starter();
+    /// assert_eq!(cfg.servers.len(), 1);
+    /// let srv = &cfg.servers[0];
+    /// assert_eq!(srv.id, "default");
+    /// assert_eq!(srv.vendor, VendorKind::Technitium);
+    /// assert_eq!(srv.token_env.as_deref(), Some("DNSYNC_TECHNITIUM_API_TOKEN"));
+    /// ```
     pub fn starter() -> Self {
         AppConfig {
             servers: vec![DnsServerConfig {
@@ -608,6 +709,19 @@ impl AppConfig {
         Self::starter().render_toml()
     }
 
+    /// Render the configuration as a TOML document string.
+    ///
+    /// The output includes serialized `servers` (`[[servers]]` entries), a `[clusters]` table
+    /// (when clusters exist), an optional `[daemon]` table, and `[[jobs]]` entries in that order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = AppConfig::starter();
+    /// let toml = cfg.render_toml().unwrap();
+    /// assert!(toml.contains("[[servers]]"));
+    /// assert!(toml.contains("token_env"));
+    /// ```
     pub fn render_toml(&self) -> Result<String> {
         let mut doc = toml_edit::DocumentMut::new();
         for server in &self.servers {
@@ -623,9 +737,21 @@ impl AppConfig {
         Ok(doc.to_string())
     }
 
-    /// Returns a copy of the config with every literal `token` value replaced
-    /// by `"[redacted]"`. `token_env` values (env var names) are not secrets
-    /// and are left as-is.
+    /// Create a copy of the configuration with any literal server `token` values replaced by `"[redacted]"`.
+    ///
+    /// Literal `token` fields are replaced; `token_env` (environment variable names) are preserved unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = AppConfig {
+    ///     servers: vec![DnsServerConfig { id: "s".into(), token: Some("secret".into()), token_env: None, ..Default::default() }],
+    ///     ..Default::default()
+    /// };
+    /// let redacted = cfg.redact();
+    /// assert_eq!(redacted.servers[0].token.as_deref(), Some("[redacted]"));
+    /// assert_eq!(redacted.servers[0].token_env, cfg.servers[0].token_env);
+    /// ```
     pub fn redact(&self) -> Self {
         AppConfig {
             servers: self
@@ -688,6 +814,24 @@ impl AppConfig {
         }
     }
 
+    /// Performs semantic validation of the configuration.
+    ///
+    /// This checks each server for a non-empty, unique (case-insensitive) id; verifies any
+    /// server `cluster` references exist; validates configured transport endpoints and
+    /// validation endpoints for each server; validates cluster definitions and job entries
+    /// (including job id uniqueness, scheduling rules, server references, IP-map consistency,
+    /// and regex compilation).
+    ///
+    /// Returns `Ok(())` when all checks pass, or an `Error::config(...)` describing the first
+    /// validation failure encountered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = AppConfig::default();
+    /// // starter/default config should validate
+    /// cfg.validate().unwrap();
+    /// ```
     fn validate(&self) -> Result<()> {
         let mut ids = std::collections::HashSet::new();
         for server in &self.servers {
@@ -1285,8 +1429,21 @@ pub fn update_server_endpoint(
     Ok(path)
 }
 
-/// Append a `[[servers]]` entry to a toml_edit document without touching
-/// any existing content.
+/// Append a new `[[servers]]` table to a `toml_edit::DocumentMut` without modifying any
+/// existing tables or other content in the document.
+///
+/// The function writes a complete server table derived from `server` and either pushes it
+/// onto an existing `servers` array-of-tables or creates that array if it does not exist.
+///
+/// # Examples
+///
+/// ```
+/// let mut doc = toml_edit::DocumentMut::new();
+/// // `AppConfig::starter()` provides a minimal starter server suitable for examples/tests.
+/// let server = crate::control_plane::config::AppConfig::starter().servers.into_iter().next().unwrap();
+/// crate::control_plane::config::append_server_entry(&mut doc, &server);
+/// assert!(doc.to_string().contains("[[servers]]"));
+/// ```
 fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfig) {
     use toml_edit::{Array, ArrayOfTables, Item, Table, value};
 
@@ -1448,7 +1605,19 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     }
 }
 
-/// Validate a single `ip_map` job context entry.
+/// Validate a single `ip_map` entry by ensuring both endpoints are valid IPs and belong to the same IP family.
+///
+/// Returns an `Err(Error::config(...))` if either `src` or `dst` is not a valid IP address, or if one is IPv4 and the other is IPv6.
+///
+/// # Examples
+///
+/// ```
+/// # use std::net::IpAddr;
+/// # fn validate_ip_pair_for_job(_job_id: &str, _src: &str, _dst: &str) -> Result<(), ()> { Ok(()) }
+/// // Basic usage: IPv4 pair is accepted
+/// let res = validate_ip_pair_for_job("job1", "192.0.2.1", "198.51.100.2");
+/// assert!(res.is_ok());
+/// ```
 fn validate_ip_pair_for_job(job_id: &str, src: &str, dst: &str) -> Result<()> {
     let source: IpAddr = src.parse().map_err(|_| {
         Error::config(format!(
@@ -1468,7 +1637,33 @@ fn validate_ip_pair_for_job(job_id: &str, src: &str, dst: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate all job entries.
+/// Validate job definitions and their references.
+///
+/// Performs semantic checks on each `JobConfig`:
+/// - each job must have a non-empty, unique id (case-insensitive);
+/// - exactly one of `schedule` or `interval` must be present (whitespace-only counts as absent);
+/// - for `RecordSync` and `ZoneSync` jobs, `from` and `to` must be present, refer to known servers,
+///   and must not be the same server (comparison is case-insensitive);
+/// - for `ZoneExport` jobs, `output_dir` must be present and non-empty;
+/// - every entry in `ip_map` must parse as an IP address and use a consistent IP family per pair;
+/// - every `ignore` pattern must compile as a valid regular expression.
+///
+/// `server_ids` should contain the set of known server ids (lowercased) used to validate `from`/`to`.
+///
+/// # Errors
+///
+/// Returns an `Err(Error::config(...))` describing the first validation failure encountered.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashSet;
+///
+/// // empty job list is valid
+/// let jobs: Vec<crate::control_plane::config::JobConfig> = Vec::new();
+/// let server_ids: HashSet<String> = HashSet::new();
+/// assert!(crate::control_plane::config::validate_jobs(&jobs, &server_ids).is_ok());
+/// ```
 fn validate_jobs(jobs: &[JobConfig], server_ids: &HashSet<String>) -> Result<()> {
     let mut job_ids: HashSet<String> = HashSet::new();
     for job in jobs {
@@ -1575,7 +1770,31 @@ fn validate_jobs(jobs: &[JobConfig], server_ids: &HashSet<String>) -> Result<()>
     Ok(())
 }
 
-/// Append the `[daemon]` table to a toml_edit document.
+/// Append a `[daemon]` table containing daemon runtime settings to the given TOML document.
+///
+/// The table will include `state_db` (if present), `heartbeat_interval`, `heartbeat_timeout`,
+/// `shutdown_timeout`, `worker_threads`, and `critical_failure_threshold`.
+///
+/// # Examples
+///
+/// ```
+/// use toml_edit::Document;
+/// use std::str::FromStr;
+/// // Construct a DaemonConfig by deserializing a small TOML snippet.
+/// let daemon: DaemonConfig = toml::from_str(r#"
+/// state_db = "/tmp/state.db"
+/// heartbeat_interval = "5s"
+/// heartbeat_timeout = "20s"
+/// shutdown_timeout = "5s"
+/// worker_threads = 4
+/// critical_failure_threshold = 5
+/// "#).unwrap();
+///
+/// let mut doc = Document::new();
+/// append_daemon_entry(&mut doc, &daemon);
+/// assert!(doc.to_string().contains("[daemon]"));
+/// ```
+fn
 fn append_daemon_entry(doc: &mut toml_edit::DocumentMut, daemon: &DaemonConfig) {
     use toml_edit::{Item, Table, value};
 
@@ -1673,8 +1892,49 @@ fn append_job_entry(doc: &mut toml_edit::DocumentMut, job: &JobConfig) {
     }
 }
 
-/// Validate a single `ip_map` entry: both sides must parse as IP addresses of
-/// the same family.
+/// Write the starter application configuration to `path`, creating parent directories as needed.
+
+///
+
+/// If a config file already exists at `path` this returns an error unless `force` is `true`,
+
+/// in which case the file is overwritten. The function ensures the configuration directory
+
+/// is present (with restrictive permissions on supported platforms) and writes the default
+
+/// TOML contents using secure file permissions.
+
+///
+
+/// # Errors
+
+///
+
+/// Returns an `Error::config` if the file exists and `force` is `false`. Other I/O or
+
+/// serialization errors are returned as appropriate.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// use std::path::Path;
+
+/// # fn try_example() -> Result<(), Box<dyn std::error::Error>> {
+
+/// let path = Path::new("/tmp/dnsync_config.toml");
+
+/// // Write default config, overwriting if it already exists
+
+/// crate::control_plane::config::write_default_config(path, true)?;
+
+/// # Ok(()) }
+
+/// ```
 
 fn write_default_config(path: &Path, force: bool) -> Result<()> {
     if path.exists() && !force {
@@ -3212,6 +3472,22 @@ mod tests {
 
     // ── location field TOML round-trip ────────────────────────────────────────
 
+    /// Verifies that a server's explicit `location` value is preserved when parsing from TOML.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let toml = r#"
+    ///     [[servers]]
+    ///     id = "home"
+    ///     vendor = "technitium"
+    ///     location = "external"
+    ///     token = "tok"
+    /// "#;
+    /// let config: AppConfig = toml::from_str(toml).expect("should parse");
+    /// let server = config.selected_server(None).unwrap();
+    /// assert_eq!(server.location, Some(ServerLocation::External));
+    /// ```
     #[test]
     fn location_field_round_trips_in_toml() {
         let toml = r#"
@@ -3228,6 +3504,17 @@ mod tests {
 
     // ── jobs ─────────────────────────────────────────────────────────────────
 
+    /// TOML snippet containing two minimal `[[servers]]` entries for tests.
+    ///
+    /// The snippet defines servers with ids "cf" and "home", each including a literal `token`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let toml = two_server_config();
+    /// assert!(toml.contains("id = \"cf\""));
+    /// assert!(toml.contains("id = \"home\""));
+    /// ```
     #[allow(dead_code)]
     fn two_server_config() -> &'static str {
         r#"
@@ -3241,6 +3528,33 @@ mod tests {
         "#
     }
 
+    /// Verifies that a minimal `record_sync` job deserializes from TOML and passes validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let toml = r#"
+    /// [[servers]]
+    /// id = "cf"
+    /// token = "tok"
+    ///
+    /// [[servers]]
+    /// id = "home"
+    /// token = "tok"
+    ///
+    /// [[jobs]]
+    /// id = "sync-cf-home"
+    /// kind = "record_sync"
+    /// interval = "5m"
+    /// from = "cf"
+    /// to = "home"
+    /// "#;
+    /// let config: AppConfig = toml::from_str(toml).expect("should parse");
+    /// config.validate().expect("should validate");
+    /// assert_eq!(config.jobs.len(), 1);
+    /// let job = &config.jobs[0];
+    /// assert_eq!(job.kind, JobKind::RecordSync);
+    /// ```
     #[test]
     fn parses_minimal_record_sync_job() {
         let toml = concat!(
@@ -3551,6 +3865,27 @@ mod tests {
         assert!(err.to_string().contains("identical source and destination"));
     }
 
+    /// Verifies that a `zone_export` job without `output_dir` fails validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let toml = concat!(
+    ///     r#"
+    ///     [[servers]]
+    ///     id = "home"
+    ///     token = "tok"
+    ///
+    ///     [[jobs]]
+    ///     id = "no-output"
+    ///     kind = "zone_export"
+    ///     interval = "1d"
+    ///     "#
+    /// );
+    /// let config: AppConfig = toml::from_str(toml).expect("should parse");
+    /// let err = config.validate().unwrap_err();
+    /// assert!(err.to_string().contains("requires 'output_dir'"));
+    /// ```
     #[test]
     fn rejects_zone_export_job_missing_output_dir() {
         let toml = concat!(

@@ -7,15 +7,24 @@
 use cron::Schedule;
 use std::str::FromStr;
 
-/// Parse a schedule string into a validated 6-field cron expression.
+/// Convert a schedule string into a validated six-field cron expression.
 ///
 /// Accepts:
-/// - Interval shorthands: `"Nm"` (minutes), `"Nh"` (hours), `"Nd"` (days)
-/// - 5-field standard cron (prepends `"0 "` for the seconds field)
-/// - 6-field cron (validated and returned as-is)
+/// - interval shorthands like `"5m"`, `"1h"`, `"1d"` (minutes, hours, days);
+/// - a 5-field cron (seconds field will be prefixed with `"0 "`); or
+/// - a 6-field cron (returned as-is after validation).
 ///
-/// Minimum interval is 1 minute. Intervals below 1 minute (e.g. `"30s"`) return
-/// an error.
+/// Intervals must be at least 1 minute; sub-minute intervals (e.g. `"30s"`) and out-of-range values produce an `Err` describing the problem.
+///
+/// # Examples
+///
+/// ```
+/// // interval shorthand -> 6-field cron
+/// assert_eq!(parse_schedule("5m").unwrap(), "0 */5 * * * *");
+///
+/// // 5-field cron is normalized to 6 fields by prepending "0 "
+/// assert_eq!(parse_schedule("*/15 * * * *").unwrap(), "0 */15 * * * *");
+/// ```
 pub fn parse_schedule(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
 
@@ -42,8 +51,22 @@ pub fn parse_schedule(input: &str) -> Result<String, String> {
     Ok(expr)
 }
 
-/// Attempt to parse an interval shorthand. Returns `Ok(Some(expr))` on success,
-/// `Ok(None)` if the input is not an interval, and `Err` for below-minimum intervals.
+/// Parse an interval shorthand like `15m`, `2h`, or `1d` into a 6-field cron expression.
+///
+/// Returns `Ok(Some(expr))` with a 6-field cron expression when `input` is a supported interval
+/// shorthand (`Nm`, `Nh`, `Nd` where N >= 1). Returns `Ok(None)` if `input` does not end with a
+/// recognized interval suffix (not an interval shorthand). Returns `Err` with a human-readable
+/// message for invalid numeric values, zero, intervals below the 1-minute minimum (seconds), or
+/// values that exceed supported maxima (minutes > 59, hours > 23, days > 31).
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(try_parse_interval("15m"), Ok(Some("0 */15 * * * *".to_string())));
+/// assert_eq!(try_parse_interval("1d"), Ok(Some("0 0 0 * * *".to_string())));
+/// assert_eq!(try_parse_interval("garbage"), Ok(None));
+/// assert!(try_parse_interval("30s").is_err());
+/// ```
 fn try_parse_interval(input: &str) -> Result<Option<String>, String> {
     let (value_str, unit) = if let Some(s) = input.strip_suffix('m') {
         (s, 'm')
@@ -102,7 +125,17 @@ fn try_parse_interval(input: &str) -> Result<Option<String>, String> {
     }
 }
 
-/// Validate a 6-field cron expression using the `cron` crate.
+/// Validates a 6-field cron expression and returns an error message if parsing fails.
+///
+/// # Examples
+///
+/// ```
+/// let ok = validate_cron_expression("0 0 * * * *");
+/// assert!(ok.is_ok());
+///
+/// let err = validate_cron_expression("99 * * * * *");
+/// assert!(err.is_err());
+/// ```
 fn validate_cron_expression(expr: &str) -> Result<(), String> {
     Schedule::from_str(expr)
         .map_err(|e| format!("invalid cron expression '{expr}': {e}"))?;

@@ -34,12 +34,30 @@ pub struct JobTrigger {
     pub dry_run: bool,
 }
 
-/// Compute the next fire time for `job` strictly after `after`.
+/// Compute the next scheduled firing instant for `job` strictly after `after`.
 ///
-/// The computation is done in the job's configured timezone so that
-/// DST transitions and local-midnight rules are respected correctly.
-/// Returns `None` only if the cron expression produces no future dates
-/// (which should not happen for valid, non-expiring expressions).
+/// The calculation is performed in the job's configured timezone so that DST
+/// transitions and local-midnight rules are respected; the returned instant is
+/// expressed in UTC. Returns `None` if the job's cron expression yields no
+/// future occurrences.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::Utc;
+/// use chrono_tz::UTC;
+///
+/// let job = ScheduledJob {
+///     id: "job1".into(),
+///     cron_expr: "0 0 * * * *".into(), // every hour at minute 0, second 0
+///     timezone: UTC,
+///     jitter_max: std::time::Duration::ZERO,
+///     enabled: true,
+/// };
+/// let now = Utc::now();
+/// let next = next_after(&job, now);
+/// assert!(next.is_some());
+/// ```
 pub fn next_after(job: &ScheduledJob, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let schedule = Schedule::from_str(&job.cron_expr).ok()?;
     // Convert the reference instant into the job's timezone, then use it
@@ -52,9 +70,40 @@ pub fn next_after(job: &ScheduledJob, after: DateTime<Utc>) -> Option<DateTime<U
         .map(|t| t.with_timezone(&Utc))
 }
 
-/// Add a random jitter of `[0, max)` milliseconds to `deadline`.
+/// Applies a uniformly distributed forward jitter to a UTC deadline.
 ///
-/// When `max` is [`Duration::ZERO`] the deadline is returned unchanged.
+/// The returned time is the original `deadline` plus a non-negative millisecond offset
+/// uniformly chosen from the range `[0, max)`; if `max` is `Duration::ZERO` the
+/// original `deadline` is returned unchanged.
+///
+/// # Parameters
+///
+/// - `deadline`: base UTC instant to jitter.
+/// - `max`: exclusive upper bound for the jitter duration; jitter is less than `max`.
+///
+/// # Returns
+///
+/// `DateTime<Utc>` equal to `deadline` plus a jitter in milliseconds in `[0, max)`.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::Utc;
+/// use rand::{SeedableRng, rngs::StdRng};
+/// use std::time::Duration;
+///
+/// let deadline = Utc::now();
+/// let mut rng = StdRng::seed_from_u64(42);
+///
+/// // zero max leaves the deadline unchanged
+/// let out = crate::daemon::scheduler::apply_jitter(deadline, Duration::from_millis(0), &mut rng);
+/// assert_eq!(out, deadline);
+///
+/// // non-zero max produces a value in [deadline, deadline + max)
+/// let max = Duration::from_millis(100);
+/// let out2 = crate::daemon::scheduler::apply_jitter(deadline, max, &mut rng);
+/// assert!(out2 >= deadline && out2 < deadline + chrono::Duration::from_std(max).unwrap());
+/// ```
 pub fn apply_jitter(deadline: DateTime<Utc>, max: Duration, rng: &mut impl rand::Rng) -> DateTime<Utc> {
     let max_millis = max.as_millis();
     if max_millis == 0 {
@@ -102,6 +151,20 @@ mod tests {
     use rand::{SeedableRng, rngs::StdRng};
 
     // Helper: build a minimal ScheduledJob
+    /// Constructs a `ScheduledJob` with the given identifier and cron expression.
+    ///
+    /// The created job uses the UTC timezone, has zero jitter, and is enabled by default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let sj = job("backup", "0 0/5 * * * *"); // sec min hour dom mon dow (6-field)
+    /// assert_eq!(sj.id, "backup");
+    /// assert_eq!(sj.cron_expr, "0 0/5 * * * *");
+    /// assert_eq!(sj.timezone, chrono_tz::UTC);
+    /// assert_eq!(sj.jitter_max, std::time::Duration::ZERO);
+    /// assert!(sj.enabled);
+    /// ```
     fn job(id: &str, cron_expr: &str) -> ScheduledJob {
         ScheduledJob {
             id: id.to_string(),
@@ -112,6 +175,20 @@ mod tests {
         }
     }
 
+    /// Creates a ScheduledJob with the given id, cron expression and timezone, using sane defaults.
+    ///
+    /// The returned job has `jitter_max` set to zero and is `enabled`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let job = job_tz("job-1", "0 0/5 * * * *", chrono_tz::US::Eastern);
+    /// assert_eq!(job.id, "job-1");
+    /// assert_eq!(job.cron_expr, "0 0/5 * * * *");
+    /// assert_eq!(job.timezone, chrono_tz::US::Eastern);
+    /// assert_eq!(job.jitter_max, std::time::Duration::ZERO);
+    /// assert!(job.enabled);
+    /// ```
     fn job_tz(id: &str, cron_expr: &str, tz: Tz) -> ScheduledJob {
         ScheduledJob {
             id: id.to_string(),

@@ -22,6 +22,32 @@ pub struct ZoneSyncExecutor {
 
 #[async_trait::async_trait]
 impl JobExecutor for ZoneSyncExecutor {
+    /// Execute the ZoneSync job configured under `self.job_id` using the provided `ctx`.
+    ///
+    /// Looks up the job in `self.config.jobs` and runs a sync between the job's `from` and `to` locations
+    /// using the job's zones, ip_map, and diff options. If the job is not found the function returns
+    /// `JobOutcome::Failure { error: "job not found" }` with a zero duration. If `ctx.dry_run` is true,
+    /// the sync is executed in dry-run mode and the function returns `JobOutcome::DryRun`. On success
+    /// returns `JobOutcome::Success`; on failure returns `JobOutcome::Failure { error: ... }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # // The following is an illustrative example; real types must be constructed according to the crate's API.
+    /// # use std::time::Duration;
+    /// # use tokio::runtime::Runtime;
+    /// # fn main() {
+    /// # let rt = Runtime::new().unwrap();
+    /// # rt.block_on(async {
+    /// let config = AppConfig::default();
+    /// let executor = ZoneSyncExecutor { config, job_id: "example".to_string() };
+    /// let ctx = JobContext::default();
+    /// let (outcome, duration) = executor.execute(&ctx).await;
+    /// // duration is the elapsed time taken by the operation
+    /// assert!(duration >= Duration::ZERO);
+    /// # });
+    /// # }
+    /// ```
     #[instrument(skip(self, ctx), fields(job_id = %self.job_id, run_id = %ctx.run_id))]
     async fn execute(&self, ctx: &JobContext) -> (JobOutcome, Duration) {
         let Some(job) = self.config.jobs.iter().find(|j| j.id == self.job_id) else {

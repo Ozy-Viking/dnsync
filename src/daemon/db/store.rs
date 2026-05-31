@@ -17,12 +17,34 @@ pub struct DaemonStateStore {
 }
 
 impl DaemonStateStore {
-    /// Create a new store wrapping the given connection pool.
+    /// Constructs a DaemonStateStore that wraps the provided database connection pool.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Obtain a DbPool (example placeholder) and create the store.
+    /// let pool = /* obtain DbPool */ unimplemented!();
+    /// let _store = DaemonStateStore::new(pool);
+    /// ```
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
-    /// Upsert the daemon health singleton row (always `id = 1`).
+    /// Upserts the daemon health singleton row (id = 1).
+    ///
+    /// Inserts the provided `row` into the `daemon_health` table or updates the existing singleton record with the same id.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, `Err(String)` containing an error message if acquiring a DB connection or executing the query fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = DaemonStateStore::new(pool);
+    /// let row = DaemonHealthRow { id: 1, daemon_state: "Running".into(), overall_health: "Good".into(), /* ... */ };
+    /// store.save_daemon_health(row).unwrap();
+    /// ```
     pub fn save_daemon_health(&self, row: DaemonHealthRow) -> Result<(), String> {
         debug!(daemon_state = %row.daemon_state, overall_health = %row.overall_health, "DB write: save_daemon_health");
         let mut conn = self
@@ -42,7 +64,20 @@ impl DaemonStateStore {
         Ok(())
     }
 
-    /// Upsert a job status row keyed by `job_id`.
+    /// Insert or update a job status row using the row's `job_id` as the unique key.
+    ///
+    /// On success the database will contain the provided `JobStatusRow`; on conflict the existing
+    /// row for the same `job_id` is replaced with the provided values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = open_test_store();
+    /// let row = sample_job_status("example-job");
+    /// store.save_job_status(row).expect("save should succeed");
+    /// ```
+    ///
+    /// Returns `Ok(())` on success, `Err(String)` with a human-readable message on failure.
     pub fn save_job_status(&self, row: JobStatusRow) -> Result<(), String> {
         debug!(job_id = %row.job_id, current_state = %row.current_state, consecutive_failures = row.consecutive_failures, "DB write: save_job_status");
         let mut conn = self
@@ -62,7 +97,30 @@ impl DaemonStateStore {
         Ok(())
     }
 
-    /// Append a new job run row (insert only — run history is immutable).
+    /// Inserts a job run into the immutable per-job run history.
+    ///
+    /// This performs an insert-only append of `row` into the `job_runs` table.
+    /// The run history is treated as immutable; conflicts are not handled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `store` must be an initialized `DaemonStateStore` and `JobRunRow` must be available in scope.
+    /// let row = JobRunRow {
+    ///     run_id: "run-1".into(),
+    ///     job_id: "job-a".into(),
+    ///     started_at: chrono::Utc::now(),
+    ///     outcome: Some("success".into()),
+    ///     duration_ms: Some(150),
+    ///     // fill other fields as required by `JobRunRow`
+    /// };
+    ///
+    /// store.append_job_run(row).expect("append_job_run failed");
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, `Err(String)` with an error message on failure.
     pub fn append_job_run(&self, row: JobRunRow) -> Result<(), String> {
         debug!(run_id = %row.run_id, job_id = %row.job_id, outcome = ?row.outcome, duration_ms = ?row.duration_ms, "DB write: append_job_run");
         let mut conn = self
@@ -79,7 +137,19 @@ impl DaemonStateStore {
         Ok(())
     }
 
-    /// Load the daemon health singleton row, or `None` if it has never been saved.
+    /// Retrieves the persisted daemon health snapshot for the singleton record.
+    ///
+    /// Returns `Some(DaemonHealthRow)` if the record exists, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = open_test_store(); // helper that returns a DaemonStateStore
+    /// let health = store.load_daemon_health().unwrap();
+    /// if let Some(row) = health {
+    ///     println!("last_seen: {}", row.last_seen);
+    /// }
+    /// ```
     pub fn load_daemon_health(&self) -> Result<Option<DaemonHealthRow>, String> {
         debug!("DB read: load_daemon_health");
         let mut conn = self
@@ -97,7 +167,24 @@ impl DaemonStateStore {
         Ok(row)
     }
 
-    /// Load the current status for a single job, or `None` if not found.
+    /// Loads the current status for the job identified by `job_id`.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(JobStatusRow))` if a status row exists for `job_id`, `Ok(None)` if no row is found, or `Err(String)` if a database error occurs.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use crate::daemon::db::store::DaemonStateStore;
+    /// # let store: DaemonStateStore = unimplemented!();
+    /// let status = store.load_job_status("job-123").unwrap();
+    /// if let Some(row) = status {
+    ///     println!("found status for job: {}", row.job_id);
+    /// } else {
+    ///     println!("no status for job-123");
+    /// }
+    /// ```
     pub fn load_job_status(&self, job_id: &str) -> Result<Option<JobStatusRow>, String> {
         debug!(job_id, "DB read: load_job_status");
         let mut conn = self
@@ -115,8 +202,17 @@ impl DaemonStateStore {
         Ok(row)
     }
 
-    /// Load up to `limit` run history rows for `job_id`, ordered by
-    /// `started_at` descending (most recent first).
+    /// Load up to `limit` run history rows for `job_id`, ordered by `started_at` descending (most recent first).
+    ///
+    /// The returned vector contains at most `limit` rows filtered to the given `job_id`; it may be empty if no runs exist.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let runs = store.load_job_runs("my-job", 5).unwrap();
+    /// // at most 5 most recent runs for "my-job"
+    /// assert!(runs.len() <= 5);
+    /// ```
     pub fn load_job_runs(&self, job_id: &str, limit: usize) -> Result<Vec<JobRunRow>, String> {
         debug!(job_id, limit, "DB read: load_job_runs");
         let mut conn = self
@@ -143,7 +239,17 @@ mod tests {
     use super::*;
     use crate::daemon::db;
 
-    /// Open a fresh temp-file-backed SQLite database and wrap it in a store.
+    /// Create a temporary, file-backed SQLite database and return a `DaemonStateStore` that uses it.
+    ///
+    /// The database is created in the system temporary directory and uniquely named so tests can run
+    /// in isolation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = open_test_store();
+    /// // use `store` in tests; the database is scoped to a temporary file.
+    /// ```
     fn open_test_store() -> DaemonStateStore {
         let dir =
             std::env::temp_dir().join(format!("dnsync-store-test-{}", std::process::id()));
@@ -156,6 +262,17 @@ mod tests {
         DaemonStateStore::new(pool)
     }
 
+    /// Creates a sample `DaemonHealthRow` populated with consistent example values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let row = sample_health_row();
+    /// assert_eq!(row.id, 1);
+    /// assert_eq!(row.daemon_id, "daemon-xyz");
+    /// assert_eq!(row.daemon_state, "live");
+    /// assert_eq!(row.overall_health, "healthy");
+    /// ```
     fn sample_health_row() -> DaemonHealthRow {
         DaemonHealthRow {
             id: 1,
@@ -174,6 +291,20 @@ mod tests {
         }
     }
 
+    /// Creates a sample `JobStatusRow` populated with deterministic default values for the given job ID.
+    ///
+    /// Useful for tests that need a consistent, fully-populated job status row with no prior runs or failures.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let row = sample_job_status("job-123");
+    /// assert_eq!(row.job_id, "job-123");
+    /// assert_eq!(row.job_kind, "sync");
+    /// assert_eq!(row.enabled, 1);
+    /// assert_eq!(row.current_state, "healthy");
+    /// assert_eq!(row.consecutive_failures, 0);
+    /// ```
     fn sample_job_status(job_id: &str) -> JobStatusRow {
         JobStatusRow {
             job_id: job_id.to_string(),
@@ -190,6 +321,20 @@ mod tests {
         }
     }
 
+    /// Builds a test JobRunRow with the given run id, job id, and start timestamp.
+    ///
+    /// `run_id` is the run identifier, `job_id` is the job identifier, and `started_at` is a timestamp string (e.g. ISO-8601).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let r = sample_job_run("run-1", "job-a", "2023-01-01T00:00:00Z");
+    /// assert_eq!(r.run_id, "run-1");
+    /// assert_eq!(r.job_id, "job-a");
+    /// assert_eq!(r.started_at, "2023-01-01T00:00:00Z");
+    /// assert_eq!(r.finished_at.as_deref(), Some("2023-01-01T00:00:00Z"));
+    /// assert_eq!(r.outcome.as_deref(), Some("success"));
+    /// ```
     fn sample_job_run(run_id: &str, job_id: &str, started_at: &str) -> JobRunRow {
         JobRunRow {
             run_id: run_id.to_string(),

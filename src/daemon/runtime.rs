@@ -31,6 +31,22 @@ use crate::daemon::{
 
 // ─── State DB path resolution ──────────────────────────────────────────────────
 
+/// Resolve the SQLite state database path for the daemon.
+///
+/// Priority:
+/// 1. `config.daemon.state_db` if present.
+/// 2. `DNSYNC_STATE_DB` environment variable if set.
+/// 3. `$XDG_DATA_HOME/dnsync/state.db`, or `$HOME/.local/share/dnsync/state.db`, or `./dnsync/state.db` as a final fallback.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // If daemon state_db is not set, the environment variable will be used:
+/// std::env::set_var("DNSYNC_STATE_DB", "/tmp/my_state.db");
+/// let cfg = /* AppConfig with no daemon.state_db */;
+/// let path = resolve_state_db(&cfg);
+/// assert_eq!(path, std::path::PathBuf::from("/tmp/my_state.db"));
+/// ```
 fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
     if let Some(ref daemon) = config.daemon
         && let Some(ref p) = daemon.state_db
@@ -45,6 +61,49 @@ fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
     xdg_data_home().join("dnsync").join("state.db")
 }
 
+/// Resolve the base data directory following XDG conventions.
+
+///
+
+/// Chooses the path in this order:
+
+/// 1. the `XDG_DATA_HOME` environment variable if present;
+
+/// 2. `$HOME/.local/share` if `HOME` is present;
+
+/// 3. the current directory `"."` as a last resort.
+
+///
+
+/// # Returns
+
+///
+
+/// A `PathBuf` pointing to the chosen data directory.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// use std::path::PathBuf;
+
+/// use std::env;
+
+///
+
+/// // Prefer XDG_DATA_HOME when set
+
+/// env::set_var("XDG_DATA_HOME", "/tmp/xdg-data-home-example");
+
+/// assert_eq!(xdg_data_home(), PathBuf::from("/tmp/xdg-data-home-example"));
+
+/// env::remove_var("XDG_DATA_HOME");
+
+/// ```
 fn xdg_data_home() -> std::path::PathBuf {
     if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
         return std::path::PathBuf::from(xdg);
@@ -57,9 +116,19 @@ fn xdg_data_home() -> std::path::PathBuf {
 
 // ─── parse_shutdown_timeout ────────────────────────────────────────────────────
 
-/// Parse a duration string like `"5s"`, `"10s"`, `"1m"` into a `Duration`.
+/// Parse a short duration string using an integer followed by `s` (seconds) or `m` (minutes).
 ///
-/// Only seconds and minutes are supported here (shutdown timeout is typically short).
+/// Accepts trimmed inputs like `"5s"` or `"1m"`. If the input is invalid or uses an unsupported
+/// suffix the function returns a default of 5 seconds.
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// assert_eq!(super::parse_duration("10s"), Duration::from_secs(10));
+/// assert_eq!(super::parse_duration("2m"), Duration::from_secs(120));
+/// assert_eq!(super::parse_duration(" invalid "), Duration::from_secs(5));
+/// ```
 fn parse_duration(s: &str) -> Duration {
     let s = s.trim();
     if let Some(n) = s.strip_suffix('s') {
@@ -78,7 +147,33 @@ fn parse_duration(s: &str) -> Duration {
 
 // ─── run ───────────────────────────────────────────────────────────────────────
 
-/// Run the daemon until `cancel` is triggered or ctrl-c is received.
+/// Runs the daemon main loop until the provided cancellation token is triggered or the process receives ctrl-c.
+///
+/// The function opens and initializes the state database, starts background workers (including a DB writer and job executors),
+/// schedules and triggers jobs per configuration, and performs a graceful shutdown sequence when cancelled.
+///
+/// # Returns
+///
+/// `Ok(())` when the daemon stops after receiving a cancellation signal or ctrl-c; `Err(String)` if startup fails (for example,
+/// opening the state DB or writing the initial health row).
+///
+/// # Examples
+///
+/// ```no_run
+/// use tokio::time::timeout;
+/// use tokio_util::sync::CancellationToken;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let config = /* build AppConfig */ todo!();
+///     let cancel = CancellationToken::new();
+///     let handle = tokio::spawn(async move { crate::daemon::runtime::run(config, cancel.clone()).await });
+///     // trigger shutdown immediately for demonstration
+///     cancel.cancel();
+///     let res = timeout(std::time::Duration::from_secs(1), handle).await;
+///     assert!(res.is_ok());
+/// }
+/// ```
 #[instrument(skip(config, cancel), fields(daemon_id))]
 pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), String> {
     let daemon_id = uuid::Uuid::new_v4().to_string();
@@ -364,6 +459,39 @@ mod tests {
     use std::collections::BTreeMap;
     use tokio_util::sync::CancellationToken;
 
+    /// Creates a minimal AppConfig for tests using the provided SQLite state DB path.
+    
+    ///
+    
+    /// The returned config contains no servers or jobs and a daemon configuration tuned for fast test runs:
+    
+    /// short heartbeat intervals, a 1 second shutdown timeout, a single worker thread, and a critical failure threshold of 5.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```
+    
+    /// let db_path = std::path::PathBuf::from("/tmp/test_state.db");
+    
+    /// let cfg = minimal_config(db_path.clone());
+    
+    /// assert!(cfg.servers.is_empty());
+    
+    /// assert!(cfg.jobs.is_empty());
+    
+    /// let daemon = cfg.daemon.unwrap();
+    
+    /// assert_eq!(daemon.state_db.unwrap(), db_path);
+    
+    /// assert_eq!(daemon.shutdown_timeout, "1s");
+    
+    /// assert_eq!(daemon.worker_threads, 1);
+    
+    /// ```
     fn minimal_config(db_path: std::path::PathBuf) -> AppConfig {
         AppConfig {
             servers: vec![],
@@ -380,6 +508,20 @@ mod tests {
         }
     }
 
+    /// Returns a unique PathBuf for a temporary SQLite file placed in a per-process
+    /// subdirectory of the system temp directory.
+    ///
+    /// The path is of the form `<temp_dir>/dnsync-runtime-test-<pid>/runtime-<uuid>.sqlite`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let p = temp_db_path();
+    /// // parent directory is created
+    /// assert!(p.parent().unwrap().exists());
+    /// // file name uses the .sqlite extension
+    /// assert_eq!(p.extension().and_then(|s| s.to_str()), Some("sqlite"));
+    /// ```
     fn temp_db_path() -> std::path::PathBuf {
         let dir = std::env::temp_dir()
             .join(format!("dnsync-runtime-test-{}", std::process::id()));

@@ -21,6 +21,31 @@ pub struct RecordSyncExecutor {
 
 #[async_trait::async_trait]
 impl JobExecutor for RecordSyncExecutor {
+    /// Execute the configured RecordSync job identified by this executor's `job_id`.
+    ///
+    /// The method looks up the job in `self.config.jobs`, builds sync options (including `ip_map` and compiled
+    /// ignore patterns), calls `control_plane::sync::run_sync_json` with those options, measures elapsed time,
+    /// and maps the call result to a `JobOutcome`. If `ctx.dry_run` is true the function performs a dry run and
+    /// returns `JobOutcome::DryRun` with the measured duration.
+    ///
+    /// # Returns
+    ///
+    /// `(JobOutcome, Duration)` — the job outcome and the elapsed time taken to run (or zero duration if the
+    /// job was not found).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use std::time::Duration;
+    /// # use tokio::runtime::Runtime;
+    /// # use crate::daemon::executor::record_sync::RecordSyncExecutor;
+    /// # use crate::{AppConfig, JobContext};
+    /// let rt = Runtime::new().unwrap();
+    /// let exec = RecordSyncExecutor { config: AppConfig::default(), job_id: "example".into() };
+    /// let ctx = JobContext { run_id: "r1".into(), dry_run: true };
+    /// let (outcome, elapsed) = rt.block_on(async { exec.execute(&ctx).await });
+    /// // `outcome` will be `JobOutcome::DryRun` for this example because `ctx.dry_run` is true.
+    /// ```
     #[instrument(skip(self, ctx), fields(job_id = %self.job_id, run_id = %ctx.run_id))]
     async fn execute(&self, ctx: &JobContext) -> (JobOutcome, Duration) {
         let Some(job) = self.config.jobs.iter().find(|j| j.id == self.job_id) else {

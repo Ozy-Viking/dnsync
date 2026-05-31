@@ -4,20 +4,45 @@ use tracing::trace;
 
 use crate::daemon::types::{HealthState, JobStatus};
 
-/// Return the worst `HealthState` from an iterator of states.
+/// Selects the worst (maximum) `HealthState` from an iterator of states.
 ///
-/// Returns `HealthState::Healthy` when the iterator is empty.
+/// If the iterator is empty, `HealthState::Healthy` is returned.
+///
+/// # Examples
+///
+/// ```
+/// let s = worst_state([HealthState::Healthy, HealthState::Degraded].into_iter());
+/// assert_eq!(s, HealthState::Degraded);
+///
+/// let empty = [].into_iter();
+/// assert_eq!(worst_state(empty), HealthState::Healthy);
+/// ```
 pub fn worst_state<I: Iterator<Item = HealthState>>(states: I) -> HealthState {
     states.max().unwrap_or(HealthState::Healthy)
 }
 
-/// Compute overall daemon health from a slice of job statuses.
+/// Determines the overall daemon `HealthState` from a list of job statuses.
 ///
-/// Rules (applied in order):
-/// 1. If there are no enabled jobs → `Healthy`
-/// 2. If ALL critical jobs have `consecutive_failures >= threshold` → `Fatal`
-///    (only when there is at least one critical job)
-/// 3. Otherwise → worst `HealthState` across all enabled jobs
+/// Applies these rules in order:
+/// 1. If there are no enabled jobs, the overall state is `HealthState::Healthy`.
+/// 2. If there is at least one critical enabled job, and every critical enabled job has
+///    `consecutive_failures >= critical_threshold` (and `critical_threshold > 0`), the overall
+///    state is `HealthState::Fatal`.
+/// 3. Otherwise the overall state is the worst (`max`) `HealthState` among all enabled jobs.
+///
+/// Returns the computed overall `HealthState`.
+///
+/// # Examples
+///
+/// ```
+/// # use crate::daemon::{aggregate_daemon_health, JobStatus, HealthState};
+/// let jobs = [
+///     JobStatus { enabled: true, critical: true, consecutive_failures: 0, state: HealthState::Healthy },
+///     JobStatus { enabled: true, critical: false, consecutive_failures: 3, state: HealthState::Degraded },
+/// ];
+/// let overall = aggregate_daemon_health(&jobs, 3);
+/// assert_eq!(overall, HealthState::Degraded);
+/// ```
 pub fn aggregate_daemon_health(jobs: &[JobStatus], critical_threshold: u32) -> HealthState {
     let enabled: Vec<&JobStatus> = jobs.iter().filter(|j| j.enabled).collect();
 
@@ -60,6 +85,18 @@ mod tests {
     use super::*;
     use crate::daemon::types::{HealthState, JobKind, JobStatus};
 
+    /// Constructs an enabled `JobStatus` with the provided identifier, health state, critical flag, and consecutive failure count.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let job = make_job("sync", HealthState::Degraded, true, 3);
+    /// assert_eq!(job.job_id, "sync");
+    /// assert!(job.enabled);
+    /// assert_eq!(job.state, HealthState::Degraded);
+    /// assert_eq!(job.consecutive_failures, 3);
+    /// assert!(job.critical);
+    /// ```
     fn make_job(id: &str, state: HealthState, critical: bool, failures: u32) -> JobStatus {
         JobStatus {
             job_id: id.to_string(),
@@ -71,6 +108,21 @@ mod tests {
         }
     }
 
+    /// Creates a disabled, critical `JobStatus` preset for use in tests.
+    ///
+    /// The returned `JobStatus` has `enabled == false`, `critical == true`,
+    /// `state == HealthState::Fatal`, and a large `consecutive_failures` value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let j = make_disabled_job("job-1");
+    /// assert_eq!(j.job_id, "job-1");
+    /// assert!(!j.enabled);
+    /// assert!(j.critical);
+    /// assert_eq!(j.state, HealthState::Fatal);
+    /// assert!(j.consecutive_failures >= 99);
+    /// ```
     fn make_disabled_job(id: &str) -> JobStatus {
         JobStatus {
             job_id: id.to_string(),

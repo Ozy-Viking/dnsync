@@ -178,6 +178,18 @@ pub enum Command {
 }
 
 impl Command {
+    /// Get the canonical command name for this `Command` variant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cmd = Command::Mcp;
+    /// assert_eq!(cmd.name(), "mcp");
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The canonical command name as a static string.
     pub fn name(&self) -> &'static str {
         match self {
             Command::Config(_) => "config",

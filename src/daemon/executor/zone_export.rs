@@ -25,6 +25,29 @@ pub struct ZoneExportExecutor {
 
 #[async_trait::async_trait]
 impl JobExecutor for ZoneExportExecutor {
+    /// Stub executor for ZoneExport jobs that always returns a failure indicating the feature is not implemented.
+    ///
+    /// Returns a tuple containing `JobOutcome::Failure { error: "ZoneExport not yet implemented".to_string() }` and `Duration::ZERO`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use crate::daemon::executor::ZoneExportExecutor;
+    /// # use crate::control_plane::config::AppConfig;
+    /// # use crate::daemon::executor::{JobOutcome, JobContext};
+    /// # // The following example is illustrative; constructing `AppConfig` and `JobContext` depends on the surrounding crate.
+    /// # tokio_test::block_on(async {
+    /// let exec = ZoneExportExecutor { config: AppConfig::default(), job_id: "example-job".into() };
+    /// let (outcome, dur) = exec.execute(&JobContext::default()).await;
+    /// if let JobOutcome::Failure { error } = outcome {
+    ///     assert_eq!(error, "ZoneExport not yet implemented");
+    ///     assert_eq!(dur, Duration::ZERO);
+    /// } else {
+    ///     panic!("expected failure outcome");
+    /// }
+    /// # });
+    /// ```
     #[instrument(skip_all, fields(job_id = %self.job_id))]
     async fn execute(&self, _ctx: &JobContext) -> (JobOutcome, Duration) {
         // TODO: Implement zone export once control_plane::export exists.
