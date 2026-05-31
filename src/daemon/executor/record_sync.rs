@@ -73,7 +73,7 @@ impl JobExecutor for RecordSyncExecutor {
             .map(|(k, v)| format!("{k}={v}"))
             .collect();
 
-        let apply = !ctx.dry_run;
+        let apply = !ctx.dry_run && !job.dry_run;
 
         let ignore_patterns: Vec<regex::Regex> = job
             .ignore
@@ -101,20 +101,10 @@ impl JobExecutor for RecordSyncExecutor {
         .await;
         let elapsed = start.elapsed();
 
-        if !apply {
-            info!(job_id = %self.job_id, run_id = %ctx.run_id, duration_ms = elapsed.as_millis(), "RecordSync dry run complete");
-            return (JobOutcome::DryRun, elapsed);
-        }
-
         match result {
             Err(e) => {
                 warn!(job_id = %self.job_id, run_id = %ctx.run_id, error = %e, duration_ms = elapsed.as_millis(), "RecordSync failed");
-                (
-                    JobOutcome::Failure {
-                        error: e.to_string(),
-                    },
-                    elapsed,
-                )
+                (JobOutcome::Failure { error: e.to_string() }, elapsed)
             }
             Ok(value) => {
                 if value.get("error").is_some() {
@@ -123,12 +113,10 @@ impl JobExecutor for RecordSyncExecutor {
                         .unwrap_or("unknown error")
                         .to_string();
                     warn!(job_id = %self.job_id, run_id = %ctx.run_id, error = %error_msg, duration_ms = elapsed.as_millis(), "RecordSync returned error in result");
-                    (
-                        JobOutcome::Failure {
-                            error: error_msg,
-                        },
-                        elapsed,
-                    )
+                    (JobOutcome::Failure { error: error_msg }, elapsed)
+                } else if !apply {
+                    info!(job_id = %self.job_id, run_id = %ctx.run_id, duration_ms = elapsed.as_millis(), "RecordSync dry run complete");
+                    (JobOutcome::DryRun, elapsed)
                 } else {
                     info!(job_id = %self.job_id, run_id = %ctx.run_id, duration_ms = elapsed.as_millis(), "RecordSync completed successfully");
                     (JobOutcome::Success, elapsed)
