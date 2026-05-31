@@ -39,7 +39,8 @@ pub fn aggregate_daemon_health(jobs: &[JobStatus], critical_threshold: u32) -> H
         critical_threshold,
         "checking critical job escalation"
     );
-    if !critical_jobs.is_empty()
+    if critical_threshold > 0
+        && !critical_jobs.is_empty()
         && critical_jobs
             .iter()
             .all(|j| j.consecutive_failures >= critical_threshold)
@@ -146,6 +147,15 @@ mod tests {
         let result = aggregate_daemon_health(&jobs, 5);
         // Should be Degraded (worst state), not Fatal
         assert_eq!(result, HealthState::Degraded);
+    }
+
+    #[test]
+    fn test_zero_threshold_never_fatal() {
+        // When critical_threshold == 0, no job should ever produce Fatal.
+        let jobs = vec![make_job("a", HealthState::Healthy, true, 0)];
+        let result = aggregate_daemon_health(&jobs, 0);
+        assert_ne!(result, HealthState::Fatal, "threshold=0 should never be Fatal");
+        assert_eq!(result, HealthState::Healthy);
     }
 
     #[test]

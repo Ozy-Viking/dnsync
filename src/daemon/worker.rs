@@ -5,6 +5,7 @@
 //!                                                         ↓
 //!                                               db_write_tx (mpsc) → DB writer task → DaemonStateStore
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -54,6 +55,8 @@ pub async fn spawn_workers(
 
         tokio::spawn(async move {
             debug!(worker_id, "worker started");
+            // Track consecutive_failures per job_id within this worker.
+            let mut worker_failures: HashMap<String, i32> = HashMap::new();
             loop {
                 trace!(worker_id, "worker waiting for job");
                 let trigger = {
@@ -87,7 +90,7 @@ pub async fn spawn_workers(
                     run_id: run_id.clone(),
                     job_id: job_id.clone(),
                     trigger: trigger.trigger_kind,
-                    dry_run: false,
+                    dry_run: trigger.dry_run,
                 };
 
                 let (outcome, duration) = executor.execute(&ctx).await;
@@ -129,8 +132,16 @@ pub async fn spawn_workers(
                 };
 
                 let (current_state, consecutive_failures) = match &outcome {
-                    JobOutcome::Success | JobOutcome::DryRun => ("healthy".to_string(), 0),
-                    JobOutcome::Failure { .. } => ("degraded".to_string(), 1),
+                    JobOutcome::Success | JobOutcome::DryRun => {
+                        worker_failures.insert(job_id.clone(), 0);
+                        ("healthy".to_string(), 0)
+                    }
+                    JobOutcome::Failure { .. } => {
+                        let prev = worker_failures.get(&job_id).copied().unwrap_or(0);
+                        let new_count = prev + 1;
+                        worker_failures.insert(job_id.clone(), new_count);
+                        ("degraded".to_string(), new_count)
+                    }
                 };
 
                 let job_status = JobStatusRow {
@@ -176,10 +187,10 @@ pub async fn spawn_workers(
 ///
 /// Processes `DbWriteRequest` messages serially, ensuring single-writer
 /// access to SQLite.
-pub async fn spawn_db_writer(
+pub fn spawn_db_writer(
     store: DaemonStateStore,
     mut db_write_rx: mpsc::Receiver<DbWriteRequest>,
-) {
+) -> tokio::task::JoinHandle<()> {
     // Wrap in Arc so it can be cloned into each spawn_blocking call.
     let store = Arc::new(store);
 
@@ -208,7 +219,7 @@ pub async fn spawn_db_writer(
             }
         }
         debug!("DB writer task: channel closed, exiting");
-    });
+    })
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
@@ -314,6 +325,7 @@ mod tests {
             job_id: "test-job".to_string(),
             scheduled_at: Utc::now(),
             trigger_kind: TriggerKind::Manual,
+            dry_run: false,
         };
 
         job_tx.send(trigger).await.expect("should send trigger");
@@ -344,11 +356,13 @@ mod tests {
             job_id: "job-a".to_string(),
             scheduled_at: Utc::now(),
             trigger_kind: TriggerKind::Scheduled,
+            dry_run: false,
         };
         let trigger2 = JobTrigger {
             job_id: "job-b".to_string(),
             scheduled_at: Utc::now(),
             trigger_kind: TriggerKind::Scheduled,
+            dry_run: false,
         };
 
         // First send fills the queue (capacity=1, no receiver consuming).

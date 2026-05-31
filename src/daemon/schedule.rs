@@ -69,9 +69,28 @@ fn try_parse_interval(input: &str) -> Result<Option<String>, String> {
         's' => Err(format!(
             "interval '{input}' is below the minimum of 1 minute"
         )),
-        'm' => Ok(Some(format!("0 */{n} * * * *"))),
-        'h' => Ok(Some(format!("0 0 */{n} * * *"))),
+        'm' => {
+            if n > 59 {
+                return Err(format!(
+                    "interval '{input}' exceeds maximum of 59 minutes"
+                ));
+            }
+            Ok(Some(format!("0 */{n} * * * *")))
+        }
+        'h' => {
+            if n > 23 {
+                return Err(format!(
+                    "interval '{input}' exceeds maximum of 23 hours"
+                ));
+            }
+            Ok(Some(format!("0 0 */{n} * * *")))
+        }
         'd' => {
+            if n > 31 {
+                return Err(format!(
+                    "interval '{input}' exceeds maximum of 31 days"
+                ));
+            }
             if n == 1 {
                 Ok(Some("0 0 0 * * *".to_string()))
             } else {
@@ -162,6 +181,24 @@ mod tests {
         // Invalid cron expression (out-of-range field)
         let err2 = parse_schedule("99 * * * *").unwrap_err();
         assert!(!err2.is_empty(), "expected an error for invalid cron");
+    }
+
+    #[test]
+    fn test_interval_too_many_minutes_errors() {
+        let err = parse_schedule("90m").unwrap_err();
+        assert!(
+            err.contains("exceeds maximum of 59 minutes"),
+            "expected 'exceeds maximum of 59 minutes' in: {err}"
+        );
+    }
+
+    #[test]
+    fn test_interval_too_many_hours_errors() {
+        let err = parse_schedule("25h").unwrap_err();
+        assert!(
+            err.contains("exceeds maximum of 23 hours"),
+            "expected 'exceeds maximum of 23 hours' in: {err}"
+        );
     }
 
     #[test]

@@ -441,6 +441,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
             map,
             *apply,
             *json,
+            sync::SyncDiffOptions::default(),
         )
         .await?;
         return Ok(());

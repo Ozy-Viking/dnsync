@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS job_runs (
     error_summary TEXT,
     duration_ms INTEGER
 );
+
+CREATE INDEX IF NOT EXISTS idx_job_runs_job_id_started_at
+ON job_runs(job_id, started_at DESC);
 ";
 
 /// Runs all schema migrations on an open connection.

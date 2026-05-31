@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, warn};
 
 use crate::control_plane::config::AppConfig;
-use crate::control_plane::sync::run_sync_json;
+use crate::control_plane::sync::{SyncDiffOptions, run_sync_json};
 
 use super::{JobContext, JobExecutor, JobOutcome};
 
@@ -51,6 +51,18 @@ impl JobExecutor for ZoneSyncExecutor {
 
         let apply = !ctx.dry_run;
 
+        let ignore_patterns: Vec<regex::Regex> = job
+            .ignore
+            .iter()
+            .filter_map(|p| regex::Regex::new(p).ok())
+            .collect();
+        let diff_opts = SyncDiffOptions {
+            create_missing: job.create_missing,
+            overwrite_existing: job.overwrite_existing,
+            delete_destination_only: job.delete_destination_only,
+            ignore: ignore_patterns,
+        };
+
         let start = Instant::now();
         let result = run_sync_json(
             Some(&self.config),
@@ -60,6 +72,7 @@ impl JobExecutor for ZoneSyncExecutor {
             &job.zones,
             &ip_map_vec,
             apply,
+            diff_opts,
         )
         .await;
         let elapsed = start.elapsed();

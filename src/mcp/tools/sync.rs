@@ -20,7 +20,7 @@ pub async fn handle_sync(
     {
         Err(crate::core::error::Error::policy_violation(
             "MCP sync with zone allowlists requires explicit zones",
-            "Pass `zones` in the tool call or configure zones on the selected sync profile.",
+            "Pass `zones`, `from`, and `to` in the tool call.",
         ))
     } else {
         effective_zones
@@ -41,6 +41,7 @@ pub async fn handle_sync(
             &p.zones,
             &p.map,
             p.apply,
+            crate::control_plane::sync::SyncDiffOptions::default(),
         )
         .await
     })

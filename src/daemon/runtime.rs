@@ -94,7 +94,7 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
     // ── 2. Spawn DB writer task ───────────────────────────────────────────────
     let (db_write_tx, db_write_rx) = mpsc::channel::<DbWriteRequest>(256);
     info!("starting DB writer task");
-    spawn_db_writer(DaemonStateStore::new(db::open(&db_path)?), db_write_rx).await;
+    let db_writer_handle = spawn_db_writer(DaemonStateStore::new(db::open(&db_path)?), db_write_rx);
 
     // ── 3. Write startup health row ───────────────────────────────────────────
     let jobs_total = config.jobs.len() as i32;
@@ -207,9 +207,16 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
             job_id: job.id.clone(),
             scheduled_at: Utc::now(),
             trigger_kind: TriggerKind::Scheduled,
+            dry_run: job.dry_run,
         };
-        if let Err(e) = job_tx.send(trigger).await {
-            warn!(job_id = %job.id, error = %e, "failed to send immediate trigger");
+        match job_tx.try_send(trigger) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                warn!(job_id = %job.id, "run_immediately trigger dropped — queue full");
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                info!(job_id = %job.id, "job channel closed — stopping scheduler");
+            }
         }
     }
 
@@ -270,13 +277,27 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
                 info!(job_id = %next_job.id, scheduled_at = %fire_time, "triggering scheduled job");
+                let dry_run = config_arc
+                    .jobs
+                    .iter()
+                    .find(|j| j.id == next_job.id)
+                    .map(|j| j.dry_run)
+                    .unwrap_or(false);
                 let trigger = JobTrigger {
                     job_id: next_job.id.clone(),
                     scheduled_at: fire_time,
                     trigger_kind: TriggerKind::Scheduled,
+                    dry_run,
                 };
-                if let Err(e) = job_tx.send(trigger).await {
-                    warn!(job_id = %next_job.id, error = %e, "job queue full — trigger dropped");
+                match job_tx.try_send(trigger) {
+                    Ok(()) => {}
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        warn!(job_id = %next_job.id, "job queue full — trigger dropped");
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        info!(job_id = %next_job.id, "job channel closed — stopping scheduler");
+                        break;
+                    }
                 }
             }
             _ = cancel.cancelled() => {
@@ -305,6 +326,10 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+
+    // Drop db_write_tx so the DB writer task drains and exits, then await it.
+    drop(db_write_tx);
+    let _ = db_writer_handle.await;
 
     // Update daemon health to "stopped".
     let stopped_health = DaemonHealthRow {

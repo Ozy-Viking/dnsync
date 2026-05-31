@@ -126,7 +126,7 @@ impl DaemonStateStore {
 
         let rows = job_runs::table
             .filter(job_runs::job_id.eq(job_id))
-            .order(job_runs::started_at.desc())
+            .order((job_runs::started_at.desc(), job_runs::run_id.desc()))
             .limit(limit as i64)
             .load::<JobRunRow>(&mut conn)
             .map_err(|e| format!("load_job_runs failed: {e}"))?;

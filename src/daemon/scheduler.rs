@@ -30,6 +30,8 @@ pub struct JobTrigger {
     /// The cron tick time (before jitter is applied).
     pub scheduled_at: DateTime<Utc>,
     pub trigger_kind: crate::daemon::types::TriggerKind,
+    /// Whether the job should run in dry-run mode (no writes).
+    pub dry_run: bool,
 }
 
 /// Compute the next fire time for `job` strictly after `after`.

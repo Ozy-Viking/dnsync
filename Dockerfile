@@ -38,7 +38,7 @@ USER dnsync
 ENV DNSYNC_STATE_DB=/var/lib/dnsync/state.db
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD dnsync healthcheck || exit 1
+    CMD dnsync healthcheck --config /etc/dnsync/config.toml || exit 1
 
 ENTRYPOINT ["dnsync"]
 CMD ["daemon", "--config", "/etc/dnsync/config.toml"]

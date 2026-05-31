@@ -46,7 +46,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/dnsync
+StateDirectory=dnsync
 RuntimeDirectory=dnsync
 RuntimeDirectoryMode=0750
 

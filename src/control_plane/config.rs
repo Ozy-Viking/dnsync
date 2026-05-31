@@ -1482,8 +1482,18 @@ fn validate_jobs(jobs: &[JobConfig], server_ids: &HashSet<String>) -> Result<()>
             )));
         }
 
-        // Exactly one of schedule / interval.
-        match (job.schedule.is_some(), job.interval.is_some()) {
+        // Exactly one of schedule / interval (whitespace-only strings count as absent).
+        let has_schedule = job
+            .schedule
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let has_interval = job
+            .interval
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        match (has_schedule, has_interval) {
             (true, true) => {
                 return Err(Error::config(format!(
                     "job '{}' specifies both 'schedule' and 'interval'; use only one",

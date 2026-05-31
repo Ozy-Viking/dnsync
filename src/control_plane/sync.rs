@@ -120,10 +120,11 @@ pub async fn run_sync(
     maps: &[String],
     apply: bool,
     json: bool,
+    diff_opts: SyncDiffOptions,
 ) -> Result<()> {
     debug!("building sync plan");
     let (from_id, to_id, plans) =
-        build_sync_plan(app_config, profile, from, to, zones, maps).await?;
+        build_sync_plan(app_config, profile, from, to, zones, maps, diff_opts).await?;
     debug!(from = %from_id, to = %to_id, plan_count = plans.len(), "sync plan built");
 
     if json {
@@ -169,9 +170,10 @@ pub async fn run_sync_json(
     zones: &[String],
     maps: &[String],
     apply: bool,
+    diff_opts: SyncDiffOptions,
 ) -> Result<serde_json::Value> {
     let (from_id, to_id, plans) =
-        build_sync_plan(app_config, profile, from, to, zones, maps).await?;
+        build_sync_plan(app_config, profile, from, to, zones, maps, diff_opts).await?;
     let mut out = sync_plan_json(&from_id, &to_id, &plans, apply);
 
     let has_changes = plans
@@ -201,6 +203,7 @@ async fn build_sync_plan(
     to: Option<&str>,
     zones: &[String],
     maps: &[String],
+    diff_opts: SyncDiffOptions,
 ) -> Result<(String, String, Vec<ZonePlan>)> {
     let Some(cfg) = app_config else {
         return Err(Error::config(
@@ -264,11 +267,9 @@ async fn build_sync_plan(
     };
 
     debug!(zone_count = zone_list.len(), "resolved zone list");
-
-    let sync_opts = SyncDiffOptions::default();
     let mut plans = Vec::with_capacity(zone_list.len());
     for zone in &zone_list {
-        plans.push(plan_zone(&from_client, &to_client, zone, &ip_map, &sync_opts).await?);
+        plans.push(plan_zone(&from_client, &to_client, zone, &ip_map, &diff_opts).await?);
     }
 
     Ok((from_id.to_string(), to_id.to_string(), plans))
@@ -352,7 +353,14 @@ where
         deletes.extend(diff.update_deletes);
     }
     if sync_opts.delete_destination_only {
-        deletes.extend(diff.destination_only.iter().cloned());
+        // Filter destination-only records through the same ignore patterns.
+        let dest_only = diff
+            .destination_only
+            .iter()
+            .filter(|r| !sync_opts.ignore.iter().any(|pat| pat.is_match(&r.fqdn)))
+            .cloned()
+            .collect::<Vec<_>>();
+        deletes.extend(dest_only);
     }
 
     let untouched = if sync_opts.delete_destination_only {
