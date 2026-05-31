@@ -3228,6 +3228,7 @@ mod tests {
 
     // ── jobs ─────────────────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     fn two_server_config() -> &'static str {
         r#"
             [[servers]]
