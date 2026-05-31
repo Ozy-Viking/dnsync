@@ -273,19 +273,16 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
         };
 
         let store_run = Arc::clone(&store);
-        if let Err(e) = tokio::task::spawn_blocking(move || store_run.append_job_run(job_run))
+        tokio::task::spawn_blocking(move || store_run.append_job_run(job_run))
             .await
             .unwrap_or_else(|e| Err(format!("spawn_blocking panicked: {e}")))
-        {
-            tracing::warn!(error = %e, "failed to persist job run to DB");
-        }
+            .map_err(|e| format!("failed to persist job run to DB: {e}"))?;
+
         let store_status = Arc::clone(&store);
-        if let Err(e) = tokio::task::spawn_blocking(move || store_status.save_job_status(job_status))
+        tokio::task::spawn_blocking(move || store_status.save_job_status(job_status))
             .await
             .unwrap_or_else(|e| Err(format!("spawn_blocking panicked: {e}")))
-        {
-            tracing::warn!(error = %e, "failed to persist job status to DB");
-        }
+            .map_err(|e| format!("failed to persist job status to DB: {e}"))?;
     }
 
     Ok(outcome)
