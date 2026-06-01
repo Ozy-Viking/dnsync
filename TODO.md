@@ -103,3 +103,11 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
       `field_reassign_with_default`, `useless_conversion` in `worker.rs`/
       `pihole/mapping.rs`) remains; the modularization did not introduce new
       warnings but a separate `-D warnings` cleanup pass is still needed.
+
+### Review follow-ups (PR #53)
+
+- [x] Wire SIGTERM to the daemon cancellation token for graceful container shutdown.
+- [x] Paginate zone enumeration by raw page size (`list_all_zone_names`) instead of
+      a single `list_zones(1, 1000)` page / filtered-name count.
+- [x] Count ignored destination-only records as `untouched` under `--delete-destination-only`.
+- [x] Relayer Cloudflare transport defaults into `vendors::cloudflare::apply_transport_defaults`.
