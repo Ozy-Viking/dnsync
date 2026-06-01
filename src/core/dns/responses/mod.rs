@@ -1,4 +1,4 @@
-//! Typed response structs for Technitium API responses.
+//! Vendor-neutral typed response structs for DNS list/record responses.
 //!
 //! `RecordData` in types.rs covers records you can *add or delete*.
 //! `ReadOnlyRecordData` here covers records that are server-managed and
@@ -8,7 +8,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::dns::records::{DsAlgorithm, RecordData};
-use crate::core::error::{Error, Result};
 
 // ─── Read-only DNSSEC record data ─────────────────────────────────────────────
 
@@ -207,46 +206,15 @@ impl ListRecordsResponse {
             zones: vec![ZoneRecords { zone, records }],
         }
     }
-
-    /// Parse the raw Technitium API JSON into a typed response, populating
-    /// `parsed` on each record where the type is recognised.
-    pub fn from_value(value: &serde_json::Value) -> Result<Self> {
-        let response = value
-            .get("response")
-            .ok_or_else(|| Error::parse("list_records response missing 'response' key"))?;
-
-        let mut zone: ZoneInfo = serde_json::from_value(
-            response
-                .get("zone")
-                .ok_or_else(|| Error::parse("list_records response missing 'response.zone'"))?
-                .clone(),
-        )
-        .map_err(|e| Error::parse(format!("could not deserialize zone info: {e}")))?;
-        if zone.id.is_none() {
-            zone.id = Some(zone.name.clone());
-        }
-
-        let raw_records = response
-            .get("records")
-            .and_then(|r| r.as_array())
-            .ok_or_else(|| {
-                Error::parse("list_records response missing 'response.records' array")
-            })?;
-
-        let records = raw_records
-            .iter()
-            .filter_map(|r| {
-                let mut record: ZoneRecord = serde_json::from_value(r.clone()).ok()?;
-                record.parsed = parse_record_data(&record.record_type, &record.data);
-                Some(record)
-            })
-            .collect();
-
-        Ok(Self::single(zone, records))
-    }
 }
 
-fn parse_record_data(record_type: &str, rdata: &serde_json::Value) -> Option<AnyRecordData> {
+/// Decode a record's `rdata` value (paired with its `record_type`) into a typed
+/// [`AnyRecordData`]. Vendor-neutral: vendors normalise their payloads into the
+/// `data` field, then this reconstructs the tagged value serde expects.
+pub(crate) fn parse_record_data(
+    record_type: &str,
+    rdata: &serde_json::Value,
+) -> Option<AnyRecordData> {
     // Reconstruct the tagged value that serde expects for RecordData / ReadOnlyRecordData
     let mut tagged = rdata.clone();
     if let Some(obj) = tagged.as_object_mut() {
