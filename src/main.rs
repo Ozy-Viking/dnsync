@@ -26,10 +26,12 @@ fn main() {}
     feature = "pihole"
 ))]
 use dnslib::{
-    cli::{self, RecordCmd, ZoneCmd},
+    cli::{self, JobCmd, RecordCmd, ZoneCmd},
     control_plane::config::AppConfig,
     control_plane::{app, config, policy, sync, transfer},
     core::{dns::service::DnsService, error},
+    daemon::commands as daemon_commands,
+    daemon::runtime as daemon_runtime,
     mcp::server,
     vendors::runtime::{ClientOverrides, VendorClient},
 };
@@ -40,6 +42,7 @@ use rmcp::ServiceExt;
 use tracing::{info, instrument, trace};
 
 use cli::{Cli, Command, ConfigCmd, ServerEndpointCmd};
+use dnslib::daemon::executor::JobOutcome;
 use error::{Error, Result};
 use policy::Policy;
 #[cfg(any(
@@ -77,14 +80,39 @@ async fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// Dispatches CLI commands and executes the corresponding application actions.
+///
+/// This function is the main command dispatcher used by the CLI. It inspects the
+/// provided `Cli` command and performs the requested operation, including:
+/// - generating shell completions and printing configured server IDs,
+/// - running queries and configuration subcommands (init, print, update, add, server),
+/// - running daemon-related commands (daemon runtime, job list/run, healthcheck),
+/// - starting the MCP server,
+/// - performing cross-server record listing, zone transfer, and sync operations,
+/// - and constructing a vendor client for single-server commands before delegating
+///   to the command runner.
+///
+/// Errors encountered while handling a command are returned as `Error`; some
+/// terminal conditions intentionally call `std::process::exit` (for example,
+/// query exit codes and failing job outcomes).
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use crate::Cli;
+/// # async fn _example() -> Result<(), Box<dyn std::error::Error>> {
+/// let cli = Cli::parse(); // build from program args in a real invocation
+/// run_inner(cli).await?;
+/// # Ok(()) }
+/// ```
 #[instrument(
-    level = "trace",
-    skip_all,
-    fields(
-        command = ?cli.command.name(),
-        verbose = cli.verbose,
-        quiet = cli.quiet,
-    )
+level = "trace",
+skip_all,
+fields(
+command = ?cli.command.name(),
+verbose = cli.verbose,
+quiet = cli.quiet,
+)
 )]
 async fn run_inner(cli: Cli) -> Result<()> {
     trace!("starting run");
@@ -251,6 +279,80 @@ async fn run_inner(cli: Cli) -> Result<()> {
         };
     }
 
+    // ── Daemon commands — need app config but NOT a single-server client ─────
+    if let Command::Daemon = cli.command {
+        let cfg = config::AppConfig::load(cli.config.clone())?
+            .unwrap_or_default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        daemon_runtime::run(cfg, cancel)
+            .await
+            .map_err(|e| error::Error::config(e))?;
+        return Ok(());
+    }
+
+    if let Command::Job(ref job_cmd) = cli.command {
+        let cfg = config::AppConfig::load(cli.config.clone())?
+            .unwrap_or_default();
+        match job_cmd {
+            JobCmd::List => {
+                let summaries = daemon_commands::list_jobs(&cfg)
+                    .await
+                    .map_err(|e| error::Error::config(e))?;
+                if summaries.is_empty() {
+                    println!("No jobs configured.");
+                } else {
+                    println!("{:<24} {:<14} {:<8} {:<12} {:<6}  {}", "JOB ID", "KIND", "ENABLED", "STATE", "FAILS", "LAST RUN");
+                    println!("{}", "-".repeat(90));
+                    for s in &summaries {
+                        println!(
+                            "{:<24} {:<14} {:<8} {:<12} {:<6}  {}",
+                            s.job_id,
+                            s.kind,
+                            if s.enabled { "yes" } else { "no" },
+                            s.state,
+                            s.consecutive_failures,
+                            s.last_run_at.as_deref().unwrap_or("never"),
+                        );
+                    }
+                }
+                return Ok(());
+            }
+            JobCmd::Run { id } => {
+                let outcome = daemon_commands::run_job(&cfg, id)
+                    .await
+                    .map_err(|e| error::Error::config(e))?;
+                match outcome {
+                    JobOutcome::Success => println!("Job '{id}' completed successfully."),
+                    JobOutcome::DryRun => println!("Job '{id}' completed (dry run — no changes applied)."),
+                    JobOutcome::Failure { error: msg } => {
+                        eprintln!("Job '{id}' failed: {msg}");
+                        std::process::exit(1);
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+
+    if let Command::Healthcheck = cli.command {
+        let cfg = config::AppConfig::load_if_exists(cli.config.clone())?
+            .unwrap_or_default();
+        match daemon_commands::healthcheck(&cfg).await {
+            Ok(true) => {
+                println!("daemon is live and healthy");
+                return Ok(());
+            }
+            Ok(false) => {
+                eprintln!("daemon is not healthy");
+                std::process::exit(1);
+            }
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     let app_config = config::AppConfig::load(cli.config.clone())?;
 
     // MCP is handled before single-client resolution so the server can start
@@ -364,6 +466,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
             map,
             *apply,
             *json,
+            sync::SyncDiffOptions::default(),
         )
         .await?;
         return Ok(());

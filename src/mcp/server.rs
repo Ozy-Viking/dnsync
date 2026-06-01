@@ -46,7 +46,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// // Create a DnsServer from an AppConfig and CLI policy inputs.
     /// // (Fields shown here are illustrative; construct AppConfig/PolicyRule as appropriate in real code.)
     /// let config = AppConfig { servers: vec![] }; // or whatever constructor is available
@@ -100,7 +100,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use std::sync::Arc;
     /// # use crate::mcp::server::DnsServer;
     /// # use crate::config::AppConfig;
@@ -158,7 +158,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// use serde_json::json;
     ///
     /// let expected_shape = json!({
@@ -223,7 +223,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # async fn example(server: &crate::mcp::DnsServer) -> Result<(), crate::core::error::McpError> {
     /// let params = crate::mcp::ListZonesParams { server_id: "primary".into(), ..Default::default() };
     /// let result = server.dns_list_zones(crate::mcp::Parameters(params)).await?;
@@ -259,7 +259,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # async fn example(dns_server: &crate::mcp::server::DnsServer) -> Result<(), crate::core::error::McpError> {
     /// let params = crate::mcp::tools::zones::CreateZoneParams {
     ///     server_id: "primary-1".into(),
@@ -299,7 +299,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # async fn example(server: &crate::mcp::server::DnsServer) -> Result<(), crate::mcp::error::McpError> {
     /// use crate::mcp::params::ZoneParams;
     /// use crate::mcp::server::Parameters;
@@ -328,7 +328,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// // Example usage (async context):
     /// // dns_enable_zone(&server, Parameters(ZoneParams { server_id: "prod-dns".into(), zone: "example.com".into() })).await?;
     /// ```
@@ -350,7 +350,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// // Disable zone "example.com" on server "primary"
     /// let params = ZoneParams { server_id: "primary".into(), zone: "example.com".into() };
     /// let _res = dns_server.dns_disable_zone(Parameters(params)).await;
@@ -378,7 +378,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// use crate::mcp::params::ImportZoneFileParams;
     /// // construct params with `zone`, `content`, `overwrite_zone`, and `server_id`
     /// let params = ImportZoneFileParams { zone: "example.com".into(), content: "$ORIGIN example.com.\n...".into(), overwrite_zone: true, server_id: "primary".into() };
@@ -407,7 +407,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # async fn example(server: &crate::mcp::server::DnsServer) -> Result<(), crate::core::error::McpError> {
     /// use crate::mcp::tools::Parameters;
     /// use crate::mcp::params::ExportZoneFileParams;
@@ -477,7 +477,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// // Example (pseudo): call the tool with a server_id and domain.
     /// // let srv = DnsServer::new(...);
     /// // let params = ListRecordsParams { server_id: "primary".into(), domain: "example.com".into(), zone: None };
@@ -502,7 +502,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use crate::mcp::server::DnsServer;
     /// # use crate::mcp::params::{AddRecordParams, Record};
     /// # use crate::mcp::tools::Parameters;
@@ -538,7 +538,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # async fn example(srv: &DnsServer) {
     /// let params = DeleteRecordParams {
     ///     server_id: "primary".into(),
@@ -583,7 +583,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// // Async context required:
     /// // let params = Parameters(DomainParams { server_id: "primary".into(), domain: "".into() });
     /// // let result = dns_server.dns_list_cache(params).await?;
@@ -612,7 +612,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use crate::mcp::server::DnsServer;
     /// # use crate::mcp::params::DomainParams;
     /// # use crate::mcp::tools::Parameters;
@@ -644,7 +644,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use crate::mcp::server::DnsServer;
     /// # use crate::mcp::params::ServerScopeParams;
     /// # async fn example(server: &DnsServer) -> Result<(), crate::core::error::McpError> {
@@ -685,7 +685,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # async fn example(dns_server: &crate::mcp::server::DnsServer) {
     /// use crate::mcp::params::{Parameters, StatsParams};
     ///
@@ -719,7 +719,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use crate::mcp::server::DnsServer;
     /// # use crate::mcp::params::ServerScopeParams;
     /// # use crate::mcp::tools::Parameters;
@@ -751,7 +751,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use crate::mcp::params::DomainParams;
     /// # async fn example(server: &crate::mcp::server::DnsServer) {
     /// let params = DomainParams { server_id: "default".into(), domain: "example.com".into() };
@@ -779,7 +779,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use crate::mcp::server::DnsServer;
     /// # use crate::mcp::params::DomainParams;
     /// # use crate::mcp::tools::CallToolResult;
@@ -813,7 +813,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// // In an async context:
     /// let params = ServerScopeParams { server_id: "example-server".to_string() };
     /// let result = server.dns_list_allowed_zones(Parameters(params)).await;
@@ -836,7 +836,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// // Prepare parameters and call the tool
     /// let params = DomainParams { server_id: "prod".into(), domain: "example.com".into() };
     /// let result = dns_server.dns_add_allowed_zone(Parameters(params)).await?;
@@ -858,7 +858,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use crate::mcp::server::DnsServer;
     /// # use crate::mcp::params::DomainParams;
     /// # async fn example(srv: &DnsServer) {
@@ -888,7 +888,7 @@ impl DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # async fn example_usage(server: &crate::mcp::server::DnsServer) {
     /// use axum::extract::Parameters;
     /// use crate::mcp::params::ServerScopeParams;
@@ -970,34 +970,55 @@ impl DnsServer {
 
     // ── Sync ──────────────────────────────────────────────────────────────
 
+    /// Synchronize DNS records from one configured server to another.
+    ///
+    /// This tool requires both `from` and `to` server IDs to be provided in `SyncParams`;
+    /// named sync profiles are not used. By default the operation is a dry-run; set
+    /// `apply` in `SyncParams` to `true` to apply changes. If `from` or `to` is missing
+    /// the call fails with a parse-style configuration error indicating the missing argument.
+    ///
+    /// # Parameters
+    ///
+    /// - `p.from` and `p.to`: server IDs identifying the source and destination servers.
+    ///
+    /// # Returns
+    ///
+    /// A `CallToolResult` describing the sync outcome on success, or an `McpError` on failure.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Construct sync parameters (dry-run)
+    /// let params = crate::mcp::tools::sync::SyncParams {
+    ///     from: Some("source-server".into()),
+    ///     to: Some("dest-server".into()),
+    ///     apply: Some(false),
+    ///     ..Default::default()
+    /// };
+    /// // Call within an async context: `server.dns_sync(Parameters(params)).await?;`
+    /// ```
     #[tool(description = "Sync records between two configured servers. \
     Dry-run by default; set `apply` to true to write changes.")]
     async fn dns_sync(
         &self,
         Parameters(p): Parameters<SyncParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::debug!(tool = "dns_sync", from = ?p.from, to = ?p.to, profile = ?p.profile, apply = p.apply, "MCP tool invoked");
-        let profile = p.profile.as_deref().and_then(|name| {
-            self.config
-                .sync
-                .iter()
-                .find(|profile| profile.name.eq_ignore_ascii_case(name))
-        });
+        tracing::debug!(tool = "dns_sync", from = ?p.from, to = ?p.to, apply = p.apply, "MCP tool invoked");
+        // Named sync profiles have been superseded by [[jobs]]; `from` and `to`
+        // must now be specified explicitly.
         let from_id = p
             .from
             .as_deref()
-            .or_else(|| profile.map(|profile| profile.from.as_str()))
             .ok_or_else(|| {
                 mcp_err(crate::core::error::Error::parse(
-                    "sync requires a source server: name a profile or pass from",
+                    "sync requires a source server: pass from",
                 ))
             })?;
         let to_id =
             p.to.as_deref()
-                .or_else(|| profile.map(|profile| profile.to.as_str()))
                 .ok_or_else(|| {
                     mcp_err(crate::core::error::Error::parse(
-                        "sync requires a destination server: name a profile or pass to",
+                        "sync requires a destination server: pass to",
                     ))
                 })?;
         let (_, from_policy) = self.resolve_server(from_id).map_err(mcp_err)?;
@@ -1048,7 +1069,7 @@ impl ServerHandler for DnsServer {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// use std::sync::Arc;
     ///
     /// // Construct a server (example uses default/empty inputs for brevity).

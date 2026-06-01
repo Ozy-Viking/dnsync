@@ -1,0 +1,49 @@
+services:
+  dnsync:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: dnsync:latest
+    container_name: dnsync
+
+    restart: unless-stopped
+
+    # Mount your config file (read-only) and a named volume for the state DB.
+    volumes:
+      - ./config.toml:/etc/dnsync/config.toml:ro
+      - dnsync-state:/var/lib/dnsync
+
+    environment:
+      # Structured log output — set to debug for troubleshooting.
+      RUST_LOG: "dnsync=info,dnslib=info"
+      # Optional: override the state DB path.
+      # DNSYNC_STATE_DB: /var/lib/dnsync/state.db
+
+    # Docker will call `dnsync healthcheck` every 30 s.
+    # The daemon writes its health state to the SQLite state DB;
+    # the healthcheck command reads it and exits 0 (healthy) or 1 (unhealthy).
+    healthcheck:
+      test: ["CMD", "dnsync", "healthcheck", "--config", "/etc/dnsync/config.toml"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+    # Drop all Linux capabilities — dnsync only needs network access, not root.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  dnsync-state:
+    driver: local

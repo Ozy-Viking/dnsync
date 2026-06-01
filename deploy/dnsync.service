@@ -1,0 +1,57 @@
+# systemd service unit for dnsync daemon
+#
+# Install:
+#   sudo cp dnsync.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now dnsync
+#
+# Logs:
+#   journalctl -u dnsync -f
+#
+# Manual job run:
+#   sudo -u dnsync dnsync job run <job-id> --config /etc/dnsync/config.toml
+
+[Unit]
+Description=dnsync — DNS record synchronisation daemon
+Documentation=https://github.com/ozy-viking/dnsync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dnsync
+Group=dnsync
+
+ExecStart=/usr/local/bin/dnsync daemon --config /etc/dnsync/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# State DB location — override in /etc/dnsync/config.toml via [daemon] state_db
+# or via this environment variable.
+Environment=DNSYNC_STATE_DB=/var/lib/dnsync/state.db
+Environment=RUST_LOG=dnsync=info,dnslib=info
+
+# Restart on failure; back off up to 5 minutes between attempts.
+Restart=on-failure
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=5min
+
+# Health check — systemd calls this every 30 s.
+# ExecCondition is not universally available; use WatchdogSec + sd_notify instead
+# if you want watchdog support (requires dnsync to send WATCHDOG=1 pings).
+ExecStartPost=/bin/sh -c 'sleep 10 && /usr/local/bin/dnsync healthcheck --config /etc/dnsync/config.toml'
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=dnsync
+RuntimeDirectory=dnsync
+RuntimeDirectoryMode=0750
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

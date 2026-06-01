@@ -5,34 +5,44 @@ use crate::{
     mcp::{helpers::run_json, params::SyncParams},
 };
 
+/// Perform an MCP `dns_sync` tool call after validating read/write permissions and zone constraints.
+///
+/// If either `from_policy` or `to_policy` defines an allow-list of zones and the provided `p.zones` is empty,
+/// this function returns a policy violation error requiring explicit `zones` (and `from`/`to`) in the tool call.
+/// On success it executes the sync with the provided parameters and default `SyncDiffOptions`.
+///
+/// # Returns
+///
+/// `CallToolResult` with the tool execution outcome, or an `McpError` if policy checks fail.
+///
+/// # Examples
+///
+/// ```text
+/// # async fn example() {
+/// // Construct AppConfig, Policy, and SyncParams appropriately for your application.
+/// // let config = AppConfig::default();
+/// // let from_policy = Policy::allow_read(...);
+/// // let to_policy = Policy::allow_write(...);
+/// // let params = SyncParams { zones: vec!["example.com".into()], ..Default::default() };
+/// // let res = handle_sync(&config, &from_policy, &to_policy, params).await;
+/// # }
+/// ```
 pub async fn handle_sync(
     config: &AppConfig,
     from_policy: &Policy,
     to_policy: &Policy,
     p: SyncParams,
 ) -> Result<CallToolResult, McpError> {
-    let profile_zones = p
-        .profile
-        .as_deref()
-        .and_then(|name| {
-            config
-                .sync
-                .iter()
-                .find(|profile| profile.name.eq_ignore_ascii_case(name))
-        })
-        .map(|profile| profile.zones.as_slice())
-        .unwrap_or(&[]);
-    let effective_zones = if p.zones.is_empty() {
-        profile_zones
-    } else {
-        p.zones.as_slice()
-    };
+    // Named sync profiles have been superseded by [[jobs]]; zone resolution
+    // now relies solely on the explicit `zones` parameter or server allow-lists.
+    let _ = config; // config retained for future use
+    let effective_zones = p.zones.as_slice();
     let zone_check = if effective_zones.is_empty()
         && (from_policy.allowed_zones.is_some() || to_policy.allowed_zones.is_some())
     {
         Err(crate::core::error::Error::policy_violation(
             "MCP sync with zone allowlists requires explicit zones",
-            "Pass `zones` in the tool call or configure zones on the selected sync profile.",
+            "Pass `zones`, `from`, and `to` in the tool call.",
         ))
     } else {
         effective_zones
@@ -53,6 +63,7 @@ pub async fn handle_sync(
             &p.zones,
             &p.map,
             p.apply,
+            crate::control_plane::sync::SyncDiffOptions::default(),
         )
         .await
     })
