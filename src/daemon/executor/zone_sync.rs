@@ -80,7 +80,7 @@ impl JobExecutor for ZoneSyncExecutor {
         let ignore_patterns: Vec<regex::Regex> = job
             .ignore
             .iter()
-            .filter_map(|p| regex::Regex::new(p).ok())
+            .map(|p| regex::Regex::new(p).expect("ignore pattern was validated at config load"))
             .collect();
         let diff_opts = SyncDiffOptions {
             create_missing: job.create_missing,
