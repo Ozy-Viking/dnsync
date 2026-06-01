@@ -88,15 +88,28 @@ Expected shape:
 
 ```text
 src/cli/
-  mod.rs
+  mod.rs            Cli + Command (top-level arg types only)
+  commands.rs       subcommand enums (ConfigCmd, ZoneCmd, RecordCmd, ...)
   completions.rs
-  interactive.rs
+  interactive/      add/server wizards (wizards, prompts, display)
+  query/            `dns query` (args, plan, execute, result, output)
   records.rs
+  dispatch/         command dispatch invoked by main.rs
+    mod.rs          top-level routing
+    config_cmd.rs   config subcommand handling
+    daemon_cmd.rs   daemon / job / healthcheck
+    cross_server.rs record-list-across-servers, zone transfer
+    client_cmd.rs   single-client command execution
+    logs_time.rs    CLI time-argument parsing
 ```
 
-`cli/runner.rs` should not own DNS behaviour. Remove it if possible, or reduce it to trivial CLI-only helpers.
+`main.rs` is an entry point only: it parses the CLI, initialises tracing, and
+calls `cli::dispatch::run`. There is **no central `cli/runner.rs`** — its old
+responsibilities live in `cli::dispatch` (orchestration) and `core::dns`
+(resource operations).
 
-CLI code should not call vendor clients directly.
+CLI code should not call vendor clients directly. The CLI layer must not import
+`rmcp`; MCP startup goes through `mcp::server::serve_stdio`.
 
 ## `mcp/`
 
@@ -602,6 +615,48 @@ vendors/* imports reqwest
 core::dns imports shared traits/types/errors/secrets
 control_plane imports config/policy/context types
 ```
+
+### Accepted exception: `clap` derives in `core::dns`
+
+`core::dns::records` (`RecordData`, `RecordSelector`), `core::dns::zones`
+(`ZoneImportOptions`), and `core::dns::logs` (`LogLevel`) derive `clap` traits
+(`Subcommand`/`Args`/`ValueEnum`). These are the shared domain types the CLI
+parses directly; mirroring them with CLI-only arg types and `From` conversions
+would duplicate a 20+ variant enum for no runtime benefit. We deliberately keep
+the derives in `core` rather than duplicate the types. This is the *only*
+sanctioned `core/* imports clap` case — do not add new ones.
+
+## Module size and structure
+
+No source file should exceed **500 lines**. When one grows past that, convert it
+into a directory module (`foo.rs` → `foo/mod.rs`) and split it into submodules by
+responsibility, keeping `mod.rs` as the public surface.
+
+Conventions used across the tree:
+
+- Submodules pull shared imports/items from the parent via `use super::*;`, and
+  the parent re-exports them (`pub use sub::*;` for public API, `pub(crate) use
+  sub::*;` for internal helpers and shared imports).
+- Test modules move into a `tests.rs` (or a `tests/` directory split by area when
+  they exceed 500 lines). They use `use super::*;`.
+- A vendor `service.rs` splits by **trait impl** (one file per `impl Trait for
+  Client`) when it grows; a single trait impl cannot straddle files.
+- MCP tool handlers split by resource, each contributing a named `ToolRouter`
+  via `#[tool_router(router = .., vis = "pub(crate)")]`, combined in
+  `DnsServer::tool_router`.
+
+## Subsystems not covered above
+
+- `daemon/` — the sync daemon: runtime loop, scheduler, worker, job executors
+  (`executor/`), persistence (`db/`), commands, health. It depends on
+  `control_plane` and `core::dns`; it is not part of the CLI/MCP adapter layers.
+- `vendors/{unifi,pihole}` — additional vendor backends; same rules as the other
+  vendors.
+- `core::dns::{resolver,validation,names,capabilities}` — vendor-neutral DNS
+  transport resolution (DNS/DoT/DoH/DoQ), endpoint validation, name helpers, and
+  capability declarations.
+- `control_plane::transfer` — zone transfer between two configured servers.
+- `formatter` — tracing/log event formatting for the binary.
 
 ## Refactor method
 
