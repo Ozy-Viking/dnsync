@@ -23,16 +23,21 @@ pub fn client_from_server(
         .unwrap_or_else(|| app_config::PANGOLIN_DEFAULT_BASE_URL.to_string());
     let token = overrides
         .token
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("DNSYNC_PANGOLIN_API_TOKEN").ok())
-        .or_else(|| server.token_env.as_ref().and_then(|k| env::var(k).ok()))
+        .cloned()
+        .or_else(|| env::var("DNSYNC_PANGOLIN_API_TOKEN").ok().map(ApiToken::new))
+        .or_else(|| {
+            server
+                .token_env
+                .as_ref()
+                .and_then(|k| env::var(k).ok())
+                .map(ApiToken::new)
+        })
         .or_else(|| server.token.clone())
         .ok_or_else(|| {
             Error::parse(
                 "Pangolin API token is required from --token, DNSYNC_PANGOLIN_API_TOKEN, token_env, or config token",
             )
-        })
-        .map(ApiToken::new)?;
+        })?;
     let org_id = env::var("DNSYNC_PANGOLIN_ORG_ID")
         .ok()
         .or_else(|| server.org_id.clone())

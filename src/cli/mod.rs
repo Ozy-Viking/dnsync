@@ -9,6 +9,7 @@ use clap_complete::Shell;
 use std::path::PathBuf;
 
 use crate::control_plane::policy::PolicyRule;
+use crate::core::secret::ApiToken;
 
 // ─── Top-level CLI ───────────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ pub struct Cli {
 
     /// API token override for the selected command only
     #[arg(long)]
-    pub token: Option<String>,
+    pub token: Option<ApiToken>,
 
     /// MCP only: allowed operations (comma-separated: read,write,delete); defaults to all if omitted
     #[arg(long, env = "DNS_ACCESS", value_enum, value_delimiter = ',', num_args = 0..)]
@@ -254,7 +255,7 @@ pub enum ConfigCmd {
 
         /// API token literal — stored in plain text in the config file; prefer --token-env
         #[arg(long)]
-        token: Option<String>,
+        token: Option<ApiToken>,
 
         /// Organisation ID (Pangolin only)
         #[arg(long)]

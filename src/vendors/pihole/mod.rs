@@ -23,16 +23,21 @@ pub fn client_from_server(
 
     let password = overrides
         .token
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("DNSYNC_PIHOLE_PASSWORD").ok())
-        .or_else(|| server.token_env.as_ref().and_then(|k| env::var(k).ok()))
+        .cloned()
+        .or_else(|| env::var("DNSYNC_PIHOLE_PASSWORD").ok().map(ApiToken::new))
+        .or_else(|| {
+            server
+                .token_env
+                .as_ref()
+                .and_then(|k| env::var(k).ok())
+                .map(ApiToken::new)
+        })
         .or_else(|| server.token.clone())
         .ok_or_else(|| {
             Error::parse(
                 "Pi-hole password is required from --token, DNSYNC_PIHOLE_PASSWORD, token_env, or config token",
             )
-        })
-        .map(ApiToken::new)?;
+        })?;
 
     client::PiholeClient::new(base_url, password)
 }
@@ -90,7 +95,7 @@ mod tests {
         let client = client_from_server(
             server,
             ClientOverrides {
-                token: Some("cli-password"),
+                token: Some(&ApiToken::new("cli-password")),
                 ..ClientOverrides::default()
             },
         )

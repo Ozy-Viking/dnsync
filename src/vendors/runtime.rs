@@ -12,11 +12,22 @@ use crate::core::dns::service::{
 };
 use crate::core::error::{Error, Result};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ClientOverrides<'a> {
     pub selected_server: Option<&'a str>,
     pub base_url: Option<&'a str>,
-    pub token: Option<&'a str>,
+    pub token: Option<&'a crate::core::secret::ApiToken>,
+}
+
+impl std::fmt::Debug for ClientOverrides<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientOverrides")
+            .field("selected_server", &self.selected_server)
+            .field("base_url", &self.base_url)
+            // Never print the override token (e.g. from `--token`).
+            .field("token", &self.token.map(|_| crate::core::secret::REDACTED))
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -426,7 +437,7 @@ mod tests {
         let client = VendorClient::from_cli_options(
             None,
             ClientOverrides {
-                token: Some("token"),
+                token: Some(&crate::core::secret::ApiToken::new("token")),
                 ..ClientOverrides::default()
             },
         )

@@ -449,7 +449,7 @@ pub struct DnsServerConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url_env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
+    pub token: Option<ApiToken>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -490,7 +490,7 @@ struct DnsServerConfigRaw {
     #[serde(default)]
     base_url_env: Option<String>,
     #[serde(default)]
-    token: Option<String>,
+    token: Option<ApiToken>,
     #[serde(default)]
     token_env: Option<String>,
     #[serde(default)]
@@ -758,7 +758,7 @@ impl AppConfig {
                 .servers
                 .iter()
                 .map(|s| DnsServerConfig {
-                    token: s.token.as_ref().map(|_| "[redacted]".to_string()),
+                    token: s.token.as_ref().map(|_| ApiToken::new("[redacted]")),
                     ..s.clone()
                 })
                 .collect(),
@@ -1474,7 +1474,7 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
     if let Some(ref v) = server.token_env {
         tbl["token_env"] = value(v.as_str());
     }
-    match server.token.as_deref() {
+    match server.token.as_ref().map(ApiToken::expose_for_auth) {
         Some(t) => tbl["token"] = value(t),
         // Write an empty placeholder so the field is visible in the config file.
         None if server.token_env.is_none() => tbl["token"] = value(""),
@@ -2142,9 +2142,9 @@ impl DnsServerConfig {
 
         // Treat an empty string the same as absent — it's an unfilled placeholder.
         self.token
-            .as_deref()
+            .as_ref()
             .filter(|t| !t.is_empty())
-            .map(ApiToken::new)
+            .cloned()
             .ok_or_else(|| {
                 Error::config(format!(
                     "DNS server '{}' has no token configured; set token or token_env in config, or pass --token",
@@ -2636,7 +2636,10 @@ mod tests {
 
         let redacted = cfg.redact();
         let server = redacted.selected_server(None).unwrap();
-        assert_eq!(server.token.as_deref(), Some("[redacted]"));
+        assert_eq!(
+            server.token.as_ref().map(ApiToken::expose_for_auth),
+            Some("[redacted]")
+        );
         assert_eq!(server.token_env.as_deref(), Some("MY_TOKEN_VAR"));
     }
 
@@ -3073,7 +3076,10 @@ mod tests {
         let redacted = cfg.redact();
         let server = redacted.selected_server(None).unwrap();
 
-        assert_eq!(server.token.as_deref(), Some("[redacted]"));
+        assert_eq!(
+            server.token.as_ref().map(ApiToken::expose_for_auth),
+            Some("[redacted]")
+        );
         assert_eq!(
             server.validation_endpoints,
             cfg.servers[0].validation_endpoints
@@ -3101,6 +3107,46 @@ mod tests {
         assert_eq!(config.selected_server(None).unwrap().id, "default");
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    /// Regression guard for the token leak via instrumentation: a populated
+    /// config must never reveal the token through `Debug` (used by `?value`
+    /// tracing fields / `#[instrument]`) or through serde serialisation, while
+    /// the real value is still reachable for authentication.
+    #[test]
+    fn config_never_leaks_token_via_debug_or_serialize() {
+        const SECRET: &str = "super-secret-token-value";
+        let config = AppConfig {
+            servers: vec![DnsServerConfig {
+                id: "leaky".to_string(),
+                vendor: VendorKind::Technitium,
+                location: None,
+                base_url: Some("http://192.168.1.10:5380".to_string()),
+                base_url_env: None,
+                token: Some(ApiToken::new(SECRET)),
+                token_env: None,
+                org_id: None,
+                cluster: None,
+                dns: None,
+                dot: None,
+                doh: None,
+                doq: None,
+                mcp: McpPermissions::default(),
+                validation_endpoints: Vec::new(),
+            }],
+            ..AppConfig::default()
+        };
+
+        let debug = format!("{config:?}");
+        assert!(!debug.contains(SECRET), "Debug leaked token: {debug}");
+        assert!(debug.contains("ApiToken([REDACTED])"));
+
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains(SECRET), "Serialize leaked token: {json}");
+
+        // The real value is still available at the auth boundary.
+        let token = config.servers[0].token.as_ref().unwrap();
+        assert_eq!(token.expose_for_auth(), SECRET);
     }
 
     #[test]
