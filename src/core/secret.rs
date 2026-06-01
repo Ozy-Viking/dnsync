@@ -80,7 +80,13 @@ impl Serialize for ApiToken {
 
 impl<'de> Deserialize<'de> for ApiToken {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(Self::new(String::deserialize(deserializer)?))
+        let raw = String::deserialize(deserializer)?;
+        if raw == REDACTED {
+            return Err(serde::de::Error::custom(
+                "redacted token marker is not a valid API token",
+            ));
+        }
+        Ok(Self::new(raw))
     }
 }
 
@@ -107,6 +113,16 @@ mod tests {
     fn deserialize_round_trips_value() {
         let token: ApiToken = serde_json::from_str("\"super-secret\"").unwrap();
         assert_eq!(token.expose_for_auth(), "super-secret");
+    }
+
+    #[test]
+    fn deserialize_rejects_redacted_marker() {
+        let result: Result<ApiToken, _> = serde_json::from_str("\"[REDACTED]\"");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("redacted token marker is not a valid API token"));
     }
 
     #[test]
