@@ -4,7 +4,7 @@
 //! from an async context). No DNS logic lives here.
 
 use diesel::prelude::*;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use super::models::{DaemonHealthRow, JobRunRow, JobStatusRow};
 use super::schema::{daemon_health, job_runs, job_status};
@@ -45,6 +45,7 @@ impl DaemonStateStore {
     /// let row = DaemonHealthRow { id: 1, daemon_state: "Running".into(), overall_health: "Good".into(), /* ... */ };
     /// store.save_daemon_health(row).unwrap();
     /// ```
+    #[instrument(level = "debug", skip(self, row), fields(daemon_state = %row.daemon_state, overall_health = %row.overall_health))]
     pub fn save_daemon_health(&self, row: DaemonHealthRow) -> Result<(), String> {
         debug!(daemon_state = %row.daemon_state, overall_health = %row.overall_health, "DB write: save_daemon_health");
         let mut conn = self
@@ -78,6 +79,7 @@ impl DaemonStateStore {
     /// ```
     ///
     /// Returns `Ok(())` on success, `Err(String)` with a human-readable message on failure.
+    #[instrument(level = "debug", skip(self, row), fields(job_id = %row.job_id, current_state = %row.current_state))]
     pub fn save_job_status(&self, row: JobStatusRow) -> Result<(), String> {
         debug!(job_id = %row.job_id, current_state = %row.current_state, consecutive_failures = row.consecutive_failures, "DB write: save_job_status");
         let mut conn = self
@@ -121,6 +123,7 @@ impl DaemonStateStore {
     /// # Returns
     ///
     /// `Ok(())` on success, `Err(String)` with an error message on failure.
+    #[instrument(level = "debug", skip(self, row), fields(run_id = %row.run_id, job_id = %row.job_id))]
     pub fn append_job_run(&self, row: JobRunRow) -> Result<(), String> {
         debug!(run_id = %row.run_id, job_id = %row.job_id, outcome = ?row.outcome, duration_ms = ?row.duration_ms, "DB write: append_job_run");
         let mut conn = self
@@ -150,6 +153,7 @@ impl DaemonStateStore {
     ///     println!("last_seen: {}", row.last_seen);
     /// }
     /// ```
+    #[instrument(level = "debug", skip(self))]
     pub fn load_daemon_health(&self) -> Result<Option<DaemonHealthRow>, String> {
         debug!("DB read: load_daemon_health");
         let mut conn = self
@@ -185,6 +189,7 @@ impl DaemonStateStore {
     ///     println!("no status for job-123");
     /// }
     /// ```
+    #[instrument(level = "debug", skip(self), fields(job_id))]
     pub fn load_job_status(&self, job_id: &str) -> Result<Option<JobStatusRow>, String> {
         debug!(job_id, "DB read: load_job_status");
         let mut conn = self
@@ -213,6 +218,7 @@ impl DaemonStateStore {
     /// // at most 5 most recent runs for "my-job"
     /// assert!(runs.len() <= 5);
     /// ```
+    #[instrument(level = "debug", skip(self), fields(job_id, limit))]
     pub fn load_job_runs(&self, job_id: &str, limit: usize) -> Result<Vec<JobRunRow>, String> {
         debug!(job_id, limit, "DB read: load_job_runs");
         let mut conn = self

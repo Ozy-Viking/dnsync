@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::daemon::{
     db::{
@@ -59,6 +59,7 @@ pub enum DbWriteRequest {
 ///     // job_tx.send(JobTrigger { job_id: "example".into(), trigger_kind: ..., dry_run: false }).await.unwrap();
 /// }
 /// ```
+#[instrument(skip(executors, db_write_tx), fields(num_workers, queue_capacity))]
 pub async fn spawn_workers(
     num_workers: usize,
     queue_capacity: usize,
@@ -219,6 +220,7 @@ pub async fn spawn_workers(
 /// let _handle = spawn_db_writer(store, rx);
 /// // send DbWriteRequest messages to `tx`
 /// ```
+#[instrument(skip(store, db_write_rx))]
 pub fn spawn_db_writer(
     store: DaemonStateStore,
     mut db_write_rx: mpsc::Receiver<DbWriteRequest>,

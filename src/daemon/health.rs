@@ -1,6 +1,6 @@
 //! Daemon health aggregation logic.
 
-use tracing::trace;
+use tracing::{instrument, trace};
 
 use crate::daemon::types::{HealthState, JobStatus};
 
@@ -43,6 +43,7 @@ pub fn worst_state<I: Iterator<Item = HealthState>>(states: I) -> HealthState {
 /// let overall = aggregate_daemon_health(&jobs, 3);
 /// assert_eq!(overall, HealthState::Degraded);
 /// ```
+#[instrument(level = "debug", skip(jobs), fields(job_count = jobs.len(), critical_threshold))]
 pub fn aggregate_daemon_health(jobs: &[JobStatus], critical_threshold: u32) -> HealthState {
     let enabled: Vec<&JobStatus> = jobs.iter().filter(|j| j.enabled).collect();
 

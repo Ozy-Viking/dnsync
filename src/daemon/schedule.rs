@@ -6,6 +6,7 @@
 
 use cron::Schedule;
 use std::str::FromStr;
+use tracing::instrument;
 
 /// Convert a schedule string into a validated six-field cron expression.
 ///
@@ -25,6 +26,7 @@ use std::str::FromStr;
 /// // 5-field cron is normalized to 6 fields by prepending "0 "
 /// assert_eq!(parse_schedule("*/15 * * * *").unwrap(), "0 */15 * * * *");
 /// ```
+#[instrument(level = "debug")]
 pub fn parse_schedule(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
 

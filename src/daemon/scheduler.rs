@@ -10,7 +10,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 /// A job definition used by the scheduler.
 pub struct ScheduledJob {
@@ -58,6 +58,7 @@ pub struct JobTrigger {
 /// let next = next_after(&job, now);
 /// assert!(next.is_some());
 /// ```
+#[instrument(level = "trace", skip(job), fields(job_id = %job.id))]
 pub fn next_after(job: &ScheduledJob, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let schedule = Schedule::from_str(&job.cron_expr).ok()?;
     // Convert the reference instant into the job's timezone, then use it
@@ -117,6 +118,7 @@ pub fn apply_jitter(deadline: DateTime<Utc>, max: Duration, rng: &mut impl rand:
 /// soonest after `now`, together with that fire time.
 ///
 /// Returns `None` when the slice is empty or every job is disabled.
+#[instrument(level = "debug", skip(jobs), fields(job_count = jobs.len()))]
 pub fn next_job_to_fire<'a>(
     jobs: &'a [ScheduledJob],
     now: DateTime<Utc>,
