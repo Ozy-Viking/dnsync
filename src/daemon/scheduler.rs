@@ -105,7 +105,11 @@ pub fn next_after(job: &ScheduledJob, after: DateTime<Utc>) -> Option<DateTime<U
 /// let out2 = crate::daemon::scheduler::apply_jitter(deadline, max, &mut rng);
 /// assert!(out2 >= deadline && out2 < deadline + chrono::Duration::from_std(max).unwrap());
 /// ```
-pub fn apply_jitter(deadline: DateTime<Utc>, max: Duration, rng: &mut impl rand::Rng) -> DateTime<Utc> {
+pub fn apply_jitter(
+    deadline: DateTime<Utc>,
+    max: Duration,
+    rng: &mut impl rand::Rng,
+) -> DateTime<Utc> {
     let max_millis = max.as_millis();
     if max_millis == 0 {
         return deadline;
@@ -303,8 +307,8 @@ mod tests {
     /// Soonest from 12:03 → j_fast at 12:04:00.
     #[test]
     fn test_next_job_to_fire_picks_soonest() {
-        let j_fast = job("fast", "0 * * * * *");  // every minute
-        let j_slow = job("slow", "0 0 * * * *");  // top of every hour
+        let j_fast = job("fast", "0 * * * * *"); // every minute
+        let j_slow = job("slow", "0 0 * * * *"); // top of every hour
         let now = Utc.with_ymd_and_hms(2024, 1, 15, 12, 3, 0).unwrap();
         let jobs = vec![j_fast, j_slow];
         let (picked, _) = next_job_to_fire(&jobs, now).expect("should find a job");
@@ -324,6 +328,9 @@ mod tests {
         let next = next_after(&j, now).expect("should return a next time");
         // 08:00 EST on 2024-01-15 = 13:00 UTC.
         let expected = Utc.with_ymd_and_hms(2024, 1, 15, 13, 0, 0).unwrap();
-        assert_eq!(next, expected, "expected 13:00 UTC (08:00 EST) but got {next}");
+        assert_eq!(
+            next, expected,
+            "expected 13:00 UTC (08:00 EST) but got {next}"
+        );
     }
 }

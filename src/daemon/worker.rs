@@ -194,7 +194,10 @@ pub async fn spawn_workers(
                     error!(worker_id, job_id = %job_id, run_id = %run_id, error = %e, "failed to send JobRun to DB writer");
                 }
                 trace!(worker_id, job_id = %job_id, run_id = %run_id, "sending JobStatus to DB writer");
-                if let Err(e) = db_write_tx.send(DbWriteRequest::JobStatus(job_status)).await {
+                if let Err(e) = db_write_tx
+                    .send(DbWriteRequest::JobStatus(job_status))
+                    .await
+                {
                     error!(worker_id, job_id = %job_id, run_id = %run_id, error = %e, "failed to send JobStatus to DB writer");
                 }
             }
@@ -261,12 +264,7 @@ pub fn spawn_db_writer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::daemon::{
-        db,
-        executor::JobOutcome,
-        scheduler::JobTrigger,
-        types::TriggerKind,
-    };
+    use crate::daemon::{db, executor::JobOutcome, scheduler::JobTrigger, types::TriggerKind};
     use chrono::Utc;
     use std::time::Duration;
 
@@ -315,13 +313,9 @@ mod tests {
     /// ```
     #[allow(dead_code)]
     fn open_test_store() -> DaemonStateStore {
-        let dir =
-            std::env::temp_dir().join(format!("dnsync-worker-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dnsync-worker-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!(
-            "test-{}.sqlite",
-            uuid::Uuid::new_v4().as_simple()
-        ));
+        let path = dir.join(format!("test-{}.sqlite", uuid::Uuid::new_v4().as_simple()));
         let pool = db::open(&path).expect("test db should open");
         DaemonStateStore::new(pool)
     }
@@ -422,13 +416,10 @@ mod tests {
         job_tx.send(trigger).await.expect("should send trigger");
 
         // Wait for the first DbWriteRequest — should be a JobRun.
-        let req = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            db_write_rx.recv(),
-        )
-        .await
-        .expect("timed out waiting for db write")
-        .expect("channel closed unexpectedly");
+        let req = tokio::time::timeout(std::time::Duration::from_secs(5), db_write_rx.recv())
+            .await
+            .expect("timed out waiting for db write")
+            .expect("channel closed unexpectedly");
 
         assert!(
             matches!(req, DbWriteRequest::JobRun(_)),
@@ -457,7 +448,9 @@ mod tests {
         };
 
         // First send fills the queue (capacity=1, no receiver consuming).
-        job_tx.try_send(trigger1).expect("first send should succeed");
+        job_tx
+            .try_send(trigger1)
+            .expect("first send should succeed");
 
         // Second send should fail with Full because the channel is at capacity.
         let result = job_tx.try_send(trigger2);

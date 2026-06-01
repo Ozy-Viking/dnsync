@@ -6,9 +6,9 @@
 use diesel::prelude::*;
 use tracing::{debug, instrument};
 
+use super::DbPool;
 use super::models::{DaemonHealthRow, JobRunRow, JobStatusRow};
 use super::schema::{daemon_health, job_runs, job_status};
-use super::DbPool;
 
 /// A thin façade over a [`DbPool`] that handles persisting daemon health
 /// snapshots, per-job status, and append-only job run history.
@@ -48,10 +48,7 @@ impl DaemonStateStore {
     #[instrument(level = "debug", skip(self, row), fields(daemon_state = %row.daemon_state, overall_health = %row.overall_health))]
     pub fn save_daemon_health(&self, row: DaemonHealthRow) -> Result<(), String> {
         debug!(daemon_state = %row.daemon_state, overall_health = %row.overall_health, "DB write: save_daemon_health");
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| format!("db pool error: {e}"))?;
+        let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
 
         diesel::insert_into(daemon_health::table)
             .values(&row)
@@ -82,10 +79,7 @@ impl DaemonStateStore {
     #[instrument(level = "debug", skip(self, row), fields(job_id = %row.job_id, current_state = %row.current_state))]
     pub fn save_job_status(&self, row: JobStatusRow) -> Result<(), String> {
         debug!(job_id = %row.job_id, current_state = %row.current_state, consecutive_failures = row.consecutive_failures, "DB write: save_job_status");
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| format!("db pool error: {e}"))?;
+        let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
 
         diesel::insert_into(job_status::table)
             .values(&row)
@@ -126,10 +120,7 @@ impl DaemonStateStore {
     #[instrument(level = "debug", skip(self, row), fields(run_id = %row.run_id, job_id = %row.job_id))]
     pub fn append_job_run(&self, row: JobRunRow) -> Result<(), String> {
         debug!(run_id = %row.run_id, job_id = %row.job_id, outcome = ?row.outcome, duration_ms = ?row.duration_ms, "DB write: append_job_run");
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| format!("db pool error: {e}"))?;
+        let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
 
         diesel::insert_into(job_runs::table)
             .values(&row)
@@ -156,10 +147,7 @@ impl DaemonStateStore {
     #[instrument(level = "debug", skip(self))]
     pub fn load_daemon_health(&self) -> Result<Option<DaemonHealthRow>, String> {
         debug!("DB read: load_daemon_health");
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| format!("db pool error: {e}"))?;
+        let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
 
         let row = daemon_health::table
             .find(1)
@@ -167,7 +155,10 @@ impl DaemonStateStore {
             .optional()
             .map_err(|e| format!("load_daemon_health failed: {e}"))?;
 
-        debug!(found = row.is_some(), "DB read: load_daemon_health complete");
+        debug!(
+            found = row.is_some(),
+            "DB read: load_daemon_health complete"
+        );
         Ok(row)
     }
 
@@ -192,10 +183,7 @@ impl DaemonStateStore {
     #[instrument(level = "debug", skip(self), fields(job_id))]
     pub fn load_job_status(&self, job_id: &str) -> Result<Option<JobStatusRow>, String> {
         debug!(job_id, "DB read: load_job_status");
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| format!("db pool error: {e}"))?;
+        let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
 
         let row = job_status::table
             .find(job_id)
@@ -203,7 +191,11 @@ impl DaemonStateStore {
             .optional()
             .map_err(|e| format!("load_job_status failed: {e}"))?;
 
-        debug!(job_id, found = row.is_some(), "DB read: load_job_status complete");
+        debug!(
+            job_id,
+            found = row.is_some(),
+            "DB read: load_job_status complete"
+        );
         Ok(row)
     }
 
@@ -221,10 +213,7 @@ impl DaemonStateStore {
     #[instrument(level = "debug", skip(self), fields(job_id, limit))]
     pub fn load_job_runs(&self, job_id: &str, limit: usize) -> Result<Vec<JobRunRow>, String> {
         debug!(job_id, limit, "DB read: load_job_runs");
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| format!("db pool error: {e}"))?;
+        let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
 
         let rows = job_runs::table
             .filter(job_runs::job_id.eq(job_id))
@@ -233,7 +222,11 @@ impl DaemonStateStore {
             .load::<JobRunRow>(&mut conn)
             .map_err(|e| format!("load_job_runs failed: {e}"))?;
 
-        debug!(job_id, row_count = rows.len(), "DB read: load_job_runs complete");
+        debug!(
+            job_id,
+            row_count = rows.len(),
+            "DB read: load_job_runs complete"
+        );
         Ok(rows)
     }
 }
@@ -257,13 +250,9 @@ mod tests {
     /// // use `store` in tests; the database is scoped to a temporary file.
     /// ```
     fn open_test_store() -> DaemonStateStore {
-        let dir =
-            std::env::temp_dir().join(format!("dnsync-store-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dnsync-store-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!(
-            "test-{}.sqlite",
-            uuid::Uuid::new_v4().as_simple()
-        ));
+        let path = dir.join(format!("test-{}.sqlite", uuid::Uuid::new_v4().as_simple()));
         let pool = db::open(&path).expect("test db should open");
         DaemonStateStore::new(pool)
     }
@@ -364,7 +353,10 @@ mod tests {
 
         store.save_daemon_health(row.clone()).unwrap();
 
-        let loaded = store.load_daemon_health().unwrap().expect("should have a row");
+        let loaded = store
+            .load_daemon_health()
+            .unwrap()
+            .expect("should have a row");
         assert_eq!(loaded.daemon_id, "daemon-xyz");
         assert_eq!(loaded.overall_health, "healthy");
         assert_eq!(loaded.jobs_total, 4);
@@ -388,7 +380,10 @@ mod tests {
         };
         store.save_daemon_health(updated).unwrap();
 
-        let loaded = store.load_daemon_health().unwrap().expect("should have row");
+        let loaded = store
+            .load_daemon_health()
+            .unwrap()
+            .expect("should have row");
         assert_eq!(loaded.overall_health, "degraded");
         assert_eq!(loaded.jobs_degraded, 2);
         assert_eq!(loaded.jobs_healthy, 2);
@@ -504,7 +499,10 @@ mod tests {
 
         // Empty DB: daemon health singleton has never been saved.
         let health = store.load_daemon_health().unwrap();
-        assert!(health.is_none(), "expected None for empty daemon_health table");
+        assert!(
+            health.is_none(),
+            "expected None for empty daemon_health table"
+        );
 
         // Unknown job id.
         let status = store.load_job_status("no-such-job").unwrap();
@@ -512,6 +510,9 @@ mod tests {
 
         // Unknown job id for runs.
         let runs = store.load_job_runs("no-such-job", 10).unwrap();
-        assert!(runs.is_empty(), "expected empty vec for unknown job_id runs");
+        assert!(
+            runs.is_empty(),
+            "expected empty vec for unknown job_id runs"
+        );
     }
 }

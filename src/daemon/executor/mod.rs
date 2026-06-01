@@ -19,7 +19,9 @@ pub use zone_sync::ZoneSyncExecutor;
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobOutcome {
     Success,
-    Failure { error: String },
+    Failure {
+        error: String,
+    },
     /// apply=false — the plan was computed but not applied.
     DryRun,
 }

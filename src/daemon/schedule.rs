@@ -82,12 +82,14 @@ fn try_parse_interval(input: &str) -> Result<Option<String>, String> {
         return Ok(None);
     };
 
-    let n: u64 = value_str.parse().map_err(|_| {
-        format!("invalid interval '{input}': '{value_str}' is not a valid integer")
-    })?;
+    let n: u64 = value_str
+        .parse()
+        .map_err(|_| format!("invalid interval '{input}': '{value_str}' is not a valid integer"))?;
 
     if n == 0 {
-        return Err(format!("invalid interval '{input}': value must be at least 1"));
+        return Err(format!(
+            "invalid interval '{input}': value must be at least 1"
+        ));
     }
 
     match unit {
@@ -96,25 +98,19 @@ fn try_parse_interval(input: &str) -> Result<Option<String>, String> {
         )),
         'm' => {
             if n > 59 {
-                return Err(format!(
-                    "interval '{input}' exceeds maximum of 59 minutes"
-                ));
+                return Err(format!("interval '{input}' exceeds maximum of 59 minutes"));
             }
             Ok(Some(format!("0 */{n} * * * *")))
         }
         'h' => {
             if n > 23 {
-                return Err(format!(
-                    "interval '{input}' exceeds maximum of 23 hours"
-                ));
+                return Err(format!("interval '{input}' exceeds maximum of 23 hours"));
             }
             Ok(Some(format!("0 0 */{n} * * *")))
         }
         'd' => {
             if n > 31 {
-                return Err(format!(
-                    "interval '{input}' exceeds maximum of 31 days"
-                ));
+                return Err(format!("interval '{input}' exceeds maximum of 31 days"));
             }
             if n == 1 {
                 Ok(Some("0 0 0 * * *".to_string()))
@@ -139,8 +135,7 @@ fn try_parse_interval(input: &str) -> Result<Option<String>, String> {
 /// assert!(err.is_err());
 /// ```
 fn validate_cron_expression(expr: &str) -> Result<(), String> {
-    Schedule::from_str(expr)
-        .map_err(|e| format!("invalid cron expression '{expr}': {e}"))?;
+    Schedule::from_str(expr).map_err(|e| format!("invalid cron expression '{expr}': {e}"))?;
     Ok(())
 }
 

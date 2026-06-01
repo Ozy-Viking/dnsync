@@ -241,7 +241,10 @@ impl CacheWrite for PiholeClient {
 // ─── StatsRead ────────────────────────────────────────────────────────────────
 
 impl StatsRead for PiholeClient {
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "get_stats", stats_type))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "pihole", operation = "get_stats", stats_type)
+    )]
     async fn get_stats<'a>(&'a self, stats_type: &'a str) -> Result<Value> {
         match stats_type {
             "overTime" | "overtime" | "history" => {
@@ -272,7 +275,10 @@ impl AccessListRead for PiholeClient {
 // ─── AccessListWrite ──────────────────────────────────────────────────────────
 
 impl AccessListWrite for PiholeClient {
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "add_blocked", domain))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "pihole", operation = "add_blocked", domain)
+    )]
     async fn add_blocked<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.post(
             &format!("/api/domains/block/exact/{domain}"),
@@ -281,13 +287,19 @@ impl AccessListWrite for PiholeClient {
         .await
     }
 
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "delete_blocked", domain))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "pihole", operation = "delete_blocked", domain)
+    )]
     async fn delete_blocked<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.delete(&format!("/api/domains/block/exact/{domain}"))
             .await
     }
 
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "add_allowed", domain))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "pihole", operation = "add_allowed", domain)
+    )]
     async fn add_allowed<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.post(
             &format!("/api/domains/allow/exact/{domain}"),
@@ -296,7 +308,10 @@ impl AccessListWrite for PiholeClient {
         .await
     }
 
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "delete_allowed", domain))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "pihole", operation = "delete_allowed", domain)
+    )]
     async fn delete_allowed<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.delete(&format!("/api/domains/allow/exact/{domain}"))
             .await

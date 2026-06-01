@@ -15,7 +15,10 @@ use crate::daemon::{
         models::{JobRunRow, JobStatusRow},
         store::DaemonStateStore,
     },
-    executor::{JobContext, JobExecutor, JobOutcome, RecordSyncExecutor, ZoneExportExecutor, ZoneSyncExecutor},
+    executor::{
+        JobContext, JobExecutor, JobOutcome, RecordSyncExecutor, ZoneExportExecutor,
+        ZoneSyncExecutor,
+    },
     types::TriggerKind,
 };
 
@@ -104,9 +107,7 @@ fn dirs_xdg_data_home() -> std::path::PathBuf {
         return std::path::PathBuf::from(xdg);
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return std::path::PathBuf::from(home)
-            .join(".local")
-            .join("share");
+        return std::path::PathBuf::from(home).join(".local").join("share");
     }
     std::path::PathBuf::from(".")
 }
@@ -212,12 +213,16 @@ pub async fn list_jobs(config: &AppConfig) -> Result<Vec<JobSummary>, String> {
         }
         .to_string();
 
-        let (state, last_run_at, consecutive_failures) =
-            if let Some(row) = status_map.get(&job.id) {
-                (row.current_state.clone(), row.last_finished_at.clone(), row.consecutive_failures)
-            } else {
-                ("unknown".to_string(), None, 0)
-            };
+        let (state, last_run_at, consecutive_failures) = if let Some(row) = status_map.get(&job.id)
+        {
+            (
+                row.current_state.clone(),
+                row.last_finished_at.clone(),
+                row.consecutive_failures,
+            )
+        } else {
+            ("unknown".to_string(), None, 0)
+        };
 
         summaries.push(JobSummary {
             job_id: job.id.clone(),
@@ -259,8 +264,8 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
         return Err(format!("job not found: {job_id}"));
     }
 
-    let executor = build_executor(config, job_id)
-        .ok_or_else(|| format!("job not found: {job_id}"))?;
+    let executor =
+        build_executor(config, job_id).ok_or_else(|| format!("job not found: {job_id}"))?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let started_at = Utc::now();
@@ -532,7 +537,10 @@ mod tests {
     async fn test_list_jobs_empty_config() {
         let config = empty_config();
         let result = list_jobs(&config).await.expect("should succeed");
-        assert!(result.is_empty(), "expected empty list for config with no jobs");
+        assert!(
+            result.is_empty(),
+            "expected empty list for config with no jobs"
+        );
     }
 
     // ── test_list_jobs_merges_config_and_db ───────────────────────────────────
@@ -582,15 +590,31 @@ mod tests {
 
         let summaries = list_jobs(&config).await.expect("list_jobs should succeed");
 
-        assert_eq!(summaries.len(), 2, "expected 2 summaries (one per job in config)");
+        assert_eq!(
+            summaries.len(),
+            2,
+            "expected 2 summaries (one per job in config)"
+        );
 
-        let alpha = summaries.iter().find(|s| s.job_id == "job-alpha").expect("should have job-alpha");
-        assert_eq!(alpha.state, "healthy", "job-alpha should have state from DB");
+        let alpha = summaries
+            .iter()
+            .find(|s| s.job_id == "job-alpha")
+            .expect("should have job-alpha");
+        assert_eq!(
+            alpha.state, "healthy",
+            "job-alpha should have state from DB"
+        );
         assert_eq!(alpha.kind, "record_sync");
         assert!(alpha.enabled);
 
-        let beta = summaries.iter().find(|s| s.job_id == "job-beta").expect("should have job-beta");
-        assert_eq!(beta.state, "unknown", "job-beta should be 'unknown' (no DB row)");
+        let beta = summaries
+            .iter()
+            .find(|s| s.job_id == "job-beta")
+            .expect("should have job-beta");
+        assert_eq!(
+            beta.state, "unknown",
+            "job-beta should be 'unknown' (no DB row)"
+        );
         assert_eq!(beta.kind, "zone_export");
         assert!(!beta.enabled);
     }

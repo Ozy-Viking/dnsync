@@ -36,9 +36,7 @@ pub fn open(path: &Path) -> Result<DbPool, String> {
             .map_err(|e| format!("could not create state db directory: {e}"))?;
     }
 
-    let url = path
-        .to_str()
-        .ok_or("state_db path is not valid UTF-8")?;
+    let url = path.to_str().ok_or("state_db path is not valid UTF-8")?;
 
     let manager = ConnectionManager::<SqliteConnection>::new(url);
 
@@ -53,8 +51,7 @@ pub fn open(path: &Path) -> Result<DbPool, String> {
         .get()
         .map_err(|e| format!("could not get db connection: {e}"))?;
 
-    migrations::run_migrations(&mut conn)
-        .map_err(|e| format!("migration failed: {e}"))?;
+    migrations::run_migrations(&mut conn).map_err(|e| format!("migration failed: {e}"))?;
 
     Ok(pool)
 }
@@ -81,14 +78,10 @@ mod tests {
     /// // use `pool` for tests that need a fresh, file-backed SQLite database
     /// ```
     fn open_test_db() -> DbPool {
-        let dir =
-            std::env::temp_dir().join(format!("dnsync-db-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dnsync-db-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         // Use a unique name per test invocation via a random suffix from uuid.
-        let path = dir.join(format!(
-            "test-{}.sqlite",
-            uuid::Uuid::new_v4().as_simple()
-        ));
+        let path = dir.join(format!("test-{}.sqlite", uuid::Uuid::new_v4().as_simple()));
         open(&path).expect("test db should open")
     }
 

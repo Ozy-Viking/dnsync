@@ -52,7 +52,12 @@ impl JobExecutor for ZoneExportExecutor {
     async fn execute(&self, _ctx: &JobContext) -> (JobOutcome, Duration) {
         // TODO: Implement zone export once control_plane::export exists.
         // Look up job config, query provider, write zone files to job.output_dir.
-        let job_found = self.config.jobs.iter().find(|j| j.id == self.job_id).is_some();
+        let job_found = self
+            .config
+            .jobs
+            .iter()
+            .find(|j| j.id == self.job_id)
+            .is_some();
         debug!(job_id = %self.job_id, job_found, "ZoneExportExecutor: stub invoked (not yet implemented)");
 
         if !job_found {

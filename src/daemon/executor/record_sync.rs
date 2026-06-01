@@ -67,11 +67,7 @@ impl JobExecutor for RecordSyncExecutor {
             "RecordSyncExecutor: executing job"
         );
 
-        let ip_map_vec: Vec<String> = job
-            .ip_map
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect();
+        let ip_map_vec: Vec<String> = job.ip_map.iter().map(|(k, v)| format!("{k}={v}")).collect();
 
         let apply = !ctx.dry_run && !job.dry_run;
 
@@ -104,7 +100,12 @@ impl JobExecutor for RecordSyncExecutor {
         match result {
             Err(e) => {
                 warn!(job_id = %self.job_id, run_id = %ctx.run_id, error = %e, duration_ms = elapsed.as_millis(), "RecordSync failed");
-                (JobOutcome::Failure { error: e.to_string() }, elapsed)
+                (
+                    JobOutcome::Failure {
+                        error: e.to_string(),
+                    },
+                    elapsed,
+                )
             }
             Ok(value) => {
                 if value.get("error").is_some() {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rmcp::{
-    ErrorData as McpError, ServerHandler,
+    ErrorData as McpError, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
     tool, tool_handler, tool_router,
@@ -76,7 +76,10 @@ impl DnsServer {
             startup_info,
             tool_router: Self::tool_router(),
         };
-        tracing::debug!(server_count = result.config.servers.len(), "MCP server initialised");
+        tracing::debug!(
+            server_count = result.config.servers.len(),
+            "MCP server initialised"
+        );
         result
     }
 
@@ -141,6 +144,32 @@ impl DnsServer {
                 ))
             })
     }
+}
+
+/// Start the MCP server over stdio and block until the transport closes.
+///
+/// Owns the `rmcp` serving lifecycle so callers (e.g. the CLI dispatcher) never
+/// need to depend on `rmcp` directly.
+#[tracing::instrument(level = "debug", skip(config, access, allow_zone), fields(server_count = config.servers.len()))]
+pub async fn serve_stdio(
+    config: AppConfig,
+    access: Vec<PolicyRule>,
+    allow_zone: Vec<String>,
+) -> crate::core::error::Result<()> {
+    use crate::core::error::Error;
+
+    tracing::info!("Starting MCP server (stdio)");
+    let dns_server = DnsServer::new(config, access, allow_zone);
+    let transport = (tokio::io::stdin(), tokio::io::stdout());
+    let service = dns_server
+        .serve(transport)
+        .await
+        .map_err(|e| Error::mcp(format!("failed to start MCP server: {e}")))?;
+    service
+        .waiting()
+        .await
+        .map_err(|e| Error::mcp(format!("MCP transport error: {e}")))?;
+    Ok(())
 }
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
@@ -1006,21 +1035,16 @@ impl DnsServer {
         tracing::debug!(tool = "dns_sync", from = ?p.from, to = ?p.to, apply = p.apply, "MCP tool invoked");
         // Named sync profiles have been superseded by [[jobs]]; `from` and `to`
         // must now be specified explicitly.
-        let from_id = p
-            .from
-            .as_deref()
-            .ok_or_else(|| {
-                mcp_err(crate::core::error::Error::parse(
-                    "sync requires a source server: pass from",
-                ))
-            })?;
-        let to_id =
-            p.to.as_deref()
-                .ok_or_else(|| {
-                    mcp_err(crate::core::error::Error::parse(
-                        "sync requires a destination server: pass to",
-                    ))
-                })?;
+        let from_id = p.from.as_deref().ok_or_else(|| {
+            mcp_err(crate::core::error::Error::parse(
+                "sync requires a source server: pass from",
+            ))
+        })?;
+        let to_id = p.to.as_deref().ok_or_else(|| {
+            mcp_err(crate::core::error::Error::parse(
+                "sync requires a destination server: pass to",
+            ))
+        })?;
         let (_, from_policy) = self.resolve_server(from_id).map_err(mcp_err)?;
         let (_, to_policy) = self.resolve_server(to_id).map_err(mcp_err)?;
         sync_tools::handle_sync(&self.config, &from_policy, &to_policy, p).await

@@ -25,23 +25,23 @@ pub enum HealthState {
 
 impl PartialOrd for HealthState {
     /// Compare two health states and produce their ordering based on severity.
-    
+
     ///
-    
+
     /// # Examples
-    
+
     ///
-    
+
     /// ```rust,ignore
-    
+
     /// use std::cmp::Ordering;
-    
+
     /// let a = crate::daemon::types::HealthState::Healthy;
-    
+
     /// let b = crate::daemon::types::HealthState::Fatal;
-    
+
     /// assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
-    
+
     /// ```
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -127,11 +127,7 @@ mod tests {
 
     #[test]
     fn test_job_kind_serialization() {
-        let kinds = [
-            JobKind::RecordSync,
-            JobKind::ZoneSync,
-            JobKind::ZoneExport,
-        ];
+        let kinds = [JobKind::RecordSync, JobKind::ZoneSync, JobKind::ZoneExport];
         for kind in kinds {
             let json = serde_json::to_string(&kind).expect("serialization should succeed");
             let back: JobKind =
