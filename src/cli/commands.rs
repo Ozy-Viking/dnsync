@@ -62,7 +62,7 @@ pub enum ConfigCmd {
         #[arg(long, value_name = "ZONE")]
         allow_zone: Vec<String>,
 
-        /// Validation endpoint in name:transport:address format (repeatable; transport: dns, doh, dot)
+        /// Validation endpoint in name:transport:address format (repeatable; transport: dns, doh, dot, doq)
         #[arg(long = "validation-endpoint", value_name = "NAME:TRANSPORT:ADDRESS")]
         validation_endpoints: Vec<crate::control_plane::config::ValidationEndpointConfig>,
     },

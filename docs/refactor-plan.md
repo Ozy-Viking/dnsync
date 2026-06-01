@@ -79,7 +79,7 @@ Public paths are preserved via re-exports so downstream `use` sites don't churn.
 Keeps only: feature `compile_error!` guards, `main()` (parse → `init_tracing` →
 dispatch → error/exit mapping). Everything else moves to a new `cli::dispatch`:
 
-```
+```text
 src/cli/dispatch/
   mod.rs          run(cli), run_inner(cli) top-level match, run_with_client
   config_cmd.rs   ConfigCmd handling + build_endpoint_update
@@ -97,7 +97,7 @@ src/cli/dispatch/
 
 ### 2.2 `control_plane/config/` (3999)  [Phase 2 — largest]
 
-```
+```text
 control_plane/config/
   mod.rs        re-exports; AppConfig::{load,load_if_exists,selected_server,validate orchestration,redact}
   types/
@@ -117,7 +117,7 @@ control_plane/config/
 
 ### 2.3 `cli/query/` (2399)  [Phase 3]
 
-```
+```text
 cli/query/
   mod.rs        QueryArgs, run_query (entry), re-exports
   parse.rs      split_targets, validate_cli_rules, parse_record_types, parse_ad_hoc, split_addr, describe_target
@@ -133,7 +133,7 @@ cli/query/
 
 ### 2.4 `control_plane/sync/` (1604)  [Phase 4]
 
-```
+```text
 control_plane/sync/
   mod.rs    SyncDiffOptions, SyncApplySummary, run_sync, run_sync_json, re-exports
   plan.rs   PlannedRecord, Diff, ZonePlan, build_sync_plan, plan_zone(_with_clients), collect_records, diff_records, sort_key, canonical
@@ -144,7 +144,7 @@ control_plane/sync/
 
 ### 2.5 `core/dns/records/` (1249 — dir already exists w/ `query.rs`)  [Phase 5]
 
-```
+```text
 core/dns/records/
   mod.rs       ops: list_records, create_record, delete_record; re-exports; pub mod query
   data.rs      RecordData (+impl type_name/to_api_params), default_* fns
@@ -157,7 +157,7 @@ R3 decision (clap) handled in Phase 13.
 
 ### 2.6 `mcp/server/` (1170)  [Phase 6]
 
-```
+```text
 mcp/server/
   mod.rs      DnsServer, new, resolve_server, show_settings_secrets, ServerHandler, get_info, serve_stdio, tests
   zones.rs    zone tool handlers      #[tool_router(router = zones_router)]
@@ -173,7 +173,7 @@ fewer files. Handlers stay thin and delegate to `core::dns::*` (already do).
 
 ### 2.7 `core/dns/validation/` (1158)  [Phase 7]
 
-```
+```text
 core/dns/validation/
   mod.rs      re-exports
   types.rs    ValidationOptions/Request/Report, ExpectedRecord, ObservedRecord, statuses, mismatches
@@ -198,7 +198,7 @@ straddle files) and by record-type groups for mapping:
 
 ### 2.9 `cli/mod.rs` (647)  [Phase 11]
 
-```
+```text
 cli/
   mod.rs            Cli, Command, Command::name, pub mod decls
   commands/
@@ -215,7 +215,7 @@ cli/
 
 ### 2.10 `control_plane/policy/` (687)  [Phase 11]
 
-```
+```text
 control_plane/policy/
   mod.rs   Policy, from_cli_and_config, check_zone, enforce, re-exports
   rule.rs  PolicyRule (+ parsing / ValueEnum)
