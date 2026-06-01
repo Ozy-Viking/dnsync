@@ -24,7 +24,7 @@ use crate::daemon::{
     db::{self, models::DaemonHealthRow, store::DaemonStateStore},
     executor::{RecordSyncExecutor, ZoneExportExecutor, ZoneSyncExecutor},
     schedule::parse_schedule,
-    scheduler::{ScheduledJob, apply_jitter, next_job_to_fire, JobTrigger},
+    scheduler::{JobTrigger, ScheduledJob, apply_jitter, next_job_to_fire},
     types::TriggerKind,
     worker::{DbWriteRequest, spawn_db_writer, spawn_workers},
 };
@@ -224,7 +224,9 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
 
     // ── 4. Build executor closure ─────────────────────────────────────────────
     let config_arc = Arc::new(config.clone());
-    let executors: Arc<dyn Fn(&str) -> Option<Arc<dyn crate::daemon::executor::JobExecutor>> + Send + Sync> = {
+    let executors: Arc<
+        dyn Fn(&str) -> Option<Arc<dyn crate::daemon::executor::JobExecutor>> + Send + Sync,
+    > = {
         let cfg = Arc::clone(&config_arc);
         Arc::new(move |job_id: &str| {
             let job = cfg.jobs.iter().find(|j| j.id == job_id)?;
@@ -253,7 +255,10 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
 
     // ── 6. Build scheduled jobs list ─────────────────────────────────────────
     let mut scheduled_jobs: Vec<ScheduledJob> = Vec::new();
-    debug!(total_jobs = config.jobs.len(), "building scheduled jobs list");
+    debug!(
+        total_jobs = config.jobs.len(),
+        "building scheduled jobs list"
+    );
     for job in &config.jobs {
         let schedule_str = job
             .schedule
@@ -296,7 +301,11 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
     }
 
     // ── 7. Fire run_immediately jobs right away ────────────────────────────────
-    for job in config.jobs.iter().filter(|j| j.run_immediately && j.enabled) {
+    for job in config
+        .jobs
+        .iter()
+        .filter(|j| j.run_immediately && j.enabled)
+    {
         info!(job_id = %job.id, "triggering run_immediately job");
         let trigger = JobTrigger {
             job_id: job.id.clone(),
@@ -351,8 +360,7 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
             "scheduler tick: next job selected"
         );
 
-        let fire_time_with_jitter =
-            apply_jitter(fire_time, next_job.jitter_max, &mut rng);
+        let fire_time_with_jitter = apply_jitter(fire_time, next_job.jitter_max, &mut rng);
 
         if fire_time_with_jitter != fire_time {
             debug!(
@@ -366,8 +374,7 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
             .to_std()
             .unwrap_or(Duration::ZERO);
 
-        let deadline =
-            tokio::time::Instant::now() + sleep_duration;
+        let deadline = tokio::time::Instant::now() + sleep_duration;
 
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
@@ -436,11 +443,10 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
     {
         let store_ref = Arc::new(store);
         let health = stopped_health;
-        if let Err(e) =
-            tokio::task::spawn_blocking(move || store_ref.save_daemon_health(health))
-                .await
-                .map_err(|e| format!("shutdown health write panicked: {e}"))
-                .and_then(|r| r.map_err(|e| format!("shutdown health write failed: {e}")))
+        if let Err(e) = tokio::task::spawn_blocking(move || store_ref.save_daemon_health(health))
+            .await
+            .map_err(|e| format!("shutdown health write panicked: {e}"))
+            .and_then(|r| r.map_err(|e| format!("shutdown health write failed: {e}")))
         {
             error!(error = %e, "failed to write stopped state to DB");
         }
@@ -460,37 +466,37 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     /// Creates a minimal AppConfig for tests using the provided SQLite state DB path.
-    
+
     ///
-    
+
     /// The returned config contains no servers or jobs and a daemon configuration tuned for fast test runs:
-    
+
     /// short heartbeat intervals, a 1 second shutdown timeout, a single worker thread, and a critical failure threshold of 5.
-    
+
     ///
-    
+
     /// # Examples
-    
+
     ///
-    
+
     /// ```rust,ignore
-    
+
     /// let db_path = std::path::PathBuf::from("/tmp/test_state.db");
-    
+
     /// let cfg = minimal_config(db_path.clone());
-    
+
     /// assert!(cfg.servers.is_empty());
-    
+
     /// assert!(cfg.jobs.is_empty());
-    
+
     /// let daemon = cfg.daemon.unwrap();
-    
+
     /// assert_eq!(daemon.state_db.unwrap(), db_path);
-    
+
     /// assert_eq!(daemon.shutdown_timeout, "1s");
-    
+
     /// assert_eq!(daemon.worker_threads, 1);
-    
+
     /// ```
     fn minimal_config(db_path: std::path::PathBuf) -> AppConfig {
         AppConfig {
@@ -523,8 +529,7 @@ mod tests {
     /// assert_eq!(p.extension().and_then(|s| s.to_str()), Some("sqlite"));
     /// ```
     fn temp_db_path() -> std::path::PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("dnsync-runtime-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dnsync-runtime-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(format!(
             "runtime-{}.sqlite",
@@ -540,9 +545,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
 
-        let handle = tokio::spawn(async move {
-            run(config, cancel_clone).await
-        });
+        let handle = tokio::spawn(async move { run(config, cancel_clone).await });
 
         // Cancel immediately.
         cancel.cancel();
@@ -552,6 +555,9 @@ mod tests {
             .expect("run() should complete within 1 second after cancel")
             .expect("task should not have panicked");
 
-        assert!(result.is_ok(), "run() should return Ok after cancel, got: {result:?}");
+        assert!(
+            result.is_ok(),
+            "run() should return Ok after cancel, got: {result:?}"
+        );
     }
 }

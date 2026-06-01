@@ -79,7 +79,10 @@ impl DnsVendor for CloudflareClient {
 // ─── ZoneRead ─────────────────────────────────────────────────────────────────
 
 impl ZoneRead for CloudflareClient {
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "list_zones", page, per_page))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "cloudflare", operation = "list_zones", page, per_page)
+    )]
     async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> {
         self.get(
             "/zones",
@@ -129,7 +132,10 @@ impl ZoneRead for CloudflareClient {
 // ─── ZoneWrite ────────────────────────────────────────────────────────────────
 
 impl ZoneWrite for CloudflareClient {
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "create_zone", zone))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "cloudflare", operation = "create_zone", zone)
+    )]
     async fn create_zone<'a>(&'a self, zone: &'a str, _zone_type: &'a str) -> Result<Value> {
         self.post(
             "/zones",
@@ -138,7 +144,10 @@ impl ZoneWrite for CloudflareClient {
         .await
     }
 
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "delete_zone", zone))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "cloudflare", operation = "delete_zone", zone)
+    )]
     async fn delete_zone<'a>(&'a self, zone: &'a str) -> Result<Value> {
         let zone_id = self.resolve_zone_id(zone).await?;
         self.delete(&format!("/zones/{zone_id}")).await
@@ -322,7 +331,13 @@ impl AccessListWrite for CloudflareClient {
 impl ZoneImport for CloudflareClient {
     #[instrument(
         skip(self, file_bytes),
-        fields(vendor = "cloudflare", operation = "import_zone_file", zone, overwrite, overwrite_zone)
+        fields(
+            vendor = "cloudflare",
+            operation = "import_zone_file",
+            zone,
+            overwrite,
+            overwrite_zone
+        )
     )]
     async fn import_zone_file<'a>(
         &'a self,

@@ -1,8 +1,8 @@
 pub mod completions;
+pub mod dispatch;
 pub mod interactive;
 pub mod query;
 pub mod records;
-pub mod runner;
 
 use clap::{ArgAction, Parser, Subcommand};
 use clap_complete::Shell;

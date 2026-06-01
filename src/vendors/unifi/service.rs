@@ -128,7 +128,10 @@ impl ZoneWrite for UnifiClient {
 // ─── RecordWrite ──────────────────────────────────────────────────────────────
 
 impl RecordWrite for UnifiClient {
-    #[instrument(skip(self, record), fields(vendor = "unifi", operation = "add_record", zone, domain))]
+    #[instrument(
+        skip(self, record),
+        fields(vendor = "unifi", operation = "add_record", zone, domain)
+    )]
     async fn add_record<'a>(
         &'a self,
         zone: &'a str,

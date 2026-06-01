@@ -16,13 +16,13 @@ use std::net::IpAddr;
 use tracing::{debug, instrument, trace};
 
 use crate::control_plane::config::AppConfig;
-use regex::Regex;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::records::query::{extract_zone_names, resolve_fqdn};
 use crate::core::dns::responses::{AnyRecordData, ListRecordsResponse};
 use crate::core::dns::service::{ListRecordsOptions, RecordWrite, ZoneRead};
 use crate::core::error::{Error, Result};
 use crate::vendors::runtime::VendorClient;
+use regex::Regex;
 
 /// Controls which categories of diff are applied during a record sync.
 #[derive(Debug, Clone)]
@@ -324,12 +324,8 @@ async fn build_sync_plan(
     }
 
     // From/to: CLI flags are required when no profile is given.
-    let from_id = from.ok_or_else(|| {
-        Error::parse("sync requires a source server: pass --from")
-    })?;
-    let to_id = to.ok_or_else(|| {
-        Error::parse("sync requires a destination server: pass --to")
-    })?;
+    let from_id = from.ok_or_else(|| Error::parse("sync requires a source server: pass --from"))?;
+    let to_id = to.ok_or_else(|| Error::parse("sync requires a destination server: pass --to"))?;
 
     // IP map: CLI --map flags.
     let mut ip_map: HashMap<IpAddr, IpAddr> = HashMap::new();
@@ -408,11 +404,7 @@ async fn plan_zone(
 /// On success returns a `ZonePlan` containing sorted `adds` and `deletes`,
 /// the number of `unchanged` records, `untouched` destination-only records (or
 /// 0 when deletions are enabled), and `skipped` source records.
-#[instrument(
-    level = "trace",
-    skip(from_client, to_client, ip_map),
-    fields(zone)
-)]
+#[instrument(level = "trace", skip(from_client, to_client, ip_map), fields(zone))]
 async fn plan_zone_with_clients<F, T>(
     from_client: &F,
     to_client: &T,
@@ -444,14 +436,15 @@ where
         })?;
 
     let (mut source_records, skipped) = collect_records(&source, zone, Some(ip_map));
-    trace!(source_count = source_records.len(), skipped, "source records collected");
+    trace!(
+        source_count = source_records.len(),
+        skipped, "source records collected"
+    );
     let (dest_records, _) = collect_records(&dest, zone, None);
 
     // Filter out source records whose FQDN matches any ignore pattern.
     if !sync_opts.ignore.is_empty() {
-        source_records.retain(|r| {
-            !sync_opts.ignore.iter().any(|pat| pat.is_match(&r.fqdn))
-        });
+        source_records.retain(|r| !sync_opts.ignore.iter().any(|pat| pat.is_match(&r.fqdn)));
     }
 
     let diff = diff_records(source_records, dest_records);
@@ -1143,9 +1136,15 @@ mod tests {
             ],
         ));
 
-        let plan = plan_zone_with_clients(&source, &dest, zone, &HashMap::new(), &SyncDiffOptions::default())
-            .await
-            .unwrap();
+        let plan = plan_zone_with_clients(
+            &source,
+            &dest,
+            zone,
+            &HashMap::new(),
+            &SyncDiffOptions::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(source.calls.lock().unwrap()[0].2.all_subdomains);
         assert!(dest.calls.lock().unwrap()[0].2.all_subdomains);
@@ -1327,31 +1326,31 @@ mod tests {
     // ── SyncDiffOptions ────────────────────────────────────────────────────────
 
     /// Create paired `FakeZoneRead` clients for a zone using the provided source and destination records.
-    
+
     ///
-    
+
     /// The returned tuple is `(source_client, dest_client)`, each initialized with a `ListRecordsResponse` for
-    
+
     /// `zone` containing the corresponding records. Intended for use in unit tests that exercise planning and diffing.
-    
+
     ///
-    
+
     /// # Examples
-    
+
     ///
-    
+
     /// ```rust,ignore
-    
+
     /// let zone = "example.com";
-    
+
     /// let src = vec![/* ZoneRecord fixtures for source */];
-    
+
     /// let dst = vec![/* ZoneRecord fixtures for destination */];
-    
+
     /// let (source_client, dest_client) = make_source_dest_clients(zone, src, dst);
-    
+
     /// // `source_client` and `dest_client` can now be passed to functions that list records.
-    
+
     /// ```
     fn make_source_dest_clients(
         zone: &str,
@@ -1368,7 +1367,12 @@ mod tests {
         let zone = "example.com";
         let (source, dest) = make_source_dest_clients(
             zone,
-            vec![zone_record("new-host.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record(
+                "new-host.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
             vec![],
         );
         let opts = SyncDiffOptions {
@@ -1389,7 +1393,12 @@ mod tests {
         let zone = "example.com";
         let (source, dest) = make_source_dest_clients(
             zone,
-            vec![zone_record("new-host.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record(
+                "new-host.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
             vec![],
         );
         let opts = SyncDiffOptions {
@@ -1410,8 +1419,18 @@ mod tests {
         let zone = "example.com";
         let (source, dest) = make_source_dest_clients(
             zone,
-            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" }))],
-            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record(
+                "www.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "2.2.2.2" }),
+            )],
+            vec![zone_record(
+                "www.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
         );
         let opts = SyncDiffOptions {
             create_missing: true,
@@ -1431,8 +1450,18 @@ mod tests {
         let zone = "example.com";
         let (source, dest) = make_source_dest_clients(
             zone,
-            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" }))],
-            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record(
+                "www.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "2.2.2.2" }),
+            )],
+            vec![zone_record(
+                "www.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
         );
         let opts = SyncDiffOptions {
             create_missing: false,
@@ -1457,7 +1486,12 @@ mod tests {
         let (source, dest) = make_source_dest_clients(
             zone,
             vec![],
-            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record(
+                "www.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
         );
         let opts = SyncDiffOptions {
             create_missing: true,
@@ -1478,7 +1512,12 @@ mod tests {
         let (source, dest) = make_source_dest_clients(
             zone,
             vec![],
-            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record(
+                "www.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
         );
         let opts = SyncDiffOptions {
             create_missing: true,
@@ -1499,8 +1538,18 @@ mod tests {
         let (source, dest) = make_source_dest_clients(
             zone,
             vec![
-                zone_record("web.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" })),
-                zone_record("internal.example.com", "A", 3600, json!({ "ipAddress": "10.0.0.1" })),
+                zone_record(
+                    "web.example.com",
+                    "A",
+                    3600,
+                    json!({ "ipAddress": "1.1.1.1" }),
+                ),
+                zone_record(
+                    "internal.example.com",
+                    "A",
+                    3600,
+                    json!({ "ipAddress": "10.0.0.1" }),
+                ),
             ],
             vec![],
         );
@@ -1529,8 +1578,18 @@ mod tests {
         let (source, dest) = make_source_dest_clients(
             zone,
             vec![
-                zone_record("web.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" })),
-                zone_record("api.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" })),
+                zone_record(
+                    "web.example.com",
+                    "A",
+                    3600,
+                    json!({ "ipAddress": "1.1.1.1" }),
+                ),
+                zone_record(
+                    "api.example.com",
+                    "A",
+                    3600,
+                    json!({ "ipAddress": "2.2.2.2" }),
+                ),
             ],
             vec![],
         );
@@ -1561,10 +1620,25 @@ mod tests {
         let (source, dest) = make_source_dest_clients(
             zone,
             vec![
-                zone_record("new-host.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" })),
-                zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" })),
+                zone_record(
+                    "new-host.example.com",
+                    "A",
+                    3600,
+                    json!({ "ipAddress": "1.1.1.1" }),
+                ),
+                zone_record(
+                    "www.example.com",
+                    "A",
+                    3600,
+                    json!({ "ipAddress": "2.2.2.2" }),
+                ),
             ],
-            vec![zone_record("www.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
+            vec![zone_record(
+                "www.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
         );
         let opts = SyncDiffOptions {
             create_missing: false,
@@ -1584,8 +1658,18 @@ mod tests {
         let zone = "example.com";
         let (source, dest) = make_source_dest_clients(
             zone,
-            vec![zone_record("a.example.com", "A", 3600, json!({ "ipAddress": "1.1.1.1" }))],
-            vec![zone_record("b.example.com", "A", 3600, json!({ "ipAddress": "2.2.2.2" }))],
+            vec![zone_record(
+                "a.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "1.1.1.1" }),
+            )],
+            vec![zone_record(
+                "b.example.com",
+                "A",
+                3600,
+                json!({ "ipAddress": "2.2.2.2" }),
+            )],
         );
         let opts = SyncDiffOptions {
             create_missing: true,

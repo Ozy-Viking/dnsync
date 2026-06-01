@@ -119,10 +119,12 @@ mod tests {
     fn deserialize_rejects_redacted_marker() {
         let result: Result<ApiToken, _> = serde_json::from_str("\"[REDACTED]\"");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("redacted token marker is not a valid API token"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("redacted token marker is not a valid API token")
+        );
     }
 
     #[test]

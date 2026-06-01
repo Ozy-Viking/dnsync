@@ -1619,16 +1619,12 @@ fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &DnsServerConfi
 /// assert!(res.is_ok());
 /// ```
 fn validate_ip_pair_for_job(job_id: &str, src: &str, dst: &str) -> Result<()> {
-    let source: IpAddr = src.parse().map_err(|_| {
-        Error::config(format!(
-            "job '{job_id}': '{src}' is not a valid IP address"
-        ))
-    })?;
-    let dest: IpAddr = dst.parse().map_err(|_| {
-        Error::config(format!(
-            "job '{job_id}': '{dst}' is not a valid IP address"
-        ))
-    })?;
+    let source: IpAddr = src
+        .parse()
+        .map_err(|_| Error::config(format!("job '{job_id}': '{src}' is not a valid IP address")))?;
+    let dest: IpAddr = dst
+        .parse()
+        .map_err(|_| Error::config(format!("job '{job_id}': '{dst}' is not a valid IP address")))?;
     if source.is_ipv4() != dest.is_ipv4() {
         return Err(Error::config(format!(
             "job '{job_id}': IP mapping '{src}' = '{dst}' mixes IPv4 and IPv6"
@@ -3756,7 +3752,11 @@ mod tests {
         config.validate().expect("should validate");
         let daemon = config.daemon.as_ref().expect("daemon should be present");
         assert_eq!(
-            daemon.state_db.as_ref().map(|p| p.to_string_lossy().to_string()).as_deref(),
+            daemon
+                .state_db
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .as_deref(),
             Some("/var/lib/dnsync/state.db")
         );
         assert_eq!(daemon.heartbeat_interval, "10s");

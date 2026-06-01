@@ -130,7 +130,10 @@ impl DnsVendor for PangolinClient {
 // ─── ZoneRead ─────────────────────────────────────────────────────────────────
 
 impl ZoneRead for PangolinClient {
-    #[instrument(skip(self), fields(vendor = "pangolin", operation = "list_zones", page, per_page))]
+    #[instrument(
+        skip(self),
+        fields(vendor = "pangolin", operation = "list_zones", page, per_page)
+    )]
     async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> {
         let limit = per_page.to_string();
         let offset = ((page.saturating_sub(1)) * per_page).to_string();
