@@ -6,9 +6,9 @@
 
 mod access;
 mod cache;
+mod meta;
 mod observe;
 mod records;
-mod server;
 mod settings;
 mod zones;
 
