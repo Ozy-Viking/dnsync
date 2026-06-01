@@ -1,8 +1,14 @@
 # DNSync Codebase Audit & Refactor Plan
 
-Status: **planning** (no code moved yet). Scope agreed: *everything* — split every
-file >500 LOC into modules, reduce `main.rs` to an entry point, and perform the
-deep relayering that pulls vendor specifics out of `core`.
+Status: **executed**. All 24 files >500 LOC were split into modules, `main.rs`
+is an entry point only, and the deep relayering (R1/R2) landed. R3 (`clap` in
+`core`) was resolved by keeping the derives and documenting the exception (no
+duplication), per the maintainer's call. The phases below record the original
+plan; see `TODO.md` for the completion checklist.
+
+Scope agreed: *everything* — split every file >500 LOC into modules, reduce
+`main.rs` to an entry point, and perform the deep relayering that pulls vendor
+specifics out of `core`.
 
 This plan is the contract for the refactor. Each phase is independently
 compilable and committed; the build stays green between phases.

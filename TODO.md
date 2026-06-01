@@ -83,3 +83,23 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 - [x] Control `dns_get_settings` secret visibility through per-server config.
 - [x] Add `dns config update` to materialize newly-known server defaults without overwriting existing values.
 - [ ] Add MCP `diff` tool to ship alongside any future `dns diff` CLI command.
+
+## Codebase Audit & Modularization (2026-06)
+
+- [x] Slim `main.rs` to an entry point only; move dispatch into `cli::dispatch`.
+- [x] Delete the central `cli/runner.rs`; route MCP startup via `mcp::server::serve_stdio`.
+- [x] Split every source file >500 LOC into responsibility-oriented modules
+      (config, query, sync, records, mcp/server, validation, vendor service +
+      mapping/client files, cli commands, policy, daemon commands/runtime/store,
+      resolver, records/query). No file now exceeds 500 lines.
+- [x] Relayer: move the Technitium response-envelope parser out of
+      `core::dns::responses` into `vendors::technitium::responses::parse_list_records`
+      (kept the neutral `parse_record_data` decoder in core).
+- [x] Relayer: genericize the vendor-specific help text on `core::error` variants.
+- [x] Document the accepted `clap`-in-`core` exception and the module-size/split
+      conventions in `docs/function-placement-guide.md`; document `daemon/`,
+      the extra vendors, and the other uncovered subsystems.
+- [ ] Pre-existing clippy lint debt (e.g. `empty lines after doc comment`,
+      `field_reassign_with_default`, `useless_conversion` in `worker.rs`/
+      `pihole/mapping.rs`) remains; the modularization did not introduce new
+      warnings but a separate `-D warnings` cleanup pass is still needed.
