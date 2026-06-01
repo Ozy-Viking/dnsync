@@ -56,7 +56,7 @@ impl ZoneRead for PiholeClient {
         Err(Error::unsupported("Pi-hole", "zone listing"))
     }
 
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "list_records"))]
+    #[instrument(skip(self), fields(vendor = "pihole", operation = "list_records", domain, zone = ?zone))]
     async fn list_records<'a>(
         &'a self,
         domain: &'a str,
@@ -143,7 +143,7 @@ impl ZoneWrite for PiholeClient {
 impl RecordWrite for PiholeClient {
     #[instrument(
         skip(self, record),
-        fields(vendor = "pihole", operation = "add_record")
+        fields(vendor = "pihole", operation = "add_record", domain)
     )]
     async fn add_record<'a>(
         &'a self,
@@ -169,7 +169,7 @@ impl RecordWrite for PiholeClient {
 
     #[instrument(
         skip(self, type_params),
-        fields(vendor = "pihole", operation = "delete_record")
+        fields(vendor = "pihole", operation = "delete_record", domain)
     )]
     async fn delete_record<'a>(
         &'a self,
@@ -219,7 +219,7 @@ impl RecordWrite for PiholeClient {
 // ─── CacheRead ────────────────────────────────────────────────────────────────
 
 impl CacheRead for PiholeClient {
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "list_cache"))]
+    #[instrument(skip(self), fields(vendor = "pihole", operation = "list_cache", domain = _domain))]
     async fn list_cache<'a>(&'a self, _domain: &'a str) -> Result<Value> {
         self.get("/api/cache", &[]).await
     }
@@ -241,7 +241,7 @@ impl CacheWrite for PiholeClient {
 // ─── StatsRead ────────────────────────────────────────────────────────────────
 
 impl StatsRead for PiholeClient {
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "get_stats"))]
+    #[instrument(skip(self), fields(vendor = "pihole", operation = "get_stats", stats_type))]
     async fn get_stats<'a>(&'a self, stats_type: &'a str) -> Result<Value> {
         match stats_type {
             "overTime" | "overtime" | "history" => {
@@ -272,7 +272,7 @@ impl AccessListRead for PiholeClient {
 // ─── AccessListWrite ──────────────────────────────────────────────────────────
 
 impl AccessListWrite for PiholeClient {
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "add_blocked"))]
+    #[instrument(skip(self), fields(vendor = "pihole", operation = "add_blocked", domain))]
     async fn add_blocked<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.post(
             &format!("/api/domains/block/exact/{domain}"),
@@ -281,13 +281,13 @@ impl AccessListWrite for PiholeClient {
         .await
     }
 
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "delete_blocked"))]
+    #[instrument(skip(self), fields(vendor = "pihole", operation = "delete_blocked", domain))]
     async fn delete_blocked<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.delete(&format!("/api/domains/block/exact/{domain}"))
             .await
     }
 
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "add_allowed"))]
+    #[instrument(skip(self), fields(vendor = "pihole", operation = "add_allowed", domain))]
     async fn add_allowed<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.post(
             &format!("/api/domains/allow/exact/{domain}"),
@@ -296,7 +296,7 @@ impl AccessListWrite for PiholeClient {
         .await
     }
 
-    #[instrument(skip(self), fields(vendor = "pihole", operation = "delete_allowed"))]
+    #[instrument(skip(self), fields(vendor = "pihole", operation = "delete_allowed", domain))]
     async fn delete_allowed<'a>(&'a self, domain: &'a str) -> Result<Value> {
         self.delete(&format!("/api/domains/allow/exact/{domain}"))
             .await

@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::cli::Cli;
 use crate::control_plane::config::{AppConfig, McpPermissions};
 use crate::core::error::{Error, Result};
+use tracing::instrument;
 
 /// Identifies a single class of DNS operation.
 ///
@@ -118,12 +119,14 @@ impl Policy {
         self.check(PolicyRule::Delete)
     }
 
+    #[instrument(level = "trace", skip(self), fields(zone))]
     pub fn check_zone(&self, zone: &str) -> Result<()> {
         let Some(allowed_zones) = &self.allowed_zones else {
             return Ok(());
         };
 
         let zone = zone.trim_end_matches('.').to_lowercase();
+        tracing::trace!(zone, "checking zone access");
         let allowed = allowed_zones.iter().any(|allowed| {
             let allowed = allowed.trim_end_matches('.').to_lowercase();
             zone == allowed || zone.ends_with(&format!(".{allowed}"))
@@ -238,6 +241,7 @@ impl Policy {
     ///
     /// let policy = Policy::for_server(&server, &cli_access, &cli_allow_zone)?;
     /// ```ignore
+    #[instrument(level = "debug", skip(server, cli_access, cli_allow_zone), fields(server_id = %server.id))]
     pub fn for_server(
         server: &crate::control_plane::config::DnsServerConfig,
         cli_access: &[PolicyRule],
@@ -278,10 +282,13 @@ impl Policy {
             Some(cli_allow_zone.to_vec())
         };
 
-        Ok(Self::new(allowed, allowed_zones))
+        let policy = Self::new(allowed, allowed_zones);
+        tracing::debug!(server_id = %server.id, rules = ?policy.allowed, zone_count = policy.allowed_zones.as_ref().map(|z| z.len()), "policy constructed for server");
+        Ok(policy)
     }
 
     /// Build a `Policy` from CLI options and config.
+    #[instrument(level = "debug", skip_all)]
     pub fn from_cli_and_config(cli: &Cli, config: Option<&AppConfig>) -> Result<Self> {
         let mcp = config
             .and_then(|c| {

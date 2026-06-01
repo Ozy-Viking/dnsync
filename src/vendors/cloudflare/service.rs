@@ -79,7 +79,7 @@ impl DnsVendor for CloudflareClient {
 // ─── ZoneRead ─────────────────────────────────────────────────────────────────
 
 impl ZoneRead for CloudflareClient {
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "list_zones"))]
+    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "list_zones", page, per_page))]
     async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> {
         self.get(
             "/zones",
@@ -91,7 +91,7 @@ impl ZoneRead for CloudflareClient {
         .await
     }
 
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "list_records"))]
+    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "list_records", domain, zone = ?zone))]
     async fn list_records<'a>(
         &'a self,
         domain: &'a str,
@@ -129,7 +129,7 @@ impl ZoneRead for CloudflareClient {
 // ─── ZoneWrite ────────────────────────────────────────────────────────────────
 
 impl ZoneWrite for CloudflareClient {
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "create_zone"))]
+    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "create_zone", zone))]
     async fn create_zone<'a>(&'a self, zone: &'a str, _zone_type: &'a str) -> Result<Value> {
         self.post(
             "/zones",
@@ -138,7 +138,7 @@ impl ZoneWrite for CloudflareClient {
         .await
     }
 
-    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "delete_zone"))]
+    #[instrument(skip(self), fields(vendor = "cloudflare", operation = "delete_zone", zone))]
     async fn delete_zone<'a>(&'a self, zone: &'a str) -> Result<Value> {
         let zone_id = self.resolve_zone_id(zone).await?;
         self.delete(&format!("/zones/{zone_id}")).await
@@ -158,7 +158,7 @@ impl ZoneWrite for CloudflareClient {
 impl RecordWrite for CloudflareClient {
     #[instrument(
         skip(self, record),
-        fields(vendor = "cloudflare", operation = "add_record")
+        fields(vendor = "cloudflare", operation = "add_record", zone, domain)
     )]
     async fn add_record<'a>(
         &'a self,
@@ -175,7 +175,7 @@ impl RecordWrite for CloudflareClient {
 
     #[instrument(
         skip(self, type_params),
-        fields(vendor = "cloudflare", operation = "delete_record")
+        fields(vendor = "cloudflare", operation = "delete_record", zone, domain)
     )]
     async fn delete_record<'a>(
         &'a self,
@@ -322,7 +322,7 @@ impl AccessListWrite for CloudflareClient {
 impl ZoneImport for CloudflareClient {
     #[instrument(
         skip(self, file_bytes),
-        fields(vendor = "cloudflare", operation = "import_zone_file")
+        fields(vendor = "cloudflare", operation = "import_zone_file", zone, overwrite, overwrite_zone)
     )]
     async fn import_zone_file<'a>(
         &'a self,
@@ -358,7 +358,7 @@ impl ZoneImport for CloudflareClient {
 impl ZoneExport for CloudflareClient {
     #[instrument(
         skip(self),
-        fields(vendor = "cloudflare", operation = "export_zone_file")
+        fields(vendor = "cloudflare", operation = "export_zone_file", zone)
     )]
     async fn export_zone_file<'a>(&'a self, zone: &'a str) -> Result<String> {
         let zone_id = self.resolve_zone_id(zone).await?;

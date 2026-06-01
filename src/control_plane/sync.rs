@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
+use tracing::{debug, instrument, trace};
+
 use crate::control_plane::config::AppConfig;
 use crate::core::dns::records::RecordData;
 use crate::core::dns::records::query::{extract_zone_names, resolve_fqdn};
@@ -75,6 +77,11 @@ pub struct SyncApplySummary {
 /// Returns an error if the config, servers, zones, or IP mappings cannot be
 /// resolved, or — when `apply` is set — if any record write fails.
 #[allow(clippy::too_many_arguments)]
+#[instrument(
+    level = "debug",
+    skip(app_config, zones, maps),
+    fields(profile = ?profile, from = ?from, to = ?to, zone_count = zones.len(), apply, json)
+)]
 pub async fn run_sync(
     app_config: Option<&AppConfig>,
     profile: Option<&str>,
@@ -85,8 +92,10 @@ pub async fn run_sync(
     apply: bool,
     json: bool,
 ) -> Result<()> {
+    debug!("building sync plan");
     let (from_id, to_id, plans) =
         build_sync_plan(app_config, profile, from, to, zones, maps).await?;
+    debug!(from = %from_id, to = %to_id, plan_count = plans.len(), "sync plan built");
 
     if json {
         let out = sync_plan_json(&from_id, &to_id, &plans, apply);
@@ -118,6 +127,11 @@ pub async fn run_sync(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[instrument(
+    level = "debug",
+    skip(app_config, zones, maps),
+    fields(profile = ?profile, from = ?from, to = ?to, zone_count = zones.len(), apply)
+)]
 pub async fn run_sync_json(
     app_config: Option<&AppConfig>,
     profile: Option<&str>,
@@ -146,6 +160,11 @@ pub async fn run_sync_json(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[instrument(
+    level = "debug",
+    skip(app_config, zones, maps),
+    fields(profile = ?profile, from = ?from, to = ?to)
+)]
 async fn build_sync_plan(
     app_config: Option<&AppConfig>,
     profile: Option<&str>,
@@ -200,6 +219,8 @@ async fn build_sync_plan(
         ip_map.insert(s, d);
     }
 
+    debug!(from_id, to_id, "resolved sync endpoints");
+
     let from_server = cfg.selected_server(Some(from_id))?;
     let to_server = cfg.selected_server(Some(to_id))?;
     let from_client = VendorClient::from_server(from_server)?;
@@ -232,6 +253,8 @@ async fn build_sync_plan(
         names
     };
 
+    debug!(zone_count = zone_list.len(), "resolved zone list");
+
     let mut plans = Vec::with_capacity(zone_list.len());
     for zone in &zone_list {
         plans.push(plan_zone(&from_client, &to_client, zone, &ip_map).await?);
@@ -241,6 +264,7 @@ async fn build_sync_plan(
 }
 
 /// Build the sync plan for a single zone.
+#[instrument(level = "trace", skip(from_client, to_client, ip_map), fields(zone))]
 async fn plan_zone(
     from_client: &VendorClient,
     to_client: &VendorClient,
@@ -250,6 +274,11 @@ async fn plan_zone(
     plan_zone_with_clients(from_client, to_client, zone, ip_map).await
 }
 
+#[instrument(
+    level = "trace",
+    skip(from_client, to_client, ip_map),
+    fields(zone)
+)]
 async fn plan_zone_with_clients<F, T>(
     from_client: &F,
     to_client: &T,
@@ -280,9 +309,11 @@ where
         })?;
 
     let (source_records, skipped) = collect_records(&source, zone, Some(ip_map));
+    trace!(source_count = source_records.len(), skipped, "source records collected");
     let (dest_records, _) = collect_records(&dest, zone, None);
 
     let mut diff = diff_records(source_records, dest_records);
+    trace!(adds = diff.adds.len(), deletes = diff.deletes.len(), unchanged = diff.unchanged, "diff computed");
     diff.adds.sort_by_key(sort_key);
     diff.deletes.sort_by_key(sort_key);
 
@@ -409,6 +440,11 @@ async fn apply_plans(to_client: &VendorClient, plans: &[ZonePlan]) -> Result<Syn
     apply_plans_with_client(to_client, plans).await
 }
 
+#[instrument(
+    level = "debug",
+    skip(to_client, plans),
+    fields(zone_count = plans.len())
+)]
 async fn apply_plans_with_client<C>(to_client: &C, plans: &[ZonePlan]) -> Result<SyncApplySummary>
 where
     C: RecordWrite + ?Sized,
@@ -421,12 +457,14 @@ where
         // which a name resolves to nothing.
         let mut zone_add_failed = false;
         for rec in &plan.adds {
+            trace!(zone = %plan.zone, fqdn = %rec.fqdn, rtype = %rec.rtype, "applying add");
             match to_client
                 .add_record(&plan.zone, &rec.fqdn, rec.ttl, &rec.record)
                 .await
             {
                 Ok(_) => applied += 1,
                 Err(e) => {
+                    debug!(zone = %plan.zone, fqdn = %rec.fqdn, rtype = %rec.rtype, error = %e, "add failed");
                     failures += 1;
                     zone_add_failed = true;
                     eprintln!("  ! add {} {} failed: {e}", rec.fqdn, rec.rtype);
@@ -443,6 +481,7 @@ where
             continue;
         }
         for rec in &plan.deletes {
+            trace!(zone = %plan.zone, fqdn = %rec.fqdn, rtype = %rec.rtype, "applying delete");
             let params = rec.record.to_api_params();
             match to_client
                 .delete_record(&plan.zone, &rec.fqdn, &params)
@@ -450,6 +489,7 @@ where
             {
                 Ok(_) => applied += 1,
                 Err(e) => {
+                    debug!(zone = %plan.zone, fqdn = %rec.fqdn, rtype = %rec.rtype, error = %e, "delete failed");
                     failures += 1;
                     eprintln!("  ! remove {} {} failed: {e}", rec.fqdn, rec.rtype);
                 }
@@ -457,6 +497,7 @@ where
         }
     }
 
+    debug!(applied, failures, "apply complete");
     if failures > 0 {
         return Err(Error::api(format!("{failures} sync change(s) failed")));
     }

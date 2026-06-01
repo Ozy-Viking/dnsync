@@ -367,7 +367,7 @@ pub enum ServerEndpointCmd {
 
 // ─── Settings subcommands ────────────────────────────────────────────────────
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum SettingsCmd {
     /// Show current server settings
     Show {
