@@ -58,9 +58,7 @@ pub fn handle(config_path: Option<PathBuf>, cmd: ConfigCmd) -> Result<()> {
         } => {
             let server = if id.is_none() {
                 let existing_ids: Vec<String> =
-                    config::AppConfig::load_if_exists(config_path.clone())
-                        .ok()
-                        .flatten()
+                    config::AppConfig::load_if_exists(config_path.clone())?
                         .map(|c| c.servers.into_iter().map(|s| s.id).collect())
                         .unwrap_or_default();
                 cli::interactive::run_add_wizard(&existing_ids)?
