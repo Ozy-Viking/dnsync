@@ -90,6 +90,54 @@ pub fn extract_zone_names(value: &Value) -> Vec<String> {
     Vec::new()
 }
 
+/// Count the raw number of zone entries in a `list_zones` page, before any
+/// name extraction/filtering. Used to drive pagination termination so that
+/// entries with missing/non-string names don't make a full page look short.
+#[must_use]
+pub fn zone_page_len(value: &Value) -> usize {
+    if let Some(arr) = value
+        .get("response")
+        .and_then(|r| r.get("zones"))
+        .and_then(|z| z.as_array())
+    {
+        return arr.len();
+    }
+    if let Some(arr) = value.get("domains").and_then(|d| d.as_array()) {
+        return arr.len();
+    }
+    if let Some(arr) = value.as_array() {
+        return arr.len();
+    }
+    0
+}
+
+/// List every zone name on a server, paging until a short/empty page is seen.
+///
+/// Pagination stops based on the raw page size (see [`zone_page_len`]) rather
+/// than the count of successfully-extracted names, so deployments with more
+/// than `page_size` zones are fully enumerated.
+///
+/// # Errors
+///
+/// Returns any error reported by the backend's `list_zones`.
+pub async fn list_all_zone_names<C: ZoneRead + Send + Sync>(
+    client: &C,
+    page_size: u32,
+) -> Result<Vec<String>> {
+    let mut page = 1;
+    let mut names = Vec::new();
+    loop {
+        let value = client.list_zones(page, page_size).await?;
+        let raw_len = zone_page_len(&value);
+        names.extend(extract_zone_names(&value));
+        if raw_len < page_size as usize {
+            break;
+        }
+        page += 1;
+    }
+    Ok(names)
+}
+
 /// Resolve CLI/MCP-style record-list inputs into one vendor-neutral record query.
 ///
 /// # Errors
@@ -153,8 +201,7 @@ pub async fn search_bare_label_in_zones<C: ZoneRead + Send + Sync>(
     all_subdomains: bool,
     options: ListRecordsOptions,
 ) -> Result<ListRecordsResponse> {
-    let zones_value = client.list_zones(1, 1000).await?;
-    let zone_names = extract_zone_names(&zones_value);
+    let zone_names = list_all_zone_names(client, 1000).await?;
 
     let mut all_zone_records = Vec::new();
     for zone_name in &zone_names {
@@ -192,8 +239,7 @@ pub async fn list_records_for_all_zones<C: ZoneRead + Send + Sync>(
     client: &C,
     options: ListRecordsOptions,
 ) -> Result<ListRecordsResponse> {
-    let zones_value = client.list_zones(1, 1000).await?;
-    let zone_names = extract_zone_names(&zones_value);
+    let zone_names = list_all_zone_names(client, 1000).await?;
 
     let mut all_zone_records = Vec::new();
     for zone_name in &zone_names {

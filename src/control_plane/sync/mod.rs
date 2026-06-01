@@ -31,7 +31,7 @@ pub(crate) use tracing::{debug, instrument, trace};
 
 pub(crate) use crate::control_plane::config::AppConfig;
 pub(crate) use crate::core::dns::records::RecordData;
-pub(crate) use crate::core::dns::records::query::{extract_zone_names, resolve_fqdn};
+pub(crate) use crate::core::dns::records::query::{list_all_zone_names, resolve_fqdn};
 pub(crate) use crate::core::dns::responses::{AnyRecordData, ListRecordsResponse};
 pub(crate) use crate::core::dns::service::{ListRecordsOptions, RecordWrite, ZoneRead};
 pub(crate) use crate::core::error::{Error, Result};

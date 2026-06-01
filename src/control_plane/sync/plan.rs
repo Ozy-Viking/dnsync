@@ -94,18 +94,7 @@ pub(crate) async fn build_sync_plan(
         zones.to_vec()
     } else {
         const PAGE_SIZE: u32 = 1000;
-        let mut page = 1;
-        let mut names = Vec::new();
-        loop {
-            let value = from_client.list_zones(page, PAGE_SIZE).await?;
-            let batch = extract_zone_names(&value);
-            let batch_len = batch.len();
-            names.extend(batch);
-            if batch_len < PAGE_SIZE as usize {
-                break;
-            }
-            page += 1;
-        }
+        let names = list_all_zone_names(&from_client, PAGE_SIZE).await?;
         if names.is_empty() {
             return Err(Error::parse(format!(
                 "no zones found on source server '{from_id}'; specify one with --zone"
@@ -214,22 +203,21 @@ where
         adds.extend(diff.update_adds);
         deletes.extend(diff.update_deletes);
     }
+    let untouched;
     if sync_opts.delete_destination_only {
-        // Filter destination-only records through the same ignore patterns.
-        let dest_only = diff
+        // Records matching an ignore pattern are preserved (left untouched);
+        // the rest are deleted. Count the preserved ones as `untouched` so they
+        // are still reported rather than vanishing from every bucket.
+        let (preserved, to_delete): (Vec<_>, Vec<_>) = diff
             .destination_only
             .iter()
-            .filter(|r| !sync_opts.ignore.iter().any(|pat| pat.is_match(&r.fqdn)))
             .cloned()
-            .collect::<Vec<_>>();
-        deletes.extend(dest_only);
-    }
-
-    let untouched = if sync_opts.delete_destination_only {
-        0
+            .partition(|r| sync_opts.ignore.iter().any(|pat| pat.is_match(&r.fqdn)));
+        untouched = preserved.len();
+        deletes.extend(to_delete);
     } else {
-        diff.destination_only.len()
-    };
+        untouched = diff.destination_only.len();
+    }
 
     adds.sort_by_key(sort_key);
     deletes.sort_by_key(sort_key);

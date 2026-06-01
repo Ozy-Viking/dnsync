@@ -41,9 +41,5 @@ pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client
 pub const UNIFI_DEFAULT_BASE_URL: &str = "https://192.168.1.1/proxy/network/integration/v1";
 pub const PIHOLE_DEFAULT_BASE_URL: &str = "http://pi.hole";
 
-pub(crate) const CLOUDFLARE_RESOLVER_IP: &str = "1.1.1.1";
-pub(crate) const CLOUDFLARE_RESOLVER_NAME: &str = "cloudflare-dns.com";
-pub(crate) const CLOUDFLARE_DOH_URL: &str = "https://cloudflare-dns.com/dns-query";
-
 #[cfg(test)]
 mod tests;

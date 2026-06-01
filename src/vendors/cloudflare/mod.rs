@@ -4,10 +4,47 @@ pub mod service;
 
 use std::env;
 
-use crate::control_plane::config::{self as app_config, DnsServerConfig};
+use crate::control_plane::config::{
+    self as app_config, DnsServerConfig, DnsTransportConfig, DohTransportConfig,
+    DoqTransportConfig, DotTransportConfig,
+};
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
 use crate::vendors::runtime::ClientOverrides;
+
+const RESOLVER_IP: &str = "1.1.1.1";
+const RESOLVER_NAME: &str = "cloudflare-dns.com";
+const DOH_URL: &str = "https://cloudflare-dns.com/dns-query";
+
+/// Populate Cloudflare's well-known public resolver endpoints (DNS/DoT/DoH/DoQ)
+/// on a server entry, leaving any endpoint the operator has already configured
+/// untouched. Cloudflare-specific knowledge lives here, not in the control plane.
+pub fn apply_transport_defaults(server: &mut DnsServerConfig) {
+    server.dns.get_or_insert_with(|| DnsTransportConfig {
+        enabled: true,
+        addr: Some(format!("{RESOLVER_IP}:53")),
+        timeout_ms: None,
+    });
+    server.dot.get_or_insert_with(|| DotTransportConfig {
+        enabled: true,
+        addr: Some(format!("{RESOLVER_IP}:853")),
+        server_name: Some(RESOLVER_NAME.to_string()),
+        timeout_ms: None,
+    });
+    server.doh.get_or_insert_with(|| DohTransportConfig {
+        enabled: true,
+        url: Some(DOH_URL.to_string()),
+        addr: Some(format!("{RESOLVER_IP}:443")),
+        server_name: Some(RESOLVER_NAME.to_string()),
+        timeout_ms: None,
+    });
+    server.doq.get_or_insert_with(|| DoqTransportConfig {
+        enabled: true,
+        addr: Some(format!("{RESOLVER_IP}:853")),
+        server_name: Some(RESOLVER_NAME.to_string()),
+        timeout_ms: None,
+    });
+}
 
 pub fn client_from_server(
     server: &DnsServerConfig,
