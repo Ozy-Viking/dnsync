@@ -172,37 +172,15 @@ pub(crate) fn apply_provider_transport_defaults(server: &mut DnsServerConfig) {
         return;
     }
 
+    // Vendor-specific transport defaults live in each vendor's module; the
+    // control plane only dispatches to them.
     match server.vendor {
-        VendorKind::Cloudflare => apply_cloudflare_transport_defaults(server),
+        VendorKind::Cloudflare => {
+            #[cfg(feature = "cloudflare")]
+            crate::vendors::cloudflare::apply_transport_defaults(server);
+        }
         VendorKind::Technitium | VendorKind::Pangolin | VendorKind::Unifi | VendorKind::Pihole => {}
     }
-}
-
-pub(crate) fn apply_cloudflare_transport_defaults(server: &mut DnsServerConfig) {
-    server.dns.get_or_insert_with(|| DnsTransportConfig {
-        enabled: true,
-        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:53")),
-        timeout_ms: None,
-    });
-    server.dot.get_or_insert_with(|| DotTransportConfig {
-        enabled: true,
-        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:853")),
-        server_name: Some(CLOUDFLARE_RESOLVER_NAME.to_string()),
-        timeout_ms: None,
-    });
-    server.doh.get_or_insert_with(|| DohTransportConfig {
-        enabled: true,
-        url: Some(CLOUDFLARE_DOH_URL.to_string()),
-        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:443")),
-        server_name: Some(CLOUDFLARE_RESOLVER_NAME.to_string()),
-        timeout_ms: None,
-    });
-    server.doq.get_or_insert_with(|| DoqTransportConfig {
-        enabled: true,
-        addr: Some(format!("{CLOUDFLARE_RESOLVER_IP}:853")),
-        server_name: Some(CLOUDFLARE_RESOLVER_NAME.to_string()),
-        timeout_ms: None,
-    });
 }
 
 pub(crate) fn default_true() -> bool {
