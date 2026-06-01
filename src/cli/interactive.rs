@@ -221,7 +221,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         location,
         base_url,
         base_url_env: None,
-        token,
+        token: token.map(crate::core::secret::ApiToken::new),
         token_env,
         org_id,
         cluster: None,

@@ -486,7 +486,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
         ClientOverrides {
             selected_server: cli.servers.first().map(|s| s.as_str()),
             base_url: cli.base_url.as_deref(),
-            token: cli.token.as_deref(),
+            token: cli.token.as_ref(),
         },
     )?;
 
@@ -670,7 +670,7 @@ mod tests {
             servers: vec![],
             all: false,
             base_url: None,
-            token: Some("token".to_string()),
+            token: Some(dnslib::secret::ApiToken::new("token")),
             access: vec![],
             allow_zone,
             command: Command::Mcp,
