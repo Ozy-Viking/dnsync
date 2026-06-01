@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::core::dns::responses::{ZoneInfo, ZoneRecord, ZoneRecords};
 use rstest::{fixture, rstest};

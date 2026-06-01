@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::control_plane::config::{AppConfig, JobConfig, JobKind};
 use std::collections::BTreeMap;

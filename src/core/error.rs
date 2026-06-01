@@ -9,12 +9,13 @@ pub enum Error {
     #[diagnostic(code(dns::policy), help("{hint}"))]
     PolicyViolation { reason: String, hint: String },
 
-    /// The Technitium API returned `{"status":"error","errorMessage":"..."}`.
+    /// A vendor DNS API returned an error response (e.g. Technitium's
+    /// `{"status":"error","errorMessage":"..."}`).
     #[error("API error: {message}")]
     #[diagnostic(
         code(dns::api),
         help(
-            "Check the Technitium server logs for more details.\n\
+            "Check the DNS server logs for more details.\n\
               Common causes: invalid zone name, record conflict, insufficient permissions."
         )
     )]
@@ -25,7 +26,7 @@ pub enum Error {
     #[diagnostic(
         code(dns::http),
         help(
-            "Verify the server is running and TECHNITIUM_BASE_URL is correct.\n\
+            "Verify the server is running and the configured base URL is correct.\n\
               Use RUST_LOG=debug for full request details."
         )
     )]
@@ -59,7 +60,7 @@ pub enum Error {
         code(dns::parse),
         help(
             "The API response had an unexpected structure. This may indicate a \
-              version mismatch between this client and the Technitium server."
+              version mismatch between this client and the DNS server."
         )
     )]
     Parse { context: String },

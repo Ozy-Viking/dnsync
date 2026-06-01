@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::control_plane::config::{
     DnsTransportConfig, DohTransportConfig, DoqTransportConfig, DotTransportConfig, McpPermissions,

@@ -78,7 +78,7 @@ impl ZoneRead for TechnitiumClient {
             params.push(("listZone", "true"));
         }
         let raw = self.get("/api/zones/records/get", &params).await?;
-        ListRecordsResponse::from_value(&raw)
+        crate::vendors::technitium::responses::parse_list_records(&raw)
     }
 }
 
