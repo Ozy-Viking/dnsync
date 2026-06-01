@@ -56,7 +56,6 @@ pub async fn run_query(config: Option<AppConfig>, args: QueryArgs) -> Result<i32
     span.record("json", args.json);
 
     tracing::debug!("sending query");
-    tracing::debug!("sending query");
 
     let outcome = execute_query(config, args.clone()).await?;
 
