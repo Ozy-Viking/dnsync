@@ -1,6 +1,6 @@
 //! Tests for the Cloudflare DNS service implementation.
 
-pub(crate) use super::*;
+use super::*;
 pub(crate) use serde_json::json;
 
 mod behaviour;
