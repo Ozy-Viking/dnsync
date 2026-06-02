@@ -82,3 +82,81 @@ pub async fn handle_delete_allowed<C: DnsService + Send + Sync>(
     )
     .await)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control_plane::policy::{Policy, PolicyRule};
+    use crate::mcp::tools::test_support::FakeService;
+
+    fn params() -> DomainParams {
+        DomainParams {
+            server_id: "s".into(),
+            domain: "ads.example".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_blocked_requires_read() {
+        let policy = Policy::new([PolicyRule::Write], None);
+        let res = handle_list_blocked(&FakeService, &policy).await.unwrap();
+        assert_eq!(res.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn list_allowed_succeeds_with_read() {
+        let policy = Policy::new([PolicyRule::Read], None);
+        let res = handle_list_allowed(&FakeService, &policy).await.unwrap();
+        assert_eq!(res.is_error, Some(false));
+    }
+
+    #[tokio::test]
+    async fn add_blocked_requires_write() {
+        let policy = Policy::new([PolicyRule::Read], None);
+        let res = handle_add_blocked(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(true));
+        assert!(
+            res.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("does not permit write")
+        );
+    }
+
+    #[tokio::test]
+    async fn add_allowed_succeeds_with_write() {
+        let policy = Policy::new([PolicyRule::Write], None);
+        let res = handle_add_allowed(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(false));
+    }
+
+    #[tokio::test]
+    async fn delete_blocked_requires_delete() {
+        let policy = Policy::new([PolicyRule::Write], None);
+        let res = handle_delete_blocked(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(true));
+        assert!(
+            res.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("does not permit delete")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_allowed_succeeds_with_delete() {
+        let policy = Policy::new([PolicyRule::Delete], None);
+        let res = handle_delete_allowed(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(false));
+    }
+}

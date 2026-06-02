@@ -68,3 +68,103 @@ async fn dns_version_returns_package_version() {
         .expect("output should be valid JSON");
     assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
 }
+
+// ── resolve_server early-return (no network) ────────────────────────────────
+
+fn single_server_config() -> AppConfig {
+    toml::from_str(
+        r#"
+            [[servers]]
+            id = "primary"
+            vendor = "technitium"
+            token = "tok"
+
+            [servers.mcp]
+            access = ["read", "write", "delete"]
+        "#,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn list_zones_unknown_server_id_errors() {
+    let server = make_server(single_server_config());
+    let p = ListZonesParams {
+        server_id: "ghost".into(),
+        page_number: None,
+        zones_per_page: None,
+    };
+    let err = server
+        .dns_list_zones(Parameters(p))
+        .await
+        .expect_err("unknown server must error before any network call");
+    assert!(
+        err.message.contains("no server named 'ghost'"),
+        "unexpected: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn create_zone_unknown_server_id_errors() {
+    let server = make_server(single_server_config());
+    let p = CreateZoneParams {
+        server_id: "ghost".into(),
+        zone: "example.com".into(),
+        zone_type: "Primary".into(),
+    };
+    assert!(server.dns_create_zone(Parameters(p)).await.is_err());
+}
+
+#[tokio::test]
+async fn transfer_zone_unknown_source_errors() {
+    let server = make_server(single_server_config());
+    let p = TransferZoneParams {
+        zone: "example.com".into(),
+        from: "ghost".into(),
+        to: "primary".into(),
+        overwrite: true,
+        overwrite_zone: false,
+    };
+    assert!(server.dns_transfer_zone(Parameters(p)).await.is_err());
+}
+
+#[tokio::test]
+async fn transfer_zone_blocked_when_destination_lacks_write() {
+    // `src` can read; `dst` is read-only, so the write check fails before
+    // any backend call is attempted.
+    let config: AppConfig = toml::from_str(
+        r#"
+            [[servers]]
+            id = "src"
+            vendor = "technitium"
+            token = "tok"
+            [servers.mcp]
+            access = ["read", "write", "delete"]
+
+            [[servers]]
+            id = "dst"
+            vendor = "technitium"
+            token = "tok"
+            [servers.mcp]
+            access = ["read"]
+        "#,
+    )
+    .unwrap();
+    let server = make_server(config);
+    let p = TransferZoneParams {
+        zone: "example.com".into(),
+        from: "src".into(),
+        to: "dst".into(),
+        overwrite: true,
+        overwrite_zone: false,
+    };
+    let result = server.dns_transfer_zone(Parameters(p)).await.unwrap();
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("does not permit write")
+    );
+}

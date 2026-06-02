@@ -44,3 +44,88 @@ pub async fn handle_flush_cache<C: DnsService + Send + Sync>(
     )
     .await)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control_plane::policy::{Policy, PolicyRule};
+    use crate::mcp::tools::test_support::FakeService;
+
+    fn params() -> DomainParams {
+        DomainParams {
+            server_id: "s".into(),
+            domain: "example.com".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_cache_requires_read() {
+        let policy = Policy::new([PolicyRule::Write], None);
+        let res = handle_list_cache(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(true));
+        assert!(
+            res.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("does not permit read")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_cache_succeeds_with_read() {
+        let policy = Policy::new([PolicyRule::Read], None);
+        let res = handle_list_cache(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(false));
+    }
+
+    #[tokio::test]
+    async fn flush_cache_requires_write() {
+        let policy = Policy::new([PolicyRule::Read], None);
+        let res = handle_flush_cache(&FakeService, &policy).await.unwrap();
+        assert_eq!(res.is_error, Some(true));
+        assert!(
+            res.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("does not permit write")
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_cache_succeeds_with_write() {
+        let policy = Policy::new([PolicyRule::Write], None);
+        let res = handle_flush_cache(&FakeService, &policy).await.unwrap();
+        assert_eq!(res.is_error, Some(false));
+    }
+
+    #[tokio::test]
+    async fn delete_cache_zone_requires_delete() {
+        let policy = Policy::new([PolicyRule::Write], None);
+        let res = handle_delete_cache_zone(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(true));
+        assert!(
+            res.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("does not permit delete")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_cache_zone_succeeds_with_delete() {
+        let policy = Policy::new([PolicyRule::Delete], None);
+        let res = handle_delete_cache_zone(&FakeService, &policy, params())
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(false));
+    }
+}

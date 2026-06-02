@@ -167,3 +167,173 @@ fn validate_accepts_multiple_servers() {
     args.server = vec!["dns1".to_string(), "dns2".to_string()];
     validate_cli_rules(&args).unwrap();
 }
+
+// ── split_addr ──────────────────────────────────────────────────────────────
+
+#[test]
+fn split_addr_host_only() {
+    let (host, port) = split_addr("dns.example").unwrap();
+    assert_eq!(host, "dns.example");
+    assert_eq!(port, None);
+}
+
+#[test]
+fn split_addr_host_with_port() {
+    let (host, port) = split_addr("dns.example:8053").unwrap();
+    assert_eq!(host, "dns.example");
+    assert_eq!(port, Some(8053));
+}
+
+#[test]
+fn split_addr_ipv4_with_port() {
+    let (host, port) = split_addr("1.1.1.1:53").unwrap();
+    assert_eq!(host, "1.1.1.1");
+    assert_eq!(port, Some(53));
+}
+
+#[test]
+fn split_addr_bare_ipv6_has_no_port() {
+    // A bare IPv6 literal contains colons but must not be split on them.
+    let (host, port) = split_addr("2606:4700:4700::1111").unwrap();
+    assert_eq!(host, "2606:4700:4700::1111");
+    assert_eq!(port, None);
+}
+
+#[test]
+fn split_addr_bracketed_ipv6_with_port() {
+    let (host, port) = split_addr("[2606:4700:4700::1111]:853").unwrap();
+    assert_eq!(host, "2606:4700:4700::1111");
+    assert_eq!(port, Some(853));
+}
+
+#[test]
+fn split_addr_bracketed_ipv6_without_port() {
+    let (host, port) = split_addr("[::1]").unwrap();
+    assert_eq!(host, "::1");
+    assert_eq!(port, None);
+}
+
+#[test]
+fn split_addr_rejects_empty() {
+    assert!(split_addr("   ").is_err());
+}
+
+#[test]
+fn split_addr_rejects_non_numeric_port() {
+    assert!(split_addr("host:notaport").is_err());
+    assert!(split_addr("[::1]:bad").is_err());
+}
+
+// ── strip_https_scheme_for_display ──────────────────────────────────────────
+
+#[test]
+fn strip_https_scheme_removes_only_https_prefix() {
+    assert_eq!(
+        strip_https_scheme_for_display("https://dns.example/dns-query"),
+        "dns.example/dns-query"
+    );
+    // No scheme — returned unchanged.
+    assert_eq!(
+        strip_https_scheme_for_display("dns.example/dns-query"),
+        "dns.example/dns-query"
+    );
+    // http:// is left intact (only https:// is stripped).
+    assert_eq!(
+        strip_https_scheme_for_display("http://dns.example"),
+        "http://dns.example"
+    );
+}
+
+// ── extract_doh_host ────────────────────────────────────────────────────────
+
+#[test]
+fn extract_doh_host_pulls_authority_from_url() {
+    assert_eq!(
+        extract_doh_host("https://cloudflare-dns.com/dns-query"),
+        Some("cloudflare-dns.com")
+    );
+}
+
+#[test]
+fn extract_doh_host_strips_port_and_userinfo() {
+    assert_eq!(
+        extract_doh_host("https://user@dns.example:443/dns-query"),
+        Some("dns.example")
+    );
+}
+
+#[test]
+fn extract_doh_host_handles_bracketed_ipv6() {
+    assert_eq!(
+        extract_doh_host("https://[2606:4700:4700::1111]:443/dns-query"),
+        Some("2606:4700:4700::1111")
+    );
+}
+
+#[test]
+fn extract_doh_host_without_scheme() {
+    assert_eq!(
+        extract_doh_host("dns.example/dns-query"),
+        Some("dns.example")
+    );
+}
+
+#[test]
+fn extract_doh_host_empty_authority_is_none() {
+    assert_eq!(extract_doh_host("https:///dns-query"), None);
+}
+
+// ── describe_target ─────────────────────────────────────────────────────────
+
+use crate::core::dns::resolver::{ResolverKind, ResolverTarget};
+
+fn target(transport: ValidationTransport) -> ResolverTarget {
+    ResolverTarget {
+        kind: ResolverKind::AdHoc,
+        transport,
+        host: Some("dns.example".to_string()),
+        port: None,
+        url: None,
+        server_name: None,
+        tcp_only: false,
+        timeout: Duration::from_millis(5000),
+    }
+}
+
+#[test]
+fn describe_target_dns_default_port_label_omits_port() {
+    let (label, extras, url, host, port) = describe_target(&target(ValidationTransport::Dns));
+    assert_eq!(label, "dns.example");
+    assert!(extras.is_empty());
+    assert_eq!(url, None);
+    assert_eq!(host.as_deref(), Some("dns.example"));
+    assert_eq!(port, Some(53));
+}
+
+#[test]
+fn describe_target_dns_non_default_port_in_label() {
+    let mut t = target(ValidationTransport::Dns);
+    t.port = Some(5353);
+    let (label, _, _, _, port) = describe_target(&t);
+    assert_eq!(label, "dns.example:5353");
+    assert_eq!(port, Some(5353));
+}
+
+#[test]
+fn describe_target_dot_adds_sni_extra_and_default_port() {
+    let mut t = target(ValidationTransport::Dot);
+    t.server_name = Some("sni.example".to_string());
+    let (label, extras, _, _, port) = describe_target(&t);
+    assert_eq!(label, "dns.example:853");
+    assert_eq!(port, Some(853));
+    assert!(extras.iter().any(|(k, v)| k == "sni" && v == "sni.example"));
+}
+
+#[test]
+fn describe_target_doh_label_strips_scheme() {
+    let mut t = target(ValidationTransport::Doh);
+    t.url = Some("https://dns.example/dns-query".to_string());
+    let (label, _, url, _, _) = describe_target(&t);
+    assert_eq!(label, "dns.example/dns-query");
+    assert_eq!(url.as_deref(), Some("https://dns.example/dns-query"));
+}

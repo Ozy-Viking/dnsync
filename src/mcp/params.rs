@@ -314,3 +314,120 @@ pub struct ResolveParams {
     #[serde(default)]
     pub chase: Option<bool>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn de<T: for<'de> Deserialize<'de>>(value: serde_json::Value) -> T {
+        serde_json::from_value(value).expect("params should deserialize")
+    }
+
+    #[test]
+    fn list_zones_pagination_is_optional() {
+        let p: ListZonesParams = de(json!({"server_id": "home"}));
+        assert_eq!(p.server_id, "home");
+        assert_eq!(p.page_number, None);
+        assert_eq!(p.zones_per_page, None);
+    }
+
+    #[test]
+    fn transfer_zone_overwrite_defaults() {
+        // overwrite defaults to true, overwrite_zone defaults to false.
+        let p: TransferZoneParams = de(json!({"zone": "example.com", "from": "a", "to": "b"}));
+        assert!(p.overwrite);
+        assert!(!p.overwrite_zone);
+
+        let p: TransferZoneParams =
+            de(json!({"zone": "z", "from": "a", "to": "b", "overwrite": false}));
+        assert!(!p.overwrite);
+    }
+
+    #[test]
+    fn import_zone_file_flattens_options_with_defaults() {
+        let p: ImportZoneFileParams = de(json!({
+            "server_id": "home",
+            "zone": "example.com",
+            "content": "$ORIGIN example.com.\n",
+        }));
+        assert_eq!(p.file_name, None);
+        // flattened ZoneImportOptions defaults: overwrite true, others false.
+        assert!(p.options.overwrite);
+        assert!(!p.options.overwrite_zone);
+        assert!(!p.options.overwrite_soa_serial);
+    }
+
+    #[test]
+    fn import_zone_file_reads_flattened_overrides() {
+        let p: ImportZoneFileParams = de(json!({
+            "server_id": "home",
+            "zone": "example.com",
+            "content": "data",
+            "file_name": "custom.txt",
+            "overwrite": false,
+            "overwrite_zone": true,
+        }));
+        assert_eq!(p.file_name.as_deref(), Some("custom.txt"));
+        assert!(!p.options.overwrite);
+        assert!(p.options.overwrite_zone);
+    }
+
+    #[test]
+    fn list_records_accepts_camel_and_snake_local_ip_aliases() {
+        let camel: ListRecordsParams = de(json!({"server_id": "home", "useLocalIp": true}));
+        assert_eq!(camel.use_local_ip, Some(true));
+
+        let snake: ListRecordsParams = de(json!({"server_id": "home", "use_local_ip": true}));
+        assert_eq!(snake.use_local_ip, Some(true));
+
+        let omitted: ListRecordsParams = de(json!({"server_id": "home"}));
+        assert_eq!(omitted.use_local_ip, None);
+        assert_eq!(omitted.domain, None);
+    }
+
+    #[test]
+    fn add_record_parses_typed_record_payload() {
+        let p: AddRecordParams = de(json!({
+            "server_id": "home",
+            "zone": "example.com",
+            "domain": "www.example.com",
+            "ttl": 300,
+            "record": {"type": "A", "ipAddress": "1.2.3.4"},
+        }));
+        assert_eq!(p.ttl, Some(300));
+        assert!(matches!(p.record, RecordData::A { .. }));
+    }
+
+    #[test]
+    fn log_level_param_uses_lowercase_tags_and_maps_to_log_level() {
+        let p: LogLevelParam = de(json!("warning"));
+        assert!(matches!(p, LogLevelParam::Warning));
+        assert!(matches!(
+            LogLevel::from(LogLevelParam::Critical),
+            LogLevel::Critical
+        ));
+    }
+
+    #[test]
+    fn logs_params_convert_into_logs_options() {
+        let p: LogsParams = de(json!({
+            "server_id": "home",
+            "lines": 25,
+            "level": "error",
+        }));
+        let opts: LogsOptions = p.into();
+        assert_eq!(opts.lines, Some(25));
+        assert!(matches!(opts.level, Some(LogLevel::Error)));
+        assert_eq!(opts.start, None);
+    }
+
+    #[test]
+    fn sync_params_default_to_dry_run_with_empty_collections() {
+        let p: SyncParams = de(json!({}));
+        assert!(!p.apply, "sync must default to dry-run");
+        assert!(p.zones.is_empty());
+        assert!(p.map.is_empty());
+        assert_eq!(p.profile, None);
+    }
+}
