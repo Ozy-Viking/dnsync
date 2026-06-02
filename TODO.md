@@ -111,3 +111,10 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
       a single `list_zones(1, 1000)` page / filtered-name count.
 - [x] Count ignored destination-only records as `untouched` under `--delete-destination-only`.
 - [x] Relayer Cloudflare transport defaults into `vendors::cloudflare::apply_transport_defaults`.
+- [x] Propagate config-load errors (`?`) before the `config add` wizard instead of
+      swallowing them via `.ok().flatten()`.
+- [ ] CodeRabbit flagged the `bye felicia` `Error::UserCancelled` message in
+      `cli/dispatch/mod.rs` as non-production wording. Intentionally kept for now
+      (owner decision); revisit if a neutral message is wanted before release.
+      The companion "by-value `cli.command` move" claim is a false positive (the
+      code compiles and CI is green).
