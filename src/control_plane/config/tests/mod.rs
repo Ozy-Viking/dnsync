@@ -7,8 +7,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod jobs;
 mod loading;
 mod persistence;
+mod render;
 mod resolve;
+mod secure_io;
 mod transport;
+mod validation;
 
 fn temp_config_path(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
