@@ -1,0 +1,31 @@
+services:
+  dnsync-daemon:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: dnsync:test-daemon
+    command: ["daemon"]
+    restart: unless-stopped
+    environment:
+      DNSYNC_CONFIG: /config/config.toml
+      DNSYNC_STATE_DB: /state/state.db
+      RUST_LOG: dnsync=debug,dnslib=debug,warn
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./config.toml:/config/config.toml:ro
+      - dnsync-state:/state
+    develop:
+      watch:
+        - action: rebuild
+          path: ../src
+        - action: rebuild
+          path: ../Cargo.toml
+        - action: rebuild
+          path: ../Cargo.lock
+        - action: rebuild
+          path: ../Dockerfile
+
+volumes:
+  dnsync-state:

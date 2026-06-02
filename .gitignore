@@ -8,3 +8,5 @@
 /add-bacon-location-overlays.sh
 /.understand-anything
 /tmp
+/testing/.env
+/testing/config.toml

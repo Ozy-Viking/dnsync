@@ -1,0 +1,35 @@
+# Copy this file to testing/config.toml and fill in real endpoints before running:
+#   cp testing/config.toml.example testing/config.toml
+#   chmod 600 testing/config.toml
+
+[daemon]
+state_db = "/state/state.db"
+heartbeat_interval = "5s"
+heartbeat_timeout = "20s"
+shutdown_timeout = "5s"
+worker_threads = 2
+critical_failure_threshold = 3
+
+[[servers]]
+id = "source"
+vendor = "cloudflare"
+token_env = "DNSYNC_CLOUDFLARE_API_TOKEN"
+
+[[servers]]
+id = "destination"
+vendor = "technitium"
+base_url_env = "DNSYNC_DESTINATION_BASE_URL"
+token_env = "DNSYNC_DESTINATION_API_TOKEN"
+
+[[jobs]]
+id = "record-sync-test"
+kind = "record_sync"
+interval = "1m"
+run_immediately = true
+dry_run = false
+from = "source"
+to = "destination"
+zones = ["example.com"]
+create_missing = true
+overwrite_existing = true
+delete_destination_only = false
