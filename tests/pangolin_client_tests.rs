@@ -10,11 +10,42 @@ use dnslib::vendors::pangolin::client::PangolinClient;
 use mockito::ServerGuard;
 use rstest::{fixture, rstest};
 
+/// Creates a new asynchronous mock HTTP server for use in tests.
+///
+/// # Examples
+///
+/// ```
+/// # async fn example() {
+/// let server = server().await;
+/// // use `server` to register expectations and obtain its base URL:
+/// let base = server.url();
+/// # }
+/// ```
 #[fixture]
 async fn server() -> ServerGuard {
     mockito::Server::new_async().await
 }
 
+/// Construct a PangolinClient configured to talk to the given mock server using a fixed test token and org id.
+///
+/// The returned client uses the server's base URL, the API token `pg-token`, and organization id `org-1`.
+///
+/// # Parameters
+///
+/// - `server`: mockito server guard whose URL is used as the client's base URL.
+///
+/// # Returns
+///
+/// A `PangolinClient` configured for the provided server, token, and organization.
+///
+/// # Examples
+///
+/// ```
+/// // In tests this fixture is provided by the `server` async fixture:
+/// // let server: mockito::ServerGuard = ...;
+/// let client = make_client(&server);
+/// assert_eq!(client.org_id, "org-1");
+/// ```
 fn make_client(server: &ServerGuard) -> PangolinClient {
     PangolinClient::new(server.url(), ApiToken::new("pg-token"), "org-1".into())
         .expect("client builds")
@@ -64,6 +95,16 @@ async fn unsuccessful_envelope_maps_to_api_error(#[future] server: ServerGuard) 
     );
 }
 
+/// Verifies that a 403 Pangolin response envelope is mapped to `Error::Forbidden` and carries the envelope's message.
+///
+/// # Examples
+///
+/// ```
+/// # async fn example(client: &PangolinClient) {
+/// let err = client.get("/resources", &[]).await.unwrap_err();
+/// assert!(matches!(err, dnslib::error::Error::Forbidden { ref message } if message == "Key does not have root access"));
+/// # }
+/// ```
 #[rstest]
 #[tokio::test]
 async fn forbidden_envelope_maps_to_forbidden_error(#[future] server: ServerGuard) {

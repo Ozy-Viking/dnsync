@@ -103,7 +103,28 @@ fn render_round_trips_servers_clusters_daemon_and_jobs() {
     );
 }
 
-#[test]
+/// Verifies that rendering a server without credentials writes an empty token placeholder.
+///
+/// Ensures that when a server has neither an explicit token nor a token environment variable,
+/// `AppConfig::render_toml()` emits `token = ""` so the generated TOML contains a placeholder
+/// for the credential field.
+///
+/// # Examples
+///
+/// ```
+/// let mut s = server_with_url("http://x:5380");
+/// s.id = "placeholder".into();
+/// s.token = None;
+/// s.token_env = None;
+/// let cfg = AppConfig {
+///     servers: vec![s],
+///     clusters: std::collections::BTreeMap::new(),
+///     daemon: None,
+///     jobs: Vec::new(),
+/// };
+/// let rendered = cfg.render_toml().unwrap();
+/// assert!(rendered.contains("token = \"\""));
+/// ```
 fn render_writes_empty_token_placeholder_when_no_credential() {
     let mut server = server_with_url("http://x:5380");
     server.id = "placeholder".into();
@@ -124,6 +145,18 @@ fn render_writes_empty_token_placeholder_when_no_credential() {
 
 // ── add_server ──────────────────────────────────────────────────────────────
 
+/// Creates a `DnsServerConfig` pre-populated with a sample URL, the given `id`, and a test API token.
+///
+/// Useful in tests to produce a valid server config quickly.
+///
+/// # Examples
+///
+/// ```
+/// let s = server("home");
+/// assert_eq!(s.id, "home");
+/// assert!(s.token.is_some());
+/// assert!(s.base_url.contains("example"));
+/// ```
 fn server(id: &str) -> DnsServerConfig {
     let mut s = server_with_url("http://example:5380");
     s.id = id.to_string();
@@ -131,6 +164,22 @@ fn server(id: &str) -> DnsServerConfig {
     s
 }
 
+/// Verifies that add_server creates a new config file on first call and appends subsequent servers.
+///
+/// The test creates a temporary config path, adds two servers (`"home"` then `"lab"`), loads the resulting
+/// configuration, and asserts that both servers exist in insertion order.
+///
+/// # Examples
+///
+/// ```
+/// let path = temp_config_path("add-server");
+/// add_server(Some(path.clone()), server("home")).expect("first add creates file");
+/// add_server(Some(path.clone()), server("lab")).expect("second add appends");
+///
+/// let cfg = load_from_path(&path).expect("load after adds");
+/// let ids: Vec<&str> = cfg.servers.iter().map(|s| s.id.as_str()).collect();
+/// assert_eq!(ids, vec!["home", "lab"]);
+/// ```
 #[test]
 fn add_server_creates_file_then_appends() {
     let path = temp_config_path("add-server");
@@ -152,6 +201,28 @@ fn add_server_rejects_duplicate_id() {
     assert!(err.contains("duplicate DNS server id"), "unexpected: {err}");
 }
 
+/// Ensures that appending a server preserves pre-existing comments in the config file.
+///
+/// Writes a hand-authored config containing a comment and a `[[servers]]` table, then calls
+/// `add_server` to append another server and asserts the original comment remains and the new
+/// server `id` appears in the file.
+///
+/// # Examples
+///
+/// ```
+/// // Arrange: create config file with a leading comment and one server
+/// let path = temp_config_path("add-comments");
+/// ensure_config_dir(&path).unwrap();
+/// write_private_file(&path, "# my hand-written comment\n[[servers]]\nid = \"home\"\n").unwrap();
+///
+/// // Act: append a new server
+/// add_server(Some(path.clone()), server("lab")).expect("append to commented file");
+///
+/// // Assert: original comment still present and new server id written
+/// let raw = std::fs::read_to_string(&path).unwrap();
+/// assert!(raw.contains("# my hand-written comment"));
+/// assert!(raw.contains("id = \"lab\""));
+/// ```
 #[test]
 fn add_server_preserves_existing_comments() {
     let path = temp_config_path("add-comments");
@@ -201,6 +272,18 @@ fn update_server_endpoint_adds_then_removes_transport() {
     assert!(cfg.selected_server(Some("home")).unwrap().dot.is_none());
 }
 
+/// Verifies that attempting to update an endpoint for a non-existent server returns an error.
+///
+/// # Examples
+///
+/// ```
+/// let path = temp_config_path("endpoint-missing");
+/// add_server(Some(path.clone()), server("home")).unwrap();
+/// let err = update_server_endpoint(Some(path), "ghost", EndpointUpdate::Dns(None))
+///     .expect_err("unknown server must error")
+///     .to_string();
+/// assert!(err.contains("does not define a DNS server named 'ghost'"));
+/// ```
 #[test]
 fn update_server_endpoint_unknown_server_errors() {
     let path = temp_config_path("endpoint-missing");

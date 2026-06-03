@@ -6,6 +6,32 @@ use crate::{
     mcp::{helpers::run_json, params::LogsParams},
 };
 
+/// Fetches logs from the given DNS service and produces the MCP tool result named `"dns_logs"`.
+///
+/// The operation enforces the provided `policy`'s read permission; if read is not permitted the
+/// produced `CallToolResult` reflects the denial. Log entries are serialized to JSON for the tool
+/// result; serialization failures are converted into a parsed error value.
+///
+/// # Parameters
+///
+/// - `client`: DNS service client used to fetch logs.
+/// - `policy`: Policy evaluated to determine whether read access is permitted (affects the resulting
+///   `CallToolResult` error state).
+/// - `params`: Parameters that specify which logs to fetch.
+///
+/// # Returns
+///
+/// A `CallToolResult` containing the serialized log entries as JSON; `is_error` will be `Some(true)`
+/// when the policy denies read or when an internal error occurs.
+///
+/// # Examples
+///
+/// ```
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let result = handle_logs(&client, &policy, params).await?;
+/// // `result` is the MCP tool output for "dns_logs"
+/// # Ok(()) }
+/// ```
 pub async fn handle_logs<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,

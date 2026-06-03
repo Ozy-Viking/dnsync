@@ -320,10 +320,42 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Deserialize a JSON `Value` into the requested type, panicking if deserialization fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics with "params should deserialize" if `value` cannot be deserialized into `T`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use serde::Deserialize;
+    /// use serde_json::json;
+    ///
+    /// #[derive(Deserialize, Debug, PartialEq)]
+    /// struct S { x: i32 }
+    ///
+    /// let v = json!({ "x": 10 });
+    /// let s: S = de(v);
+    /// assert_eq!(s, S { x: 10 });
+    /// ```
     fn de<T: for<'de> Deserialize<'de>>(value: serde_json::Value) -> T {
         serde_json::from_value(value).expect("params should deserialize")
     }
 
+    /// Verifies that pagination fields are omitted when not provided in the input.
+    ///
+    /// Deserializes a minimal JSON object into `ListZonesParams` and asserts that
+    /// `page_number` and `zones_per_page` are `None` by default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let p: ListZonesParams = de(json!({"server_id": "home"}));
+    /// assert_eq!(p.server_id, "home");
+    /// assert_eq!(p.page_number, None);
+    /// assert_eq!(p.zones_per_page, None);
+    /// ```
     #[test]
     fn list_zones_pagination_is_optional() {
         let p: ListZonesParams = de(json!({"server_id": "home"}));

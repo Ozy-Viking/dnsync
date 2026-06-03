@@ -70,6 +70,23 @@ pub async fn handle_add_allowed<C: DnsService + Send + Sync>(
     .await)
 }
 
+/// Deletes a domain from the DNS allowed list if the policy permits it.
+///
+/// # Returns
+///
+/// `Ok(CallToolResult)` containing the tool response when the deletion was initiated successfully; `Err(McpError)` if an error occurred (permission check or service error).
+///
+/// # Examples
+///
+/// ```
+/// # use crate::{handle_delete_allowed, DomainParams, Policy, FakeService};
+/// # tokio_test::block_on(async {
+/// let client = FakeService::new();
+/// let policy = Policy::new([], None);
+/// let params = DomainParams { server_id: "s", domain: "example.com" };
+/// let _res = handle_delete_allowed(&client, &policy, params).await;
+/// # });
+/// ```
 pub async fn handle_delete_allowed<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
@@ -89,6 +106,17 @@ mod tests {
     use crate::control_plane::policy::{Policy, PolicyRule};
     use crate::mcp::tools::test_support::FakeService;
 
+    /// Create a DomainParams instance for tests with `server_id` set to `"s"` and `domain` set to `"ads.example"`.
+    ///
+    /// Returns a `DomainParams` preconfigured for use in the module's unit tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let p = params();
+    /// assert_eq!(p.server_id, "s");
+    /// assert_eq!(p.domain, "ads.example");
+    /// ```
     fn params() -> DomainParams {
         DomainParams {
             server_id: "s".into(),

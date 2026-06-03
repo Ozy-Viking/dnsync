@@ -48,6 +48,29 @@ pub async fn handle_add_record<C: DnsService + Send + Sync>(
     .await)
 }
 
+/// Deletes a DNS record in the specified zone using the given DNS service and policy.
+///
+/// The operation enforces delete permission and zone authorization via the provided `Policy`.
+///
+/// # Returns
+///
+/// `CallToolResult` describing the outcome of the delete operation; `is_error == Some(true)` if the operation failed.
+///
+/// # Examples
+///
+/// ```
+/// # use crate::mcp::params::DeleteRecordParams;
+/// # use crate::mcp::tools::records::handle_delete_record;
+/// # async fn example<C: crate::dns::DnsService + Send + Sync>(client: &C, policy: &crate::Policy) {
+/// let params = DeleteRecordParams {
+///     server_id: "s".to_string(),
+///     zone: "example.com".to_string(),
+///     domain: "www.example.com".to_string(),
+///     record: /* record descriptor */ Default::default(),
+/// };
+/// let result = handle_delete_record(client, policy, params).await.unwrap();
+/// # }
+/// ```
 pub async fn handle_delete_record<C: DnsService + Send + Sync>(
     client: &C,
     policy: &Policy,
@@ -69,6 +92,25 @@ mod tests {
     use crate::mcp::tools::test_support::FakeService;
     use serde_json::json;
 
+    /// Constructs a `ListRecordsParams` configured for tests using the
+    /// `example.com` zone and `www.example.com` domain.
+    ///
+    /// # Returns
+    ///
+    /// A `ListRecordsParams` with `server_id` set to `"s"`, `domain` set to
+    /// `Some("www.example.com")`, `zone` set to `Some("example.com")`, and
+    /// `all_subdomains` and `use_local_ip` set to `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let p = list_params();
+    /// assert_eq!(p.server_id, "s");
+    /// assert_eq!(p.domain.as_deref(), Some("www.example.com"));
+    /// assert_eq!(p.zone.as_deref(), Some("example.com"));
+    /// assert!(p.all_subdomains.is_none());
+    /// assert!(p.use_local_ip.is_none());
+    /// ```
     fn list_params() -> ListRecordsParams {
         ListRecordsParams {
             server_id: "s".into(),
