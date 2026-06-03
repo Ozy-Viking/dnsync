@@ -71,6 +71,23 @@ async fn dns_version_returns_package_version() {
 
 // ── resolve_server early-return (no network) ────────────────────────────────
 
+/// Creates an `AppConfig` containing a single server named "primary".
+///
+/// The returned configuration includes a server with:
+/// - `id = "primary"`
+/// - `vendor = "technitium"`
+/// - `token = "tok"`
+/// - `servers.mcp.access = ["read", "write", "delete"]`
+///
+/// # Examples
+///
+/// ```
+/// let cfg = single_server_config();
+/// assert_eq!(cfg.servers[0].id, "primary");
+/// assert_eq!(cfg.servers[0].vendor.as_deref(), Some("technitium"));
+/// assert_eq!(cfg.servers[0].token.as_deref(), Some("tok"));
+/// assert_eq!(cfg.servers[0].mcp.as_ref().unwrap().access, vec!["read", "write", "delete"]);
+/// ```
 fn single_server_config() -> AppConfig {
     toml::from_str(
         r#"
@@ -86,6 +103,27 @@ fn single_server_config() -> AppConfig {
     .unwrap()
 }
 
+/// Ensures `dns_list_zones` errors when called with a server id that does not exist.
+///
+/// The test constructs a server from a known configuration and calls `dns_list_zones`
+/// with `server_id = "ghost"`, asserting the call fails and the error message
+/// contains "no server named 'ghost'".
+///
+/// # Examples
+///
+/// ```
+/// let server = make_server(single_server_config());
+/// let params = ListZonesParams {
+///     server_id: "ghost".into(),
+///     page_number: None,
+///     zones_per_page: None,
+/// };
+/// let err = server
+///     .dns_list_zones(Parameters(params))
+///     .await
+///     .expect_err("unknown server must error before any network call");
+/// assert!(err.message.contains("no server named 'ghost'"));
+/// ```
 #[tokio::test]
 async fn list_zones_unknown_server_id_errors() {
     let server = make_server(single_server_config());
@@ -104,6 +142,22 @@ async fn list_zones_unknown_server_id_errors() {
     );
 }
 
+/// Verifies that attempting to create a DNS zone for a non-existent server ID returns an error.
+///
+/// This test constructs a server from a known single-server configuration and calls
+/// `dns_create_zone` with `server_id = "ghost"`, asserting the call fails before any network activity.
+///
+/// # Examples
+///
+/// ```
+/// let server = make_server(single_server_config());
+/// let p = CreateZoneParams {
+///     server_id: "ghost".into(),
+///     zone: "example.com".into(),
+///     zone_type: "Primary".into(),
+/// };
+/// assert!(server.dns_create_zone(Parameters(p)).await.is_err());
+/// ```
 #[tokio::test]
 async fn create_zone_unknown_server_id_errors() {
     let server = make_server(single_server_config());
@@ -128,6 +182,20 @@ async fn transfer_zone_unknown_source_errors() {
     assert!(server.dns_transfer_zone(Parameters(p)).await.is_err());
 }
 
+/// Verifies that a zone transfer is rejected when the destination server does not permit write access.
+///
+/// The test constructs two servers in the configuration: a source (`src`) that permits write and
+/// a destination (`dst`) that is read-only. It invokes `dns_transfer_zone` to transfer a zone
+/// from `src` to `dst` and asserts the RPC result indicates an error and the returned message
+/// mentions that the destination "does not permit write".
+///
+/// # Examples
+///
+/// ```
+/// // configuration: src has write, dst is read-only
+/// // calling dns_transfer_zone(...) returns a result with `is_error == Some(true)`
+/// // and the content text contains "does not permit write"
+/// ```
 #[tokio::test]
 async fn transfer_zone_blocked_when_destination_lacks_write() {
     // `src` can read; `dst` is read-only, so the write check fails before

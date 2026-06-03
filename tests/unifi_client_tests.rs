@@ -14,16 +14,59 @@ use dnslib::vendors::unifi::client::UnifiClient;
 use mockito::{Matcher, ServerGuard};
 use rstest::{fixture, rstest};
 
+/// Creates a new asynchronous mock server for use in tests.
+///
+/// The returned guard manages the server's lifetime and provides the base URL
+/// for configuring HTTP clients and registering mock endpoints.
+///
+/// # Examples
+///
+/// ```
+/// # use mockito::ServerGuard;
+/// # async fn run() {
+/// let server: ServerGuard = server().await;
+/// let base = server.url();
+/// assert!(base.starts_with("http"));
+/// # }
+/// ```
 #[fixture]
 async fn server() -> ServerGuard {
     mockito::Server::new_async().await
 }
 
+/// Constructs a `UnifiClient` pointed at the given mock `server` and configured for `site`.
+///
+/// The client is created with a fixed API token "`api-key-123`" so it can be used in tests that
+/// assert authentication headers and request paths.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use mockito::Server;
+/// # use crate::tests::make_client;
+/// # async fn run() {
+/// let server = mockito::Server::new_async().await;
+/// let client = make_client(&server, "Default");
+/// # }
+/// ```
 fn make_client(server: &ServerGuard, site: &str) -> UnifiClient {
     UnifiClient::new(server.url(), ApiToken::new("api-key-123"), site.into())
         .expect("client builds")
 }
 
+/// Verifies that listing sites includes the configured API key header and returns parsed site entries.
+///
+/// This integration test starts a mock server that expects a `GET /sites` request with header
+/// `x-api-key: api-key-123`, responds with a single site JSON entry, and asserts the client
+/// returns that entry.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Setup a server and client, then call:
+/// // let sites = client.list_all_sites().await.unwrap();
+/// // assert_eq!(sites[0].id, "site-uuid");
+/// ```
 #[rstest]
 #[tokio::test]
 async fn list_all_sites_sends_api_key_and_returns_sites(#[future] server: ServerGuard) {
@@ -142,6 +185,22 @@ async fn list_all_sites_paginates_until_total_reached(#[future] server: ServerGu
     assert_eq!(sites[1].id, "uuid-b");
 }
 
+/// Verifies that DNS policy listing resolves the configured site name to its UUID and then requests that site's DNS policies.
+///
+/// This test starts a mock server that first returns a sites listing containing a site named "Default" with id
+/// `site-uuid`, then expects a GET to `/sites/site-uuid/dns/policies` with the API key header and returns one DNS
+/// policy. The test asserts the client resolves the site name, queries the correct endpoint, and returns the policy
+/// with the expected id and domain.
+///
+/// # Examples
+///
+/// ```
+/// # async fn example(server: mockito::Server) {
+/// let client = make_client(&server, "Default");
+/// let policies = client.list_all_dns_policies(None).await.expect("ok");
+/// assert!(policies.iter().any(|p| p.domain == "host.example.com"));
+/// # }
+/// ```
 #[rstest]
 #[tokio::test]
 async fn list_all_dns_policies_resolves_site_then_queries_policies(#[future] server: ServerGuard) {

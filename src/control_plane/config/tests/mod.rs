@@ -13,6 +13,24 @@ mod secure_io;
 mod transport;
 mod validation;
 
+/// Create a unique temporary filesystem path for a test configuration file named `config.toml`.
+///
+/// The `name` value is incorporated into a generated subdirectory name together with the
+/// current process id and a time-based nonce (nanoseconds since the UNIX epoch) to avoid
+/// collisions between concurrent test runs. The resulting path is:
+/// `<temp_dir>/dnsync-config-tests/<name>-<pid>-<nonce>/config.toml`.
+///
+/// # Parameters
+///
+/// - `name`: base identifier used in the generated directory name.
+///
+/// # Examples
+///
+/// ```
+/// let path = temp_config_path("example");
+/// assert_eq!(path.file_name().and_then(|s| s.to_str()), Some("config.toml"));
+/// assert!(path.to_string_lossy().contains("dnsync-config-tests"));
+/// ```
 fn temp_config_path(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -246,6 +246,16 @@ fn strip_https_scheme_removes_only_https_prefix() {
 
 // ── extract_doh_host ────────────────────────────────────────────────────────
 
+/// Confirms that `extract_doh_host` extracts the authority (host) from a DoH URL.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(
+///     extract_doh_host("https://cloudflare-dns.com/dns-query"),
+///     Some("cloudflare-dns.com")
+/// );
+/// ```
 #[test]
 fn extract_doh_host_pulls_authority_from_url() {
     assert_eq!(
@@ -270,6 +280,15 @@ fn extract_doh_host_handles_bracketed_ipv6() {
     );
 }
 
+/// Extracts the authority (host or IPv6) from a DoH request string that may omit the URL scheme.
+///
+/// Returns `Some(&str)` with the host (stripped of userinfo and port, and without surrounding `[]` for IPv6) when an authority is present, or `None` when the authority is empty.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(extract_doh_host("dns.example/dns-query"), Some("dns.example"));
+/// ```
 #[test]
 fn extract_doh_host_without_scheme() {
     assert_eq!(
@@ -287,6 +306,22 @@ fn extract_doh_host_empty_authority_is_none() {
 
 use crate::core::dns::resolver::{ResolverKind, ResolverTarget};
 
+/// Construct a reusable test ResolverTarget for "dns.example" with the given transport.
+///
+/// The returned target is an ad-hoc resolver with host `"dns.example"`, no explicit port,
+/// no URL, no server name, TCP disabled, and a 5-second timeout. The `transport` field is set
+/// to the provided value.
+///
+/// # Examples
+///
+/// ```
+/// let t = target(ValidationTransport::Dns);
+/// assert_eq!(t.host.as_deref(), Some("dns.example"));
+/// assert_eq!(t.kind, ResolverKind::AdHoc);
+/// assert_eq!(t.transport, ValidationTransport::Dns);
+/// assert_eq!(t.port, None);
+/// assert_eq!(t.timeout.as_millis(), 5000);
+/// ```
 fn target(transport: ValidationTransport) -> ResolverTarget {
     ResolverTarget {
         kind: ResolverKind::AdHoc,
