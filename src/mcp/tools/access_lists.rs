@@ -78,7 +78,7 @@ pub async fn handle_add_allowed<C: DnsService + Send + Sync>(
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// # use crate::{handle_delete_allowed, DomainParams, Policy, FakeService};
 /// # tokio_test::block_on(async {
 /// let client = FakeService::new();

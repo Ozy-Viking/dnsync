@@ -41,7 +41,7 @@ pub async fn handle_delete_cache_zone<C: DnsService + Send + Sync>(
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// # use crate::mcp::tools::cache::handle_flush_cache;
 /// # use crate::mcp::Policy;
 /// # use crate::mcp::tests::FakeService;

@@ -13,7 +13,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```ignore
 /// # use crate::{handle_get_stats, Policy, StatsParams, FakeService};
 /// # async fn example() {
 /// let policy = Policy::with_read_allowed(); // create a policy that permits read

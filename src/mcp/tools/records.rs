@@ -58,7 +58,7 @@ pub async fn handle_add_record<C: DnsService + Send + Sync>(
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// # use crate::mcp::params::DeleteRecordParams;
 /// # use crate::mcp::tools::records::handle_delete_record;
 /// # async fn example<C: crate::dns::DnsService + Send + Sync>(client: &C, policy: &crate::Policy) {

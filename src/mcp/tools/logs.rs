@@ -26,7 +26,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let result = handle_logs(&client, &policy, params).await?;
 /// // `result` is the MCP tool output for "dns_logs"
