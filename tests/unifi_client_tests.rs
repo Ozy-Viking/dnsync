@@ -41,13 +41,10 @@ async fn server() -> ServerGuard {
 ///
 /// # Examples
 ///
-/// ```no_run
-/// # use mockito::Server;
-/// # use crate::tests::make_client;
-/// # async fn run() {
+/// ```ignore
+/// // `make_client` is a helper local to this test file.
 /// let server = mockito::Server::new_async().await;
 /// let client = make_client(&server, "Default");
-/// # }
 /// ```
 fn make_client(server: &ServerGuard, site: &str) -> UnifiClient {
     UnifiClient::new(server.url(), ApiToken::new("api-key-123"), site.into())
@@ -194,8 +191,8 @@ async fn list_all_sites_paginates_until_total_reached(#[future] server: ServerGu
 ///
 /// # Examples
 ///
-/// ```
-/// # async fn example(server: mockito::Server) {
+/// ```ignore
+/// # async fn example(server: mockito::ServerGuard) {
 /// let client = make_client(&server, "Default");
 /// let policies = client.list_all_dns_policies(None).await.expect("ok");
 /// assert!(policies.iter().any(|p| p.domain == "host.example.com"));
