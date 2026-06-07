@@ -61,7 +61,11 @@ pub async fn run_sync(
         .iter()
         .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
     let prune_enabled = ownership.is_some_and(|o| o.prune);
-    if !apply || (!has_changes && !prune_enabled) {
+
+    // A destination client is needed to apply changes, or to reconcile
+    // ownership (in apply *or* dry-run, since pruning previews are reported).
+    let need_client = (apply && has_changes) || prune_enabled;
+    if !need_client {
         return Ok(());
     }
 
@@ -72,24 +76,37 @@ pub async fn run_sync(
     )?;
 
     let mut applied = 0;
-    if has_changes {
+    if apply && has_changes {
         let summary = apply_plans(&to_client, &plans).await?;
         applied = summary.applied;
     }
 
-    let mut pruned = 0;
+    let mut prune = PruneSummary::default();
     if let Some(ownership) = ownership {
-        let prune = reconcile_ownership(&to_client, &plans, ownership, apply).await?;
-        pruned = prune.pruned;
-        if prune.skipped_drift > 0 {
-            eprintln!(
-                "  ! {} owned record(s) skipped: live value drifted from the recorded value",
-                prune.skipped_drift
-            );
-        }
+        prune = reconcile_ownership(&to_client, &plans, ownership, apply).await?;
     }
 
-    println!("\nApplied {applied} change(s); pruned {pruned} owned record(s).");
+    if prune.skipped_drift > 0 {
+        eprintln!(
+            "  ! {} owned record(s) skipped: live value drifted from the recorded value",
+            prune.skipped_drift
+        );
+    }
+    if apply {
+        println!(
+            "\nApplied {applied} change(s); pruned {} owned record(s).",
+            prune.pruned
+        );
+    } else if prune_enabled {
+        println!("\nDry run: would prune {} owned record(s).", prune.pruned);
+    }
+    // Surface prune failures the same way apply_plans surfaces write failures.
+    if apply && prune.failures > 0 {
+        return Err(Error::api(format!(
+            "{} prune change(s) failed",
+            prune.failures
+        )));
+    }
     Ok(())
 }
 
@@ -184,20 +201,28 @@ pub async fn run_sync_json(
         .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
     let prune_enabled = ownership.is_some_and(|o| o.prune);
 
-    if apply && (has_changes || prune_enabled) {
+    // A destination client is needed to apply changes, or to reconcile
+    // ownership (in apply *or* dry-run, so the prune preview is reported).
+    let need_client = (apply && has_changes) || prune_enabled;
+    if need_client {
         let cfg = app_config.expect("build_sync_plan already required config");
         let to_server = cfg.selected_server(Some(&to_id))?;
         let to_client = VendorClient::from_server(to_server)?;
 
-        if has_changes {
+        if apply && has_changes {
             let summary = apply_plans(&to_client, &plans).await?;
             out["apply_summary"] = serde_json::to_value(summary)
                 .map_err(|e| Error::parse(format!("could not serialise sync summary: {e}")))?;
         }
         if let Some(ownership) = ownership {
             let prune = reconcile_ownership(&to_client, &plans, ownership, apply).await?;
+            let failures = prune.failures;
             out["prune_summary"] = serde_json::to_value(prune)
                 .map_err(|e| Error::parse(format!("could not serialise prune summary: {e}")))?;
+            // Surface prune failures the same way apply write failures propagate.
+            if apply && failures > 0 {
+                return Err(Error::api(format!("{failures} prune change(s) failed")));
+            }
         }
     }
 

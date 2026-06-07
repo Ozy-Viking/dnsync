@@ -160,11 +160,16 @@ Per `agents.md` ("The MCP surface is a full peer to the CLI… Treat any gap
 between CLI and MCP capability as a bug"), the following gaps are **bugs to be
 fixed**, not optional enhancements:
 
-- **MCP `sync` tool** — `dns sync` exists on the CLI but has no MCP equivalent.
-  The MCP server must expose a `sync` tool that mirrors the CLI surface
-  (profiles, `--from`/`--to`/`--zone`/`--map`, dry-run-by-default, `--apply`).
 - **MCP `diff` tool** — once `dns diff` lands as a CLI command, the matching
   MCP tool ships with it. A CLI-only `diff` would itself be a parity bug.
+
+The MCP `dns_sync` tool already mirrors the CLI sync surface
+(`from`/`to`/`zones`/`map`, dry-run-by-default, `apply`, `prune_synced`,
+`teardown`). It deliberately resolves its ownership ledger from the operator's
+configured state DB rather than accepting a per-call path: the CLI `--state-db`
+flag is a local-operator convenience, whereas letting a network-facing MCP
+caller point the ledger at an arbitrary filesystem path would widen the write
+surface the operator config is meant to control.
 
 These items are tracked as required work and must not be re-classified as
 "future" or "possible" features.
