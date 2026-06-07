@@ -59,57 +59,7 @@ pub use crate::daemon::executor::JobOutcome as JobOutcomeAlias;
 /// println!("state DB: {}", path.display());
 /// ```
 fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
-    if let Some(ref daemon) = config.daemon
-        && let Some(ref p) = daemon.state_db
-    {
-        return p.clone();
-    }
-
-    // Fall back to $DNSYNC_STATE_DB env var or XDG default.
-    if let Ok(p) = std::env::var("DNSYNC_STATE_DB") {
-        return std::path::PathBuf::from(p);
-    }
-
-    dirs_xdg_data_home().join("dnsync").join("state.db")
-}
-
-/// Determine the XDG data home directory path using environment fallbacks.
-///
-/// Checks the `XDG_DATA_HOME` environment variable first. If unset, falls back to
-/// `$HOME/.local/share` when `HOME` is present. If neither variable is set,
-/// returns the current directory (`.`).
-///
-/// # Examples
-///
-/// ```text
-/// use std::path::PathBuf;
-///
-/// // Prefer XDG_DATA_HOME when set
-/// std::env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
-/// assert_eq!(dirs_xdg_data_home(), PathBuf::from("/tmp/xdg_data_home"));
-/// std::env::remove_var("XDG_DATA_HOME");
-///
-/// // Fall back to HOME/.local/share when HOME is set
-/// std::env::set_var("HOME", "/home/alice");
-/// assert_eq!(
-///     dirs_xdg_data_home(),
-///     PathBuf::from("/home/alice").join(".local").join("share")
-/// );
-/// std::env::remove_var("HOME");
-///
-/// // When neither is set, return the current directory
-/// std::env::remove_var("XDG_DATA_HOME");
-/// std::env::remove_var("HOME");
-/// assert_eq!(dirs_xdg_data_home(), PathBuf::from("."));
-/// ```
-fn dirs_xdg_data_home() -> std::path::PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-        return std::path::PathBuf::from(xdg);
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return std::path::PathBuf::from(home).join(".local").join("share");
-    }
-    std::path::PathBuf::from(".")
+    crate::daemon::state_path::resolve_state_db(config)
 }
 
 // ─── Helper: build executor for a job ─────────────────────────────────────────
@@ -128,10 +78,18 @@ fn dirs_xdg_data_home() -> std::path::PathBuf {
 fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecutor>> {
     let job = config.jobs.iter().find(|j| j.id == job_id)?;
     let executor: Arc<dyn JobExecutor> = match job.kind {
-        JobKind::RecordSync => Arc::new(RecordSyncExecutor {
-            config: config.clone(),
-            job_id: job_id.to_string(),
-        }),
+        JobKind::RecordSync => {
+            // Open the state DB so a manual run can still prune owned records.
+            let db_path = resolve_state_db(config);
+            let ledger = db::open(&db_path)
+                .ok()
+                .map(|pool| Arc::new(DaemonStateStore::new(pool)));
+            Arc::new(RecordSyncExecutor {
+                config: config.clone(),
+                job_id: job_id.to_string(),
+                ledger,
+            })
+        }
         JobKind::ZoneSync => Arc::new(ZoneSyncExecutor {
             config: config.clone(),
             job_id: job_id.to_string(),

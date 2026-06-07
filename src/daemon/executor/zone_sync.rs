@@ -95,6 +95,7 @@ impl JobExecutor for ZoneSyncExecutor {
             &ip_map_vec,
             apply,
             diff_opts,
+            None,
         )
         .await;
         let elapsed = start.elapsed();

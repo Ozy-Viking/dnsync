@@ -83,6 +83,7 @@ mod tests {
                 create_missing: true,
                 overwrite_existing: true,
                 delete_destination_only: false,
+                prune_synced: false,
                 ignore: vec![],
                 output_dir: None,
             }],
@@ -124,6 +125,7 @@ mod tests {
                 create_missing: true,
                 overwrite_existing: true,
                 delete_destination_only: false,
+                prune_synced: false,
                 ignore: vec![],
                 output_dir: Some("/tmp/zones".to_string()),
             }],
@@ -137,6 +139,7 @@ mod tests {
         let executor = RecordSyncExecutor {
             config,
             job_id: "nonexistent-job".to_string(),
+            ledger: None,
         };
         let ctx = JobContext {
             run_id: "run-1".to_string(),

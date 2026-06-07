@@ -126,6 +126,24 @@ pub enum Command {
         /// Output the sync plan as JSON
         #[arg(long)]
         json: bool,
+
+        /// Prune records this sync previously created on the destination once
+        /// they disappear from the source. Requires --state-db to track
+        /// ownership across runs. Unlike a blunt mirror, only records this
+        /// sync created are ever removed.
+        #[arg(long, requires = "state_db")]
+        prune_synced: bool,
+
+        /// Remove every record this sync previously created on the destination
+        /// and clear its ownership ledger (full rollback). Requires --state-db
+        /// and --to; dry-run unless --apply is also given.
+        #[arg(long, requires = "state_db", conflicts_with = "prune_synced")]
+        teardown: bool,
+
+        /// Path to the SQLite state DB used to track which records this sync
+        /// owns (enables --prune-synced / --teardown across runs).
+        #[arg(long, value_name = "PATH")]
+        state_db: Option<std::path::PathBuf>,
     },
 
     /// Manage the DNS cache

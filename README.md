@@ -437,6 +437,28 @@ Sync pairs and their IP-mapping tables can be stored as named `[[sync]]`
 profiles in the config file (see below). CLI flags override the profile, and
 `--map SRC=DST` entries merge into and override the profile's `ip_map`.
 
+#### Pruning records the sync created (`--prune-synced`)
+
+By default destination-only records are never removed. To have a sync remove
+the records *it previously created* once they disappear from the source — and
+nothing else — enable ownership pruning. It tracks what the job created in a
+SQLite state DB and, before deleting, confirms the live value still matches what
+it recorded, so out-of-band edits are never clobbered.
+
+```bash
+# Track ownership and prune removed records (dry-run, then commit)
+dns sync --from cf --to home --prune-synced --state-db ~/.local/share/dnsync/state.db
+dns sync --from cf --to home --prune-synced --state-db ~/.local/share/dnsync/state.db --apply
+
+# Full rollback: remove everything this sync created and clear its ledger
+dns sync --to home --teardown --state-db ~/.local/share/dnsync/state.db --apply
+```
+
+For daemon `[[jobs]]`, set `prune_synced = true` on the job (the state DB is
+already configured). This is distinct from `delete_destination_only`, a blunt
+mirror that deletes *any* unmatched destination record regardless of who created
+it. See `docs/dns-sync-ip-mapping.md` for the full comparison.
+
 ### Cache
 
 ```bash
