@@ -48,6 +48,21 @@ CREATE TABLE IF NOT EXISTS job_runs (
 
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id_started_at
 ON job_runs(job_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS synced_records (
+    job_key TEXT NOT NULL,
+    zone TEXT NOT NULL,
+    fqdn TEXT NOT NULL,
+    rtype TEXT NOT NULL,
+    value TEXT NOT NULL,
+    ttl INTEGER NOT NULL,
+    first_synced_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (job_key, zone, fqdn, rtype, value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_synced_records_job_key
+ON synced_records(job_key);
 ";
 
 /// Apply the embedded SQLite schema (INIT_SQL) to the given open connection.

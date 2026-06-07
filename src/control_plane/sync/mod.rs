@@ -11,13 +11,17 @@
 //! commits the changes.
 
 mod apply;
+mod ledger;
 mod plan;
+mod reconcile;
 mod render;
 mod run;
 mod types;
 
 pub(crate) use apply::*;
+pub use ledger::*;
 pub(crate) use plan::*;
+pub(crate) use reconcile::*;
 pub(crate) use render::*;
 pub use run::*;
 pub use types::*;

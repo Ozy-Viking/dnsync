@@ -104,6 +104,27 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
       `pihole/mapping.rs`) remains; the modularization did not introduce new
       warnings but a separate `-D warnings` cleanup pass is still needed.
 
+## Ownership-tracked sync (`prune_synced`)
+
+- [x] Add `synced_records` ownership ledger table to the daemon state DB
+      (migration, schema, `SyncedRecordRow` model, store methods).
+- [x] Define a vendor-neutral `SyncLedger` trait + `OwnedRecord` in
+      `control_plane::sync`; implement it for `DaemonStateStore`.
+- [x] Reconciliation pass (`reconcile_ownership`): prune records the job created
+      once they leave the source, value-match gated so drifted records are never
+      clobbered; dry-run previews without writing.
+- [x] `prune_synced` config field on `JobConfig` (distinct from the blunt
+      `delete_destination_only` mirror); rendered in config output.
+- [x] Wire through daemon executor, `dns daemon run-job`, CLI
+      (`--prune-synced` / `--state-db`), and the MCP `dns_sync` tool (parity).
+- [x] Teardown (`teardown_ownership` / `--teardown` / MCP `teardown`): remove
+      everything a job created and clear its ledger (full rollback).
+- [x] Tests: ledger store round-trip + per-job scoping; reconciliation (prune,
+      drift-skip, partial, adoption, dry-run, disabled) and teardown.
+- [x] Docs: README sync section + `docs/dns-sync-ip-mapping.md`.
+- [ ] Consider running ledger writes via `spawn_blocking` in the async executor
+      (currently brief inline SQLite calls) if contention shows up.
+
 ### Review follow-ups (PR #53)
 
 - [x] Wire SIGTERM to the daemon cancellation token for graceful container shutdown.

@@ -370,6 +370,7 @@ pub(crate) fn append_job_entry(doc: &mut toml_edit::DocumentMut, job: &JobConfig
     tbl["create_missing"] = value(job.create_missing);
     tbl["overwrite_existing"] = value(job.overwrite_existing);
     tbl["delete_destination_only"] = value(job.delete_destination_only);
+    tbl["prune_synced"] = value(job.prune_synced);
     if !job.ignore.is_empty() {
         let mut ignore = Array::new();
         for p in &job.ignore {

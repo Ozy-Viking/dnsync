@@ -243,6 +243,16 @@ pub struct SyncParams {
     /// Write the changes. False/default is dry-run.
     #[serde(default)]
     pub apply: bool,
+    /// Prune records this sync previously created on the destination once they
+    /// disappear from the source. Tracks ownership in the daemon state DB; only
+    /// records this sync created are ever removed. Off by default.
+    #[serde(default)]
+    pub prune_synced: bool,
+    /// Remove every record this sync previously created on the destination and
+    /// clear its ownership ledger (full rollback). Requires `to`; dry-run
+    /// unless `apply` is also set. Off by default.
+    #[serde(default)]
+    pub teardown: bool,
 }
 
 // ─── Resolve params ────────────────────────────────────────────────────────

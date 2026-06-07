@@ -184,6 +184,10 @@ where
         source_records.retain(|r| !sync_opts.ignore.iter().any(|pat| pat.is_match(&r.fqdn)));
     }
 
+    // The desired owned set for ownership tracking: every writable source
+    // record the job is responsible for on the destination this run.
+    let owned = source_records.clone();
+
     let diff = diff_records(source_records, dest_records);
     trace!(
         missing_adds = diff.missing_adds.len(),
@@ -229,6 +233,7 @@ where
         unchanged: diff.unchanged,
         untouched,
         skipped,
+        owned,
     })
 }
 

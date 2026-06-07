@@ -28,7 +28,7 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 #[instrument(
     level = "debug",
-    skip(app_config, zones, maps),
+    skip(app_config, zones, maps, ownership),
     fields(profile = ?profile, from = ?from, to = ?to, zone_count = zones.len(), apply, json)
 )]
 pub async fn run_sync(
@@ -41,6 +41,7 @@ pub async fn run_sync(
     apply: bool,
     json: bool,
     diff_opts: SyncDiffOptions,
+    ownership: Option<&Ownership<'_>>,
 ) -> Result<()> {
     debug!("building sync plan");
     let (from_id, to_id, plans) =
@@ -59,21 +60,67 @@ pub async fn run_sync(
     let has_changes = plans
         .iter()
         .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
-    if !apply || !has_changes {
+    let prune_enabled = ownership.is_some_and(|o| o.prune);
+    if !apply || (!has_changes && !prune_enabled) {
         return Ok(());
     }
 
-    let summary = apply_plans(
-        &VendorClient::from_server(
-            app_config
-                .and_then(|cfg| cfg.selected_server(Some(&to_id)).ok())
-                .ok_or_else(|| Error::config("sync destination server disappeared"))?,
-        )?,
-        &plans,
-    )
-    .await?;
-    println!("\nApplied {} change(s).", summary.applied);
+    let to_client = VendorClient::from_server(
+        app_config
+            .and_then(|cfg| cfg.selected_server(Some(&to_id)).ok())
+            .ok_or_else(|| Error::config("sync destination server disappeared"))?,
+    )?;
+
+    let mut applied = 0;
+    if has_changes {
+        let summary = apply_plans(&to_client, &plans).await?;
+        applied = summary.applied;
+    }
+
+    let mut pruned = 0;
+    if let Some(ownership) = ownership {
+        let prune = reconcile_ownership(&to_client, &plans, ownership, apply).await?;
+        pruned = prune.pruned;
+        if prune.skipped_drift > 0 {
+            eprintln!(
+                "  ! {} owned record(s) skipped: live value drifted from the recorded value",
+                prune.skipped_drift
+            );
+        }
+    }
+
+    println!("\nApplied {applied} change(s); pruned {pruned} owned record(s).");
     Ok(())
+}
+
+/// Tear down every record a sync job created on its destination.
+///
+/// Resolves the destination server `to`, then removes (value-match gated) every
+/// record the job's ledger says it owns and clears those ledger entries. When
+/// `apply` is false this is a dry-run preview that writes nothing. Returns a
+/// JSON summary including a `prune_summary` object.
+#[instrument(level = "debug", skip(app_config, ownership), fields(to = ?to, apply))]
+pub async fn run_sync_teardown(
+    app_config: Option<&AppConfig>,
+    to: &str,
+    apply: bool,
+    ownership: &Ownership<'_>,
+) -> Result<serde_json::Value> {
+    let cfg = app_config.ok_or_else(|| {
+        Error::config("sync teardown requires a config file defining the destination server")
+    })?;
+    let to_server = cfg.selected_server(Some(to))?;
+    let to_client = VendorClient::from_server(to_server)?;
+
+    let summary = teardown_ownership(&to_client, ownership, apply).await?;
+    let mut out = serde_json::json!({
+        "action": "teardown",
+        "to": to,
+        "applied": apply,
+    });
+    out["prune_summary"] = serde_json::to_value(summary)
+        .map_err(|e| Error::parse(format!("could not serialise teardown summary: {e}")))?;
+    Ok(out)
 }
 
 /// Build and optionally apply a record-level synchronization plan between two configured DNS servers, returning a JSON representation of the plan and (when changes are applied) an application summary.
@@ -114,7 +161,7 @@ pub async fn run_sync(
 #[allow(clippy::too_many_arguments)]
 #[instrument(
     level = "debug",
-    skip(app_config, zones, maps),
+    skip(app_config, zones, maps, ownership),
     fields(profile = ?profile, from = ?from, to = ?to, zone_count = zones.len(), apply)
 )]
 pub async fn run_sync_json(
@@ -126,6 +173,7 @@ pub async fn run_sync_json(
     maps: &[String],
     apply: bool,
     diff_opts: SyncDiffOptions,
+    ownership: Option<&Ownership<'_>>,
 ) -> Result<serde_json::Value> {
     let (from_id, to_id, plans) =
         build_sync_plan(app_config, profile, from, to, zones, maps, diff_opts).await?;
@@ -134,12 +182,23 @@ pub async fn run_sync_json(
     let has_changes = plans
         .iter()
         .any(|p| !p.adds.is_empty() || !p.deletes.is_empty());
-    if apply && has_changes {
+    let prune_enabled = ownership.is_some_and(|o| o.prune);
+
+    if apply && (has_changes || prune_enabled) {
         let cfg = app_config.expect("build_sync_plan already required config");
         let to_server = cfg.selected_server(Some(&to_id))?;
-        let summary = apply_plans(&VendorClient::from_server(to_server)?, &plans).await?;
-        out["apply_summary"] = serde_json::to_value(summary)
-            .map_err(|e| Error::parse(format!("could not serialise sync summary: {e}")))?;
+        let to_client = VendorClient::from_server(to_server)?;
+
+        if has_changes {
+            let summary = apply_plans(&to_client, &plans).await?;
+            out["apply_summary"] = serde_json::to_value(summary)
+                .map_err(|e| Error::parse(format!("could not serialise sync summary: {e}")))?;
+        }
+        if let Some(ownership) = ownership {
+            let prune = reconcile_ownership(&to_client, &plans, ownership, apply).await?;
+            out["prune_summary"] = serde_json::to_value(prune)
+                .map_err(|e| Error::parse(format!("could not serialise prune summary: {e}")))?;
+        }
     }
 
     Ok(out)
