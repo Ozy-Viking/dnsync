@@ -68,22 +68,38 @@ fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
 ///
 /// If a job with the given `job_id` exists in `config.jobs`, returns an `Arc<dyn JobExecutor>` whose concrete type corresponds to the job's `JobKind` (`RecordSyncExecutor`, `ZoneSyncExecutor`, or `ZoneExportExecutor`). Returns `None` when no matching job is found.
 ///
+/// Returns `Ok(None)` when no matching job is found. Returns `Err` when a
+/// `RecordSync` job has `prune_synced` enabled but the state DB cannot be
+/// opened — pruning needs the ledger, so failing fast matches the daemon
+/// runtime rather than silently skipping ownership tracking.
+///
 /// # Examples
 ///
 /// ```text
 /// // Assume `config` contains a job with id "job-alpha".
-/// let exec = build_executor(&config, "job-alpha");
+/// let exec = build_executor(&config, "job-alpha").unwrap();
 /// assert!(exec.is_some());
 /// ```
-fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecutor>> {
-    let job = config.jobs.iter().find(|j| j.id == job_id)?;
+fn build_executor(
+    config: &AppConfig,
+    job_id: &str,
+) -> Result<Option<Arc<dyn JobExecutor>>, String> {
+    let Some(job) = config.jobs.iter().find(|j| j.id == job_id) else {
+        return Ok(None);
+    };
     let executor: Arc<dyn JobExecutor> = match job.kind {
         JobKind::RecordSync => {
             // Open the state DB so a manual run can still prune owned records.
             let db_path = resolve_state_db(config);
-            let ledger = db::open(&db_path)
-                .ok()
-                .map(|pool| Arc::new(DaemonStateStore::new(pool)));
+            let ledger = match db::open(&db_path) {
+                Ok(pool) => Some(Arc::new(DaemonStateStore::new(pool))),
+                Err(e) if job.prune_synced => {
+                    return Err(format!(
+                        "could not open state DB for prune_synced job '{job_id}': {e}"
+                    ));
+                }
+                Err(_) => None,
+            };
             Arc::new(RecordSyncExecutor {
                 config: config.clone(),
                 job_id: job_id.to_string(),
@@ -99,7 +115,7 @@ fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecuto
             job_id: job_id.to_string(),
         }),
     };
-    Some(executor)
+    Ok(Some(executor))
 }
 
 // ─── list_jobs ─────────────────────────────────────────────────────────────────
@@ -223,7 +239,7 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
     }
 
     let executor =
-        build_executor(config, job_id).ok_or_else(|| format!("job not found: {job_id}"))?;
+        build_executor(config, job_id)?.ok_or_else(|| format!("job not found: {job_id}"))?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let started_at = Utc::now();

@@ -48,23 +48,27 @@ impl DaemonStateStore {
         }
         let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
         // SQLite + Diesel does not support a multi-row INSERT … ON CONFLICT …
-        // DO UPDATE, so upsert one row at a time. `first_synced_at` is
+        // DO UPDATE, so upsert one row at a time — but inside a single
+        // transaction so the batch is all-or-nothing. `first_synced_at` is
         // preserved on conflict; only `last_seen_at` is refreshed.
-        for row in rows {
-            diesel::insert_into(synced_records::table)
-                .values(row)
-                .on_conflict((
-                    synced_records::job_key,
-                    synced_records::zone,
-                    synced_records::fqdn,
-                    synced_records::rtype,
-                    synced_records::value,
-                ))
-                .do_update()
-                .set(synced_records::last_seen_at.eq(excluded(synced_records::last_seen_at)))
-                .execute(&mut conn)
-                .map_err(|e| format!("upsert_synced_records failed: {e}"))?;
-        }
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            for row in rows {
+                diesel::insert_into(synced_records::table)
+                    .values(row)
+                    .on_conflict((
+                        synced_records::job_key,
+                        synced_records::zone,
+                        synced_records::fqdn,
+                        synced_records::rtype,
+                        synced_records::value,
+                    ))
+                    .do_update()
+                    .set(synced_records::last_seen_at.eq(excluded(synced_records::last_seen_at)))
+                    .execute(conn)?;
+            }
+            Ok(())
+        })
+        .map_err(|e| format!("upsert_synced_records failed: {e}"))?;
         debug!(
             job_key,
             count = rows.len(),
@@ -84,20 +88,24 @@ impl DaemonStateStore {
             return Ok(());
         }
         let mut conn = self.pool.get().map_err(|e| format!("db pool error: {e}"))?;
-        for row in rows {
-            diesel::delete(
-                synced_records::table.filter(
-                    synced_records::job_key
-                        .eq(job_key)
-                        .and(synced_records::zone.eq(&row.zone))
-                        .and(synced_records::fqdn.eq(&row.fqdn))
-                        .and(synced_records::rtype.eq(&row.rtype))
-                        .and(synced_records::value.eq(&row.value)),
-                ),
-            )
-            .execute(&mut conn)
-            .map_err(|e| format!("delete_synced_records failed: {e}"))?;
-        }
+        // All-or-nothing so a partial delete can't leave the snapshot inconsistent.
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            for row in rows {
+                diesel::delete(
+                    synced_records::table.filter(
+                        synced_records::job_key
+                            .eq(job_key)
+                            .and(synced_records::zone.eq(&row.zone))
+                            .and(synced_records::fqdn.eq(&row.fqdn))
+                            .and(synced_records::rtype.eq(&row.rtype))
+                            .and(synced_records::value.eq(&row.value)),
+                    ),
+                )
+                .execute(conn)?;
+            }
+            Ok(())
+        })
+        .map_err(|e| format!("delete_synced_records failed: {e}"))?;
         debug!(
             job_key,
             count = rows.len(),

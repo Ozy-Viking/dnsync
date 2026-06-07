@@ -115,7 +115,8 @@ fn owned_a(fqdn: &str, ip: &str) -> OwnedRecord {
     OwnedRecord::from_planned(ZONE, &a(fqdn, ip))
 }
 
-/// A zone plan whose desired owned set is `owned`, with no other changes.
+/// A zone plan whose source set is `owned` but which writes nothing this run
+/// (records present in source but not created by this job — e.g. unchanged).
 fn plan_owning(owned: Vec<PlannedRecord>) -> ZonePlan {
     ZonePlan {
         zone: ZONE.to_string(),
@@ -125,6 +126,19 @@ fn plan_owning(owned: Vec<PlannedRecord>) -> ZonePlan {
         untouched: 0,
         skipped: 0,
         owned,
+    }
+}
+
+/// A zone plan that writes `recs` this run (they are both in source and added).
+fn plan_written(recs: Vec<PlannedRecord>) -> ZonePlan {
+    ZonePlan {
+        zone: ZONE.to_string(),
+        adds: recs.clone(),
+        deletes: vec![],
+        unchanged: 0,
+        untouched: 0,
+        skipped: 0,
+        owned: recs,
     }
 }
 
@@ -252,8 +266,35 @@ async fn prune_disabled_is_noop() {
 }
 
 #[tokio::test]
-async fn prune_records_newly_owned_desired_set() {
-    // Empty ledger, desired has www — first run adopts it without pruning.
+async fn records_written_this_run_are_adopted() {
+    // Empty ledger; www is actually written this run — it becomes owned.
+    let ledger = InMemoryLedger::default();
+    let dest = FakeDestination::new(
+        ZONE,
+        vec![zone_record(
+            "www",
+            "A",
+            3600,
+            json!({ "ipAddress": "203.0.113.10" }),
+        )],
+    );
+    let plans = vec![plan_written(vec![a("www.example.com", "203.0.113.10")])];
+
+    let summary = reconcile_ownership(&dest, &plans, &ownership(&ledger, true), true)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.pruned, 0);
+    assert_eq!(dest.delete_count(), 0);
+    let owned = ledger.snapshot();
+    assert_eq!(owned.len(), 1, "written record adopted into ledger");
+    assert_eq!(owned[0].fqdn, "www.example.com");
+}
+
+#[tokio::test]
+async fn unchanged_records_not_written_are_not_adopted() {
+    // www exists identically on both sides but this job never wrote it (adds
+    // empty). Ownership must NOT adopt it, so it can never be pruned later.
     let ledger = InMemoryLedger::default();
     let dest = FakeDestination::new(
         ZONE,
@@ -272,9 +313,10 @@ async fn prune_records_newly_owned_desired_set() {
 
     assert_eq!(summary.pruned, 0);
     assert_eq!(dest.delete_count(), 0);
-    let owned = ledger.snapshot();
-    assert_eq!(owned.len(), 1, "first-run record adopted into ledger");
-    assert_eq!(owned[0].fqdn, "www.example.com");
+    assert!(
+        ledger.snapshot().is_empty(),
+        "pre-existing record this job did not create is never adopted"
+    );
 }
 
 #[tokio::test]

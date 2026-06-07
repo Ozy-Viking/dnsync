@@ -16,14 +16,16 @@ use tracing::warn;
 
 /// Reconcile the ownership ledger against the desired owned set for this run.
 ///
-/// `desired` is the union of every zone plan's owned records. Records the
-/// ledger holds for `ownership.job_key` that are absent from `desired` are
-/// pruned from the destination (value-match gated) and forgotten; the desired
-/// set is then recorded as the new ownership snapshot.
+/// Ownership is *conservative*: the new snapshot is the records this job
+/// actually wrote this run (the plans' `adds`) plus any previously-owned
+/// records still present in the source. Records that merely happen to exist
+/// identically on both sides — which this job never created — are never adopted,
+/// so they are never pruned later. Records the ledger holds that are no longer
+/// in the source are pruned from the destination (value-match gated) and
+/// forgotten.
 ///
-/// When `apply` is false this is a no-op preview: it returns a zeroed summary
-/// and touches neither the destination nor the ledger. The caller is
-/// responsible for surfacing the planned prune to the operator.
+/// When `apply` is false this is a no-op preview: it returns the planned prune
+/// count and touches neither the destination nor the ledger.
 pub(crate) async fn reconcile_ownership<C>(
     to_client: &C,
     plans: &[ZonePlan],
@@ -39,27 +41,43 @@ where
 
     let job_key = ownership.job_key.as_str();
 
-    // Desired owned set for this run, keyed for identity comparison.
-    let desired: Vec<OwnedRecord> = plans
+    // The full set of records present in the source this run, keyed for
+    // identity comparison. Used to decide what is still "in source".
+    let in_source: HashSet<_> = plans
         .iter()
         .flat_map(|p| {
             p.owned
                 .iter()
-                .map(|r| OwnedRecord::from_planned(&p.zone, r))
+                .map(|r| OwnedRecord::from_planned(&p.zone, r).key())
         })
         .collect();
-    let desired_keys: HashSet<_> = desired.iter().map(OwnedRecord::key).collect();
 
-    // Previously owned records that are no longer desired are prune candidates.
-    let previous = ownership.ledger.load_owned(job_key)?;
-    let candidates: Vec<OwnedRecord> = previous
-        .into_iter()
-        .filter(|r| !desired_keys.contains(&r.key()))
+    // Records this job actually wrote this run — the only records it newly owns.
+    let written: Vec<OwnedRecord> = plans
+        .iter()
+        .flat_map(|p| p.adds.iter().map(|r| OwnedRecord::from_planned(&p.zone, r)))
         .collect();
+
+    // Previously owned records that are no longer in the source are prune
+    // candidates; those still in the source remain owned.
+    let previous = ownership.ledger.load_owned(job_key)?;
+    let (kept, candidates): (Vec<OwnedRecord>, Vec<OwnedRecord>) = previous
+        .into_iter()
+        .partition(|r| in_source.contains(&r.key()));
+
+    // New ownership snapshot: records written this run + previously-owned
+    // records still in source (deduplicated by identity).
+    let mut new_owned = written;
+    let mut new_keys: HashSet<_> = new_owned.iter().map(OwnedRecord::key).collect();
+    for rec in kept {
+        if new_keys.insert(rec.key()) {
+            new_owned.push(rec);
+        }
+    }
 
     debug!(
         job_key,
-        desired = desired.len(),
+        owned = new_owned.len(),
         prune_candidates = candidates.len(),
         apply,
         "reconciling ownership"
@@ -130,7 +148,7 @@ where
     }
 
     // Record the new ownership snapshot and forget what we pruned/relinquished.
-    ownership.ledger.record_owned(job_key, &desired)?;
+    ownership.ledger.record_owned(job_key, &new_owned)?;
     if !forget.is_empty() {
         ownership.ledger.forget_owned(job_key, &forget)?;
     }
@@ -176,6 +194,10 @@ where
     }
 
     let mut summary = PruneSummary::default();
+    // Only forget records we actually handled (deleted or confirmed gone/drifted).
+    // Records left behind by a failed list/delete stay in the ledger so a later
+    // teardown can retry them instead of orphaning them.
+    let mut forget: Vec<OwnedRecord> = Vec::new();
     let mut by_zone: HashMap<String, Vec<OwnedRecord>> = HashMap::new();
     for rec in owned {
         by_zone.entry(rec.zone.clone()).or_default().push(rec);
@@ -200,20 +222,28 @@ where
                 Some(record) => {
                     let params = record.to_api_params();
                     match to_client.delete_record(&zone, &rec.fqdn, &params).await {
-                        Ok(_) => summary.pruned += 1,
+                        Ok(_) => {
+                            summary.pruned += 1;
+                            forget.push(rec);
+                        }
                         Err(e) => {
                             warn!(%zone, fqdn = %rec.fqdn, error = %e, "teardown delete failed");
                             summary.failures += 1;
                         }
                     }
                 }
-                None => summary.skipped_drift += 1,
+                None => {
+                    summary.skipped_drift += 1;
+                    forget.push(rec);
+                }
             }
         }
     }
 
-    // Clear the ledger regardless of drift skips — the job no longer owns these.
-    ownership.ledger.forget_all(job_key)?;
+    // Forget only the records we successfully handled; failures stay for retry.
+    if !forget.is_empty() {
+        ownership.ledger.forget_owned(job_key, &forget)?;
+    }
     debug!(
         job_key,
         pruned = summary.pruned,
