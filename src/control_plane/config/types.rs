@@ -386,6 +386,13 @@ pub struct JobConfig {
     pub overwrite_existing: bool,
     #[serde(default)]
     pub delete_destination_only: bool,
+    /// Ownership pruning: remove records this job previously created on the
+    /// destination once they disappear from the source. Unlike
+    /// `delete_destination_only` (a blunt mirror that deletes any unmatched
+    /// destination record), this only ever removes records the job itself
+    /// synced, tracked in the state DB. Off by default.
+    #[serde(default)]
+    pub prune_synced: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<String>,
     // ZoneExport-only fields

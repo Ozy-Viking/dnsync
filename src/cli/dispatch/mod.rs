@@ -195,6 +195,9 @@ async fn run_inner(cli: Cli) -> Result<()> {
         map,
         apply,
         json,
+        prune_synced,
+        teardown,
+        state_db,
     } = &cli.command
     {
         if cli.token.is_some() || cli.base_url.is_some() {
@@ -208,6 +211,48 @@ async fn run_inner(cli: Cli) -> Result<()> {
                 "sync does not accept --server/--all; configure server selection via profile or explicit from/to",
             ));
         }
+
+        // When a state DB is given, open it as the ownership ledger so
+        // --prune-synced can track records across runs. The ownership key is
+        // derived from the source→destination pair.
+        let ledger = match state_db {
+            Some(path) => Some(std::sync::Arc::new(
+                crate::daemon::db::store::DaemonStateStore::new(
+                    crate::daemon::db::open(path).map_err(Error::config)?,
+                ),
+            )),
+            None => None,
+        };
+        let ownership = ledger.as_ref().map(|store| {
+            let job_key = format!(
+                "cli:{}->{}",
+                from.as_deref().unwrap_or("?"),
+                to.as_deref().unwrap_or("?")
+            );
+            let ledger: &dyn sync::SyncLedger = store.as_ref();
+            sync::Ownership {
+                job_key,
+                ledger,
+                prune: *prune_synced || *teardown,
+            }
+        });
+
+        // Teardown: remove every record this sync owns, then stop.
+        if *teardown {
+            let to_id = to.as_deref().ok_or_else(|| {
+                Error::parse("sync --teardown requires a destination server: pass --to")
+            })?;
+            let ownership = ownership
+                .as_ref()
+                .ok_or_else(|| Error::config("sync --teardown requires --state-db"))?;
+            let out =
+                sync::run_sync_teardown(app_config.as_ref(), to_id, *apply, ownership).await?;
+            let pretty = serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::parse(format!("could not serialise teardown summary: {e}")))?;
+            println!("{pretty}");
+            return Ok(());
+        }
+
         sync::run_sync(
             app_config.as_ref(),
             profile.as_deref(),
@@ -218,6 +263,7 @@ async fn run_inner(cli: Cli) -> Result<()> {
             *apply,
             *json,
             sync::SyncDiffOptions::default(),
+            ownership.as_ref(),
         )
         .await?;
         return Ok(());

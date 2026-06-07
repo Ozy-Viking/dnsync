@@ -278,3 +278,96 @@ fn test_load_nonexistent_returns_none() {
         "expected empty vec for unknown job_id runs"
     );
 }
+
+// ── synced_records (ownership ledger) ───────────────────────────────────────
+
+use crate::control_plane::sync::{OwnedRecord, SyncLedger};
+
+fn owned(zone: &str, fqdn: &str, value: &str) -> OwnedRecord {
+    OwnedRecord {
+        zone: zone.to_string(),
+        fqdn: fqdn.to_string(),
+        rtype: "A".to_string(),
+        value: value.to_string(),
+        ttl: 3600,
+    }
+}
+
+#[test]
+fn ledger_record_and_load_round_trips() {
+    let store = open_test_store();
+    let recs = vec![
+        owned("example.com", "www.example.com", "ip\u{1}203.0.113.10"),
+        owned("example.com", "api.example.com", "ip\u{1}203.0.113.20"),
+    ];
+
+    store.record_owned("job-1", &recs).unwrap();
+
+    let loaded = store.load_owned("job-1").unwrap();
+    assert_eq!(loaded.len(), 2);
+    assert!(loaded.iter().any(|r| r.fqdn == "www.example.com"));
+    assert!(loaded.iter().any(|r| r.fqdn == "api.example.com"));
+}
+
+#[test]
+fn ledger_is_scoped_per_job_key() {
+    let store = open_test_store();
+    store
+        .record_owned("job-a", &[owned("example.com", "www.example.com", "v1")])
+        .unwrap();
+    store
+        .record_owned("job-b", &[owned("example.com", "api.example.com", "v2")])
+        .unwrap();
+
+    let a = store.load_owned("job-a").unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].fqdn, "www.example.com");
+    let b = store.load_owned("job-b").unwrap();
+    assert_eq!(b.len(), 1);
+    assert_eq!(b[0].fqdn, "api.example.com");
+}
+
+#[test]
+fn ledger_record_owned_is_idempotent() {
+    let store = open_test_store();
+    let recs = vec![owned("example.com", "www.example.com", "v1")];
+    store.record_owned("job-1", &recs).unwrap();
+    // Upsert again — the composite PK means no duplicate row appears.
+    store.record_owned("job-1", &recs).unwrap();
+
+    assert_eq!(store.load_owned("job-1").unwrap().len(), 1);
+}
+
+#[test]
+fn ledger_forget_owned_removes_only_named_records() {
+    let store = open_test_store();
+    let www = owned("example.com", "www.example.com", "v1");
+    let api = owned("example.com", "api.example.com", "v2");
+    store
+        .record_owned("job-1", &[www.clone(), api.clone()])
+        .unwrap();
+
+    store.forget_owned("job-1", &[www]).unwrap();
+
+    let remaining = store.load_owned("job-1").unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].fqdn, "api.example.com");
+}
+
+#[test]
+fn ledger_forget_all_clears_the_job() {
+    let store = open_test_store();
+    store
+        .record_owned(
+            "job-1",
+            &[
+                owned("example.com", "www.example.com", "v1"),
+                owned("example.com", "api.example.com", "v2"),
+            ],
+        )
+        .unwrap();
+
+    store.forget_all("job-1").unwrap();
+
+    assert!(store.load_owned("job-1").unwrap().is_empty());
+}

@@ -55,6 +55,7 @@ fn config_with_jobs() -> AppConfig {
         create_missing: true,
         overwrite_existing: true,
         delete_destination_only: false,
+        prune_synced: false,
         ignore: vec![],
         output_dir: None,
     };
@@ -76,6 +77,7 @@ fn config_with_jobs() -> AppConfig {
         create_missing: true,
         overwrite_existing: true,
         delete_destination_only: false,
+        prune_synced: false,
         ignore: vec![],
         output_dir: Some("/tmp/zones".to_string()),
     };
