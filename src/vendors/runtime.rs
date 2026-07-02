@@ -11,6 +11,40 @@ use crate::core::dns::service::{
     ZoneOptionsWrite, ZoneRead, ZoneWrite,
 };
 use crate::core::error::{Error, Result};
+use crate::vendors::unifi::UnifiApiMode;
+
+pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
+pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
+pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
+pub const UNIFI_DEFAULT_BASE_URL: &str = "https://192.168.1.1/proxy/network/integration/v1";
+pub const UNIFI_CLOUD_DEFAULT_BASE_URL: &str = "https://api.ui.com/v1";
+pub const PIHOLE_DEFAULT_BASE_URL: &str = "http://pi.hole";
+
+/// Return the vendor-owned default API endpoint for a configured server.
+pub fn default_base_url(server: &DnsServerConfig) -> &'static str {
+    match server.vendor {
+        VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
+        VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
+        VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
+        VendorKind::Unifi if server.unifi_api_mode == Some(UnifiApiMode::Remote) => {
+            UNIFI_CLOUD_DEFAULT_BASE_URL
+        }
+        VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
+        VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
+    }
+}
+
+/// Validate vendor-specific server configuration without leaking its rules
+/// into the shared control-plane validators.
+pub fn validate_server_config(server: &DnsServerConfig) -> Result<()> {
+    if server.unifi_api_mode.is_some() && server.vendor != VendorKind::Unifi {
+        return Err(Error::config(format!(
+            "DNS server '{}' sets unifi_api_mode but vendor is not unifi",
+            server.id
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct ClientOverrides<'a> {

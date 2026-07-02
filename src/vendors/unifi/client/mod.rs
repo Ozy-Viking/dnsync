@@ -15,13 +15,13 @@ use serde_json::Value;
 use tokio::sync::OnceCell;
 use tracing::Instrument;
 
-use crate::control_plane::config::UnifiApiMode;
 use crate::core::error::{Error, Result};
 use crate::core::secret::ApiToken;
 
 use super::responses::{
     UnifiDnsPolicy, UnifiDnsPolicyPage, UnifiSite, match_site, parse_page, parse_site_page,
 };
+use crate::vendors::unifi::UnifiApiMode;
 
 /// Maximum page size accepted by the UniFi DNS policy list endpoint.
 pub const MAX_PAGE_LIMIT: u32 = 200;

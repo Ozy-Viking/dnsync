@@ -29,16 +29,7 @@ impl DnsServerConfig {
     }
 
     pub fn default_base_url(&self) -> &'static str {
-        match self.vendor {
-            VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
-            VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
-            VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
-            VendorKind::Unifi if self.unifi_api_mode == Some(UnifiApiMode::Remote) => {
-                UNIFI_CLOUD_DEFAULT_BASE_URL
-            }
-            VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
-            VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
-        }
+        crate::vendors::runtime::default_base_url(self)
     }
 
     pub fn resolved_token(&self, override_token: Option<&str>) -> Result<ApiToken> {

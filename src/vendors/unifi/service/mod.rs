@@ -66,9 +66,8 @@ impl ZoneRead for UnifiClient {
     /// UniFi sites are exposed as dnsync zones. The stable site UUID is stored
     /// as `ZoneInfo.id`; `ZoneInfo.name` remains the operator-facing label.
     async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> {
-        let page = self
-            .list_sites_page(page.saturating_sub(1) * per_page, per_page)
-            .await?;
+        let offset = page.saturating_sub(1).saturating_mul(per_page);
+        let page = self.list_sites_page(offset, per_page).await?;
         let zones: Vec<ZoneInfo> = page.data.iter().map(ZoneInfo::from).collect();
         Ok(serde_json::json!({
             "response": {

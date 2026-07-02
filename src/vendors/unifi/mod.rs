@@ -1,13 +1,25 @@
+#[cfg(feature = "unifi")]
 pub mod client;
+pub mod config;
+#[cfg(feature = "unifi")]
 pub mod mapping;
+#[cfg(feature = "unifi")]
 pub mod responses;
+#[cfg(feature = "unifi")]
 pub mod service;
 
+pub use config::UnifiApiMode;
+
+#[cfg(feature = "unifi")]
 use std::env;
 
-use crate::control_plane::config::{self as app_config, DnsServerConfig};
+#[cfg(feature = "unifi")]
+use crate::control_plane::config::DnsServerConfig;
+#[cfg(feature = "unifi")]
 use crate::core::error::{Error, Result};
+#[cfg(feature = "unifi")]
 use crate::core::secret::ApiToken;
+#[cfg(feature = "unifi")]
 use crate::vendors::runtime::ClientOverrides;
 
 /// Construct a UniFi client from the resolved server entry and per-call overrides.
@@ -19,6 +31,7 @@ use crate::vendors::runtime::ClientOverrides;
 /// value is the controller's human-readable site name (e.g. `"Default"`),
 /// though a site UUID is also accepted. The client resolves the value to a
 /// UUID on the first DNS call via `GET /v1/sites`.
+#[cfg(feature = "unifi")]
 pub fn client_from_server(
     server: &DnsServerConfig,
     overrides: ClientOverrides<'_>,
@@ -59,15 +72,14 @@ pub fn client_from_server(
         base_url,
         token,
         site,
-        server
-            .unifi_api_mode
-            .unwrap_or(app_config::UnifiApiMode::Local),
+        server.unifi_api_mode.unwrap_or(UnifiApiMode::Local),
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unifi"))]
 mod tests {
     use super::*;
+    use crate::control_plane::config as app_config;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -122,7 +134,7 @@ mod tests {
         let client = client_from_server(server, ClientOverrides::default()).unwrap();
 
         assert_eq!(client.base_url(), app_config::UNIFI_CLOUD_DEFAULT_BASE_URL);
-        assert_eq!(client.api_mode(), app_config::UnifiApiMode::Remote);
+        assert_eq!(client.api_mode(), UnifiApiMode::Remote);
     }
 
     #[test]
