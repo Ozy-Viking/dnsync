@@ -103,6 +103,33 @@ fn render_round_trips_servers_clusters_daemon_and_jobs() {
     );
 }
 
+#[test]
+fn render_preserves_unifi_api_mode() {
+    let cfg: AppConfig = toml::from_str(
+        r#"
+            [[servers]]
+            id = "udm"
+            vendor = "unifi"
+            unifi_api_mode = "remote"
+            token_env = "UNIFI_API_TOKEN"
+            org_id = "Default"
+        "#,
+    )
+    .expect("config parses");
+
+    let rendered = cfg.render_toml().expect("render");
+    assert!(rendered.contains(r#"unifi_api_mode = "remote""#));
+    let reparsed: AppConfig = toml::from_str(&rendered).expect("rendered output re-parses");
+
+    assert_eq!(
+        reparsed
+            .selected_server(Some("udm"))
+            .unwrap()
+            .unifi_api_mode,
+        Some(UnifiApiMode::Remote)
+    );
+}
+
 /// Verifies that rendering a server without credentials writes an empty token placeholder.
 ///
 /// Ensures that when a server has neither an explicit token nor a token environment variable,

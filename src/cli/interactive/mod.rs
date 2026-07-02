@@ -18,7 +18,8 @@ pub(crate) use crate::control_plane::config::{
     CLOUDFLARE_DEFAULT_BASE_URL, DnsServerConfig, DnsTransportConfig, DohTransportConfig,
     DoqTransportConfig, DotTransportConfig, EndpointUpdate, McpPermissions,
     PANGOLIN_DEFAULT_BASE_URL, PIHOLE_DEFAULT_BASE_URL, ServerLocation,
-    TECHNITIUM_DEFAULT_BASE_URL, UNIFI_DEFAULT_BASE_URL, ValidationEndpointConfig, VendorKind,
+    TECHNITIUM_DEFAULT_BASE_URL, UNIFI_DEFAULT_BASE_URL, UnifiApiMode, ValidationEndpointConfig,
+    VendorKind,
 };
 pub(crate) use crate::control_plane::policy::PolicyRule;
 pub(crate) use crate::core::error::{Error, Result};

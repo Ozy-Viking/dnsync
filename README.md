@@ -63,6 +63,7 @@ dns config add --id home --vendor technitium --base-url-env HOME_DNS_URL --token
 dns config add --id cf   --vendor cloudflare  --token-env CLOUDFLARE_API_TOKEN
 dns config add --id pg   --vendor pangolin    --org-id my-org --token-env PANGOLIN_API_TOKEN
 dns config add --id udm  --vendor unifi       --base-url https://192.168.1.1/proxy/network/integration/v1 --org-id Default --token-env UNIFI_API_TOKEN
+dns config add --id ui   --vendor unifi       --unifi-api-mode remote --org-id Default --token-env UNIFI_API_TOKEN
 dns config add --id ph   --vendor pihole      --base-url http://pi.hole --token-env PIHOLE_API_TOKEN
 ```
 
@@ -155,6 +156,7 @@ token_env = "PANGOLIN_API_TOKEN"
 [[servers]]
 id = "udm"
 vendor = "unifi"
+unifi_api_mode = "local" # local controller integration API; use "remote" for api.ui.com
 base_url = "https://192.168.1.1/proxy/network/integration/v1"
 org_id = "Default" # UniFi site name or UUID
 token_env = "UNIFI_API_TOKEN"
@@ -185,7 +187,7 @@ Vendor defaults when no `base_url` is set:
 - `technitium` → `http://localhost:5380`
 - `pangolin` → `https://api.pangolin.net/v1`
 - `cloudflare` → `https://api.cloudflare.com/client/v4`
-- `unifi` → `https://192.168.1.1/proxy/network/integration/v1`
+- `unifi` → `https://192.168.1.1/proxy/network/integration/v1` when `unifi_api_mode` is omitted or `local`; `https://api.ui.com/v1` when `unifi_api_mode = "remote"`
 - `pihole` → `http://pi.hole`
 
 Per-server DNS transports are optional query endpoints, used by `dns query`
@@ -239,7 +241,9 @@ Technitium also accepts legacy `TECHNITIUM_BASE_URL` / `TECHNITIUM_API_TOKEN` at
 Pangolin additionally requires `org_id` — resolved from `DNSYNC_PANGOLIN_ORG_ID` then config `org_id`.
 
 UniFi also requires a site name or UUID from `DNSYNC_UNIFI_SITE` or config
-`org_id`. Pi-hole uses the same token/base-url resolution pattern as other
+`org_id`. `unifi_api_mode` distinguishes local controller integration tokens
+from remote UniFi cloud tokens; omitted keeps the existing local behaviour.
+Pi-hole uses the same token/base-url resolution pattern as other
 token-authenticated vendors.
 
 ---

@@ -149,7 +149,7 @@ pub(crate) fn add_missing_server_defaults(
     }
 
     if !server_tbl.contains_key("base_url") && !server_tbl.contains_key("base_url_env") {
-        server_tbl["base_url"] = value(default_base_url(server.vendor));
+        server_tbl["base_url"] = value(server.default_base_url());
         added += 1;
     }
 

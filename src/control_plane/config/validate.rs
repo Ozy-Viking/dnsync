@@ -39,6 +39,13 @@ pub(crate) fn validate_validation_endpoints(server: &DnsServerConfig) -> Result<
 }
 
 pub(crate) fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
+    if server.unifi_api_mode.is_some() && server.vendor != VendorKind::Unifi {
+        return Err(Error::config(format!(
+            "DNS server '{}' sets unifi_api_mode but vendor is not unifi",
+            server.id
+        )));
+    }
+
     if let Some(dns) = &server.dns
         && dns.enabled
         && dns

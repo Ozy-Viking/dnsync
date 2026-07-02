@@ -6,6 +6,8 @@
 //! survive minor UniFi schema additions.
 
 use serde::{Deserialize, Serialize};
+
+use crate::core::dns::responses::ZoneInfo;
 use serde_json::Value;
 
 /// UniFi DNS policy types as published by the OpenAPI spec.
@@ -178,6 +180,45 @@ impl UnifiSite {
             .as_deref()
             .or(self.internal_reference.as_deref())
             .unwrap_or(&self.id)
+    }
+}
+
+impl From<UnifiSite> for ZoneInfo {
+    fn from(site: UnifiSite) -> Self {
+        let UnifiSite {
+            id,
+            name,
+            internal_reference,
+        } = site;
+        ZoneInfo {
+            id: Some(id.clone()),
+            name: name.or(internal_reference).unwrap_or(id),
+            zone_type: "UniFi/Site".to_string(),
+            disabled: false,
+            dnssec_status: None,
+        }
+    }
+}
+
+impl From<&UnifiSite> for ZoneInfo {
+    fn from(site: &UnifiSite) -> Self {
+        site.clone().into()
+    }
+}
+
+impl From<ZoneInfo> for UnifiSite {
+    fn from(zone: ZoneInfo) -> Self {
+        UnifiSite {
+            id: zone.id.unwrap_or_else(|| zone.name.clone()),
+            name: Some(zone.name),
+            internal_reference: None,
+        }
+    }
+}
+
+impl From<&ZoneInfo> for UnifiSite {
+    fn from(zone: &ZoneInfo) -> Self {
+        zone.clone().into()
     }
 }
 
@@ -473,5 +514,72 @@ mod tests {
             internal_reference: None,
         };
         assert_eq!(s.display_name(), "the-id");
+    }
+
+    #[test]
+    fn site_converts_to_zone_info_with_uuid_id_and_display_name() {
+        let site = UnifiSite {
+            id: "11111111-1111-1111-1111-111111111111".into(),
+            name: Some("Default".into()),
+            internal_reference: Some("default".into()),
+        };
+
+        let zone = ZoneInfo::from(site);
+
+        assert_eq!(
+            zone.id.as_deref(),
+            Some("11111111-1111-1111-1111-111111111111")
+        );
+        assert_eq!(zone.name, "Default");
+        assert_eq!(zone.zone_type, "UniFi/Site");
+        assert!(!zone.disabled);
+        assert!(zone.dnssec_status.is_none());
+    }
+
+    #[test]
+    fn site_converts_to_zone_info_with_internal_reference_fallback() {
+        let site = UnifiSite {
+            id: "site-id".into(),
+            name: None,
+            internal_reference: Some("default".into()),
+        };
+
+        let zone = ZoneInfo::from(site);
+
+        assert_eq!(zone.id.as_deref(), Some("site-id"));
+        assert_eq!(zone.name, "default");
+    }
+
+    #[test]
+    fn zone_info_converts_to_site_with_uuid_id_and_display_name() {
+        let zone = ZoneInfo {
+            id: Some("11111111-1111-1111-1111-111111111111".into()),
+            name: "Default".into(),
+            zone_type: "UniFi/Site".into(),
+            disabled: false,
+            dnssec_status: None,
+        };
+
+        let site = UnifiSite::from(zone);
+
+        assert_eq!(site.id, "11111111-1111-1111-1111-111111111111");
+        assert_eq!(site.name.as_deref(), Some("Default"));
+        assert!(site.internal_reference.is_none());
+    }
+
+    #[test]
+    fn zone_info_converts_to_site_with_name_fallback_id() {
+        let zone = ZoneInfo {
+            id: None,
+            name: "Default".into(),
+            zone_type: "UniFi/Site".into(),
+            disabled: false,
+            dnssec_status: None,
+        };
+
+        let site = UnifiSite::from(zone);
+
+        assert_eq!(site.id, "Default");
+        assert_eq!(site.name.as_deref(), Some("Default"));
     }
 }

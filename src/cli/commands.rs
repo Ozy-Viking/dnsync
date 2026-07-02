@@ -45,9 +45,13 @@ pub enum ConfigCmd {
         #[arg(long)]
         token: Option<ApiToken>,
 
-        /// Organisation ID (Pangolin only)
+        /// Organisation ID (Pangolin), or UniFi site name/UUID
         #[arg(long)]
         org_id: Option<String>,
+
+        /// UniFi API token scope: local controller integration API or remote UniFi cloud API
+        #[arg(long, value_enum)]
+        unifi_api_mode: Option<crate::control_plane::config::UnifiApiMode>,
 
         /// Whether the server is on a local network or an external/cloud service
         /// (auto-detected from base_url when omitted)

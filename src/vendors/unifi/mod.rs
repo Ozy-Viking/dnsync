@@ -29,7 +29,7 @@ pub fn client_from_server(
         .or_else(|| env::var("DNSYNC_UNIFI_BASE_URL").ok())
         .or_else(|| server.base_url_env.as_ref().and_then(|k| env::var(k).ok()))
         .or_else(|| server.base_url.clone())
-        .unwrap_or_else(|| app_config::UNIFI_DEFAULT_BASE_URL.to_string());
+        .unwrap_or_else(|| server.default_base_url().to_string());
     let token = overrides
         .token
         .cloned()
@@ -55,7 +55,14 @@ pub fn client_from_server(
                 "UniFi site is required from DNSYNC_UNIFI_SITE or config org_id (human-readable site name, e.g. \"Default\", or the site UUID)",
             )
         })?;
-    client::UnifiClient::new(base_url, token, site)
+    client::UnifiClient::with_api_mode(
+        base_url,
+        token,
+        site,
+        server
+            .unifi_api_mode
+            .unwrap_or(app_config::UnifiApiMode::Local),
+    )
 }
 
 #[cfg(test)]
@@ -93,6 +100,29 @@ mod tests {
 
         assert_eq!(client.base_url(), app_config::UNIFI_DEFAULT_BASE_URL);
         assert_eq!(client.site(), "Default");
+    }
+
+    #[test]
+    fn remote_api_mode_uses_cloud_default_base_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_unifi_env();
+        let app_config: app_config::AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "udm"
+                vendor = "unifi"
+                unifi_api_mode = "remote"
+                token = "unifi-token"
+                org_id = "Default"
+            "#,
+        )
+        .unwrap();
+        let server = app_config.selected_server(Some("udm")).unwrap();
+
+        let client = client_from_server(server, ClientOverrides::default()).unwrap();
+
+        assert_eq!(client.base_url(), app_config::UNIFI_CLOUD_DEFAULT_BASE_URL);
+        assert_eq!(client.api_mode(), app_config::UnifiApiMode::Remote);
     }
 
     #[test]

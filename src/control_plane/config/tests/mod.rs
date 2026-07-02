@@ -73,6 +73,7 @@ fn server_with_url(url: &str) -> DnsServerConfig {
     DnsServerConfig {
         id: "test".to_string(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: Some(url.to_string()),
         base_url_env: None,

@@ -246,6 +246,7 @@ fn server_with_mcp(access: Vec<PolicyRule>, allowed_zones: Vec<String>) -> DnsSe
     DnsServerConfig {
         id: "test".into(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,

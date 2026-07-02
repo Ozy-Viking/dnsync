@@ -20,7 +20,7 @@ fn kind_returns_unifi() {
 #[test]
 fn capabilities_advertise_records_and_settings() {
     let caps = make_client().capabilities();
-    assert!(!caps.zones);
+    assert!(caps.zones);
     assert!(caps.records);
     assert!(!caps.cache);
     assert!(!caps.access_lists);
@@ -39,11 +39,6 @@ macro_rules! assert_unsupported {
             other => panic!("expected Unsupported, got {other:?}"),
         }
     };
-}
-
-#[tokio::test]
-async fn list_zones_is_unsupported() {
-    assert_unsupported!(make_client().list_zones(0, 25));
 }
 
 #[tokio::test]

@@ -1,12 +1,14 @@
 //! UniFi implementations of the vendor-neutral DNS service traits.
 //!
-//! UniFi DNS policies are site-scoped, not zone-scoped, so dnsync derives
-//! logical zones by suffix matching. The integration exposes:
+//! UniFi DNS policies are site-scoped, so dnsync exposes UniFi sites as
+//! vendor-neutral zones. The stable site UUID is stored on `ZoneInfo.id`; the
+//! human-readable site label is stored on `ZoneInfo.name`. The integration exposes:
+//!   - `list_zones`    → GET /sites
 //!   - `list_records`  → GET /sites/{siteId}/dns/policies (paginated)
 //!   - `add_record`    → POST /sites/{siteId}/dns/policies
 //!   - `delete_record` → list, match by domain+type+value, DELETE by id
 //!
-//! Zones, cache, access lists, stats, settings, and zone import/export are
+//! Cache, access lists, stats, settings writes, and zone import/export are
 //! unsupported and return `Error::unsupported`. `FORWARD_DOMAIN` policies
 //! are surfaced as provider-specific metadata in listings but cannot be
 //! created or deleted through the record API.
@@ -31,6 +33,7 @@ use super::client::UnifiClient;
 use super::mapping::{
     policy_matches_delete_params, policy_to_zone_record, record_data_to_unifi_body,
 };
+use super::responses::match_site;
 
 // ─── DnsVendor ────────────────────────────────────────────────────────────────
 
@@ -41,7 +44,7 @@ impl DnsVendor for UnifiClient {
 
     fn capabilities(&self) -> VendorCapabilities {
         VendorCapabilities {
-            zones: false,
+            zones: true,
             records: true,
             cache: false,
             access_lists: false,
@@ -60,11 +63,18 @@ impl DnsVendor for UnifiClient {
 // ─── ZoneRead ─────────────────────────────────────────────────────────────────
 
 impl ZoneRead for UnifiClient {
-    /// UniFi exposes no zone abstraction — there is nothing to list. Returning
-    /// `unsupported` lets the trait surface that clearly rather than faking a
-    /// synthetic zone list.
-    async fn list_zones(&self, _page: u32, _per_page: u32) -> Result<Value> {
-        Err(Error::unsupported("UniFi", "zone listing"))
+    /// UniFi sites are exposed as dnsync zones. The stable site UUID is stored
+    /// as `ZoneInfo.id`; `ZoneInfo.name` remains the operator-facing label.
+    async fn list_zones(&self, page: u32, per_page: u32) -> Result<Value> {
+        let page = self
+            .list_sites_page(page.saturating_sub(1) * per_page, per_page)
+            .await?;
+        let zones: Vec<ZoneInfo> = page.data.iter().map(ZoneInfo::from).collect();
+        Ok(serde_json::json!({
+            "response": {
+                "zones": zones,
+            }
+        }))
     }
 
     #[instrument(
@@ -77,29 +87,38 @@ impl ZoneRead for UnifiClient {
         zone: Option<&'a str>,
         _options: ListRecordsOptions,
     ) -> Result<ListRecordsResponse> {
-        // Resolve the site first so a misconfigured site name fails with the
-        // friendly site-not-found error instead of a misleading 404 from the
-        // DNS policy endpoint.
-        let site_id = self.resolve_site_id().await?.to_string();
-        let policies = self.list_all_dns_policies(None).await?;
-
-        let zone_label = zone
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| domain.to_string());
+        let sites = self.list_all_sites().await?;
+        let site = zone
+            .and_then(|zone| match_site(&sites, zone))
+            .or_else(|| match_site(&sites, self.site()))
+            .ok_or_else(|| {
+                Error::api(format!(
+                    "UniFi site '{}' not found on this controller",
+                    zone.unwrap_or_else(|| self.site())
+                ))
+            })?;
+        let zone_info = ZoneInfo::from(site);
+        let zone_label = zone_info.name.clone();
+        let site_id = zone_info.id.as_deref().ok_or_else(|| {
+            Error::parse(format!(
+                "UniFi site zone '{}' is missing its UUID",
+                zone_label
+            ))
+        })?;
+        let policies = self
+            .list_all_dns_policies_for_site_id(site_id, None)
+            .await?;
+        let query_domain = if zone.is_some_and(|zone| domain.eq_ignore_ascii_case(zone)) {
+            ""
+        } else {
+            domain
+        };
 
         let records: Vec<ZoneRecord> = policies
             .iter()
-            .filter(|p| domain_matches_zone(&p.domain, &zone_label))
+            .filter(|p| query_domain.is_empty() || domain_matches_zone(&p.domain, query_domain))
             .map(|p| policy_to_zone_record(p, &zone_label))
             .collect();
-
-        let zone_info = ZoneInfo {
-            id: Some(site_id),
-            name: zone_label,
-            zone_type: "UniFi/Site".to_string(),
-            disabled: false,
-            dnssec_status: None,
-        };
 
         Ok(ListRecordsResponse::single(zone_info, records))
     }

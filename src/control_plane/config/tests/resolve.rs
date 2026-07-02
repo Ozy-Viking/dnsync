@@ -61,6 +61,7 @@ async fn technitium_default_url_is_local() {
     let server = DnsServerConfig {
         id: "test".to_string(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,
@@ -83,6 +84,7 @@ async fn pangolin_default_url_is_external() {
     let server = DnsServerConfig {
         id: "test".to_string(),
         vendor: VendorKind::Pangolin,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,

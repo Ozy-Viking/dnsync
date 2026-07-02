@@ -12,13 +12,7 @@ impl DnsServerConfig {
         if let Some(loc) = self.location {
             return loc;
         }
-        let url = self.base_url.as_deref().unwrap_or(match self.vendor {
-            VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
-            VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
-            VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
-            VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
-            VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
-        });
+        let url = self.base_url.as_deref().unwrap_or(self.default_base_url());
         if url_is_local(url).await {
             ServerLocation::Local
         } else {
@@ -31,13 +25,20 @@ impl DnsServerConfig {
             .map(ToOwned::to_owned)
             .or_else(|| self.base_url_env.as_ref().and_then(|k| env::var(k).ok()))
             .or_else(|| self.base_url.clone())
-            .unwrap_or_else(|| match self.vendor {
-                VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL.to_string(),
-                VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL.to_string(),
-                VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL.to_string(),
-                VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL.to_string(),
-                VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL.to_string(),
-            })
+            .unwrap_or_else(|| self.default_base_url().to_string())
+    }
+
+    pub fn default_base_url(&self) -> &'static str {
+        match self.vendor {
+            VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
+            VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
+            VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
+            VendorKind::Unifi if self.unifi_api_mode == Some(UnifiApiMode::Remote) => {
+                UNIFI_CLOUD_DEFAULT_BASE_URL
+            }
+            VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
+            VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
+        }
     }
 
     pub fn resolved_token(&self, override_token: Option<&str>) -> Result<ApiToken> {

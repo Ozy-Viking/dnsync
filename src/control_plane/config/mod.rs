@@ -39,6 +39,7 @@ pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
 pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
 pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
 pub const UNIFI_DEFAULT_BASE_URL: &str = "https://192.168.1.1/proxy/network/integration/v1";
+pub const UNIFI_CLOUD_DEFAULT_BASE_URL: &str = "https://api.ui.com/v1";
 pub const PIHOLE_DEFAULT_BASE_URL: &str = "http://pi.hole";
 
 #[cfg(test)]
