@@ -125,6 +125,35 @@ Track the planned move from a Technitium-focused MCP server to a general DNS con
 - [ ] Consider running ledger writes via `spawn_blocking` in the async executor
       (currently brief inline SQLite calls) if contention shows up.
 
+## Missing-features plan (2026-07, `docs/missing-features-plan.md`)
+
+Full gap analysis and sequencing live in the plan doc; these are the tracked
+outcomes. Items already listed elsewhere in this file (DoQ e2e tests, vendor
+write-path coverage, MCP diff tool, `query --compare`, clippy debt, ledger
+`spawn_blocking`) stay where they are — the plan sequences them, it does not
+duplicate them.
+
+- [ ] Wire the dormant validation layer into `dns validate` + MCP `dns_validate`
+      (all four transports; consult the unused `enabled` flag; grouped
+      validation targets as a follow-up design).
+- [ ] Daemon parity on MCP: `dns_job_list`, `dns_job_run` (dry-run by default,
+      policy-gated), `dns_daemon_health`.
+- [ ] Owner decision needed: whether MCP should get config-mutation tools
+      (`config update`/`add` equivalents) or the parity exception is documented.
+- [ ] `dns diff` CLI command reusing the sync planner (read-only), shipping
+      with the MCP `diff` tool tracked above.
+- [ ] Enforce `VendorCapabilities` centrally in the control plane and expose
+      the capability matrix (`dns_list_servers` + CLI); land after/atop PR #56.
+- [ ] Turn on `clippy -D warnings` in CI once the lint-debt sweep lands.
+- [ ] `dns bench` + MCP `dns_benchmark` over the shared resolver layer
+      (the "future benchmarking" promised in README/vendor-mapping).
+- [ ] Bulk record operations (`RecordWriteBulk`) with native batching where
+      vendors support it; route sync apply / zone import through it.
+- [ ] Short design doc for consuming `ServerLocation` (sync audit gap 3).
+- [ ] README/docs sweep: daemon & `[[jobs]]`, Docker/systemd deployment,
+      `dns logs`, `dns config update`, MCP tool catalog with required access
+      levels.
+
 ### Review follow-ups (PR #53)
 
 - [x] Wire SIGTERM to the daemon cancellation token for graceful container shutdown.
