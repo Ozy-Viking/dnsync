@@ -35,6 +35,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    synced_records (job_key, zone, fqdn, rtype, value) {
+        job_key -> Text,
+        zone -> Text,
+        fqdn -> Text,
+        rtype -> Text,
+        value -> Text,
+        ttl -> Integer,
+        first_synced_at -> Text,
+        last_seen_at -> Text,
+    }
+}
+
+diesel::table! {
     job_runs (run_id) {
         run_id -> Text,
         job_id -> Text,

@@ -59,57 +59,7 @@ pub use crate::daemon::executor::JobOutcome as JobOutcomeAlias;
 /// println!("state DB: {}", path.display());
 /// ```
 fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
-    if let Some(ref daemon) = config.daemon
-        && let Some(ref p) = daemon.state_db
-    {
-        return p.clone();
-    }
-
-    // Fall back to $DNSYNC_STATE_DB env var or XDG default.
-    if let Ok(p) = std::env::var("DNSYNC_STATE_DB") {
-        return std::path::PathBuf::from(p);
-    }
-
-    dirs_xdg_data_home().join("dnsync").join("state.db")
-}
-
-/// Determine the XDG data home directory path using environment fallbacks.
-///
-/// Checks the `XDG_DATA_HOME` environment variable first. If unset, falls back to
-/// `$HOME/.local/share` when `HOME` is present. If neither variable is set,
-/// returns the current directory (`.`).
-///
-/// # Examples
-///
-/// ```text
-/// use std::path::PathBuf;
-///
-/// // Prefer XDG_DATA_HOME when set
-/// std::env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
-/// assert_eq!(dirs_xdg_data_home(), PathBuf::from("/tmp/xdg_data_home"));
-/// std::env::remove_var("XDG_DATA_HOME");
-///
-/// // Fall back to HOME/.local/share when HOME is set
-/// std::env::set_var("HOME", "/home/alice");
-/// assert_eq!(
-///     dirs_xdg_data_home(),
-///     PathBuf::from("/home/alice").join(".local").join("share")
-/// );
-/// std::env::remove_var("HOME");
-///
-/// // When neither is set, return the current directory
-/// std::env::remove_var("XDG_DATA_HOME");
-/// std::env::remove_var("HOME");
-/// assert_eq!(dirs_xdg_data_home(), PathBuf::from("."));
-/// ```
-fn dirs_xdg_data_home() -> std::path::PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-        return std::path::PathBuf::from(xdg);
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return std::path::PathBuf::from(home).join(".local").join("share");
-    }
-    std::path::PathBuf::from(".")
+    crate::daemon::state_path::resolve_state_db(config)
 }
 
 // ─── Helper: build executor for a job ─────────────────────────────────────────
@@ -118,20 +68,44 @@ fn dirs_xdg_data_home() -> std::path::PathBuf {
 ///
 /// If a job with the given `job_id` exists in `config.jobs`, returns an `Arc<dyn JobExecutor>` whose concrete type corresponds to the job's `JobKind` (`RecordSyncExecutor`, `ZoneSyncExecutor`, or `ZoneExportExecutor`). Returns `None` when no matching job is found.
 ///
+/// Returns `Ok(None)` when no matching job is found. Returns `Err` when a
+/// `RecordSync` job has `prune_synced` enabled but the state DB cannot be
+/// opened — pruning needs the ledger, so failing fast matches the daemon
+/// runtime rather than silently skipping ownership tracking.
+///
 /// # Examples
 ///
 /// ```text
 /// // Assume `config` contains a job with id "job-alpha".
-/// let exec = build_executor(&config, "job-alpha");
+/// let exec = build_executor(&config, "job-alpha").unwrap();
 /// assert!(exec.is_some());
 /// ```
-fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecutor>> {
-    let job = config.jobs.iter().find(|j| j.id == job_id)?;
+fn build_executor(
+    config: &AppConfig,
+    job_id: &str,
+) -> Result<Option<Arc<dyn JobExecutor>>, String> {
+    let Some(job) = config.jobs.iter().find(|j| j.id == job_id) else {
+        return Ok(None);
+    };
     let executor: Arc<dyn JobExecutor> = match job.kind {
-        JobKind::RecordSync => Arc::new(RecordSyncExecutor {
-            config: config.clone(),
-            job_id: job_id.to_string(),
-        }),
+        JobKind::RecordSync => {
+            // Open the state DB so a manual run can still prune owned records.
+            let db_path = resolve_state_db(config);
+            let ledger = match db::open(&db_path) {
+                Ok(pool) => Some(Arc::new(DaemonStateStore::new(pool))),
+                Err(e) if job.prune_synced => {
+                    return Err(format!(
+                        "could not open state DB for prune_synced job '{job_id}': {e}"
+                    ));
+                }
+                Err(_) => None,
+            };
+            Arc::new(RecordSyncExecutor {
+                config: config.clone(),
+                job_id: job_id.to_string(),
+                ledger,
+            })
+        }
         JobKind::ZoneSync => Arc::new(ZoneSyncExecutor {
             config: config.clone(),
             job_id: job_id.to_string(),
@@ -141,7 +115,7 @@ fn build_executor(config: &AppConfig, job_id: &str) -> Option<Arc<dyn JobExecuto
             job_id: job_id.to_string(),
         }),
     };
-    Some(executor)
+    Ok(Some(executor))
 }
 
 // ─── list_jobs ─────────────────────────────────────────────────────────────────
@@ -265,7 +239,7 @@ pub async fn run_job(config: &AppConfig, job_id: &str) -> Result<JobOutcome, Str
     }
 
     let executor =
-        build_executor(config, job_id).ok_or_else(|| format!("job not found: {job_id}"))?;
+        build_executor(config, job_id)?.ok_or_else(|| format!("job not found: {job_id}"))?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let started_at = Utc::now();

@@ -35,7 +35,6 @@ pub async fn handle_sync(
 ) -> Result<CallToolResult, McpError> {
     // Named sync profiles have been superseded by [[jobs]]; zone resolution
     // now relies solely on the explicit `zones` parameter or server allow-lists.
-    let _ = config; // config retained for future use
     let effective_zones = p.zones.as_slice();
     let zone_check = if effective_zones.is_empty()
         && (from_policy.allowed_zones.is_some() || to_policy.allowed_zones.is_some())
@@ -55,6 +54,51 @@ pub async fn handle_sync(
         .and(zone_check);
 
     Ok(run_json("dns_sync", check, async move {
+        // When pruning is requested, open the daemon state DB as the ownership
+        // ledger so the MCP path matches the CLI/daemon behaviour. The
+        // ownership key is derived from the source→destination pair.
+        let ledger = if p.prune_synced || p.teardown {
+            let path = crate::daemon::resolve_state_db(config);
+            let pool = crate::daemon::db::open(&path).map_err(|e| {
+                crate::core::error::Error::config(format!("prune_synced requires a state DB: {e}"))
+            })?;
+            Some(std::sync::Arc::new(
+                crate::daemon::db::store::DaemonStateStore::new(pool),
+            ))
+        } else {
+            None
+        };
+        let ownership = ledger.as_ref().map(|store| {
+            let job_key = format!(
+                "mcp:{}->{}",
+                p.from.as_deref().unwrap_or("?"),
+                p.to.as_deref().unwrap_or("?")
+            );
+            let ledger: &dyn crate::control_plane::sync::SyncLedger = store.as_ref();
+            crate::control_plane::sync::Ownership {
+                job_key,
+                ledger,
+                prune: p.prune_synced || p.teardown,
+            }
+        });
+
+        // Teardown removes every owned record and clears the ledger, then stops.
+        if p.teardown {
+            let to =
+                p.to.as_deref()
+                    .ok_or_else(|| crate::core::error::Error::parse("teardown requires `to`"))?;
+            let ownership = ownership
+                .as_ref()
+                .ok_or_else(|| crate::core::error::Error::config("teardown requires a state DB"))?;
+            return crate::control_plane::sync::run_sync_teardown(
+                Some(config),
+                to,
+                p.apply,
+                ownership,
+            )
+            .await;
+        }
+
         crate::control_plane::sync::run_sync_json(
             Some(config),
             p.profile.as_deref(),
@@ -64,6 +108,7 @@ pub async fn handle_sync(
             &p.map,
             p.apply,
             crate::control_plane::sync::SyncDiffOptions::default(),
+            ownership.as_ref(),
         )
         .await
     })
@@ -94,6 +139,8 @@ mod tests {
                 zones: Vec::new(),
                 map: Vec::new(),
                 apply: false,
+                prune_synced: false,
+                teardown: false,
             },
         )
         .await

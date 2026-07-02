@@ -10,6 +10,8 @@ use super::DbPool;
 use super::models::{DaemonHealthRow, JobRunRow, JobStatusRow};
 use super::schema::{daemon_health, job_runs, job_status};
 
+mod ledger;
+
 /// A thin façade over a [`DbPool`] that handles persisting daemon health
 /// snapshots, per-job status, and append-only job run history.
 pub struct DaemonStateStore {

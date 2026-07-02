@@ -81,10 +81,26 @@ pub(crate) struct ZonePlan {
     pub(crate) untouched: usize,
     /// Source records that cannot be synced (SOA, DNSSEC, disabled, unknown).
     pub(crate) skipped: usize,
+    /// The records this job is responsible for on the destination this run
+    /// (the writable, post-ip-map, post-ignore source records). This is the
+    /// "desired owned set" used by ownership pruning.
+    pub(crate) owned: Vec<PlannedRecord>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SyncApplySummary {
     pub applied: usize,
+    pub failures: usize,
+}
+
+/// Outcome of an ownership-pruning pass.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct PruneSummary {
+    /// Owned records removed from the destination because they vanished from source.
+    pub pruned: usize,
+    /// Owned records left in place because the live destination value had drifted
+    /// from what the job recorded (an out-of-band change we refuse to clobber).
+    pub skipped_drift: usize,
+    /// Prune deletes that failed at the destination API.
     pub failures: usize,
 }

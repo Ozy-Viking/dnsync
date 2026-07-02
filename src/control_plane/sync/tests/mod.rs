@@ -8,6 +8,7 @@ pub(crate) use std::sync::{Arc, Mutex};
 
 mod apply;
 mod diff;
+mod reconcile;
 
 fn ip_map(pairs: &[(&str, &str)]) -> HashMap<IpAddr, IpAddr> {
     pairs

@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use crate::daemon::db::schema::{daemon_health, job_runs, job_status};
+use crate::daemon::db::schema::{daemon_health, job_runs, job_status, synced_records};
 
 /// One row — the daemon's current health snapshot.
 /// `id` is always 1 (enforced by CHECK constraint in DDL).
@@ -39,6 +39,25 @@ pub struct JobStatusRow {
     pub last_error_summary: Option<String>,
     pub consecutive_failures: i32,
     pub last_run_id: Option<String>,
+}
+
+/// One row per record a sync job owns on its destination.
+///
+/// The ownership ledger: records that a job (`job_key`) created on its
+/// destination. Used by `prune_synced` to remove exactly the records a job
+/// previously synced once they disappear from the source — and nothing else.
+#[derive(Debug, Clone, Queryable, Selectable, Insertable, AsChangeset)]
+#[diesel(table_name = synced_records)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct SyncedRecordRow {
+    pub job_key: String,
+    pub zone: String,
+    pub fqdn: String,
+    pub rtype: String,
+    pub value: String,
+    pub ttl: i32,
+    pub first_synced_at: String,
+    pub last_seen_at: String,
 }
 
 /// Append-only run history row.

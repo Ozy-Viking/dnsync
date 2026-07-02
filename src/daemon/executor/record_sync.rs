@@ -1,12 +1,14 @@
 //! RecordSyncExecutor — executes a RecordSync job by calling into
 //! `control_plane::sync::run_sync_json`.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tracing::{debug, info, instrument, warn};
 
 use crate::control_plane::config::AppConfig;
-use crate::control_plane::sync::{SyncDiffOptions, run_sync_json};
+use crate::control_plane::sync::{Ownership, SyncDiffOptions, SyncLedger, run_sync_json};
+use crate::daemon::db::store::DaemonStateStore;
 
 use super::{JobContext, JobExecutor, JobOutcome};
 
@@ -14,9 +16,14 @@ use super::{JobContext, JobExecutor, JobOutcome};
 ///
 /// Looks up the job config by `job_id`, builds the appropriate options, and
 /// delegates to `control_plane::sync::run_sync_json`. No DNS logic lives here.
+///
+/// When `ledger` is present and the job enables `prune_synced`, the executor
+/// passes an ownership context so the run can prune records this job previously
+/// created on the destination once they disappear from the source.
 pub struct RecordSyncExecutor {
     pub config: AppConfig,
     pub job_id: String,
+    pub ledger: Option<Arc<DaemonStateStore>>,
 }
 
 #[async_trait::async_trait]
@@ -83,6 +90,17 @@ impl JobExecutor for RecordSyncExecutor {
             ignore: ignore_patterns,
         };
 
+        // Ownership tracking is only active when a ledger is wired in and the
+        // job opts into pruning. The job id is the ownership key.
+        let ownership = self.ledger.as_ref().map(|store| {
+            let ledger: &dyn SyncLedger = store.as_ref();
+            Ownership {
+                job_key: self.job_id.clone(),
+                ledger,
+                prune: job.prune_synced,
+            }
+        });
+
         let start = Instant::now();
         let result = run_sync_json(
             Some(&self.config),
@@ -93,6 +111,7 @@ impl JobExecutor for RecordSyncExecutor {
             &ip_map_vec,
             apply,
             diff_opts,
+            ownership.as_ref(),
         )
         .await;
         let elapsed = start.elapsed();

@@ -145,6 +145,7 @@ async fn apply_writes_missing_child_records_to_destination() {
         unchanged: 0,
         untouched: 0,
         skipped: 0,
+        owned: vec![],
     };
 
     apply_plans_with_client(&writer, &[plan]).await.unwrap();

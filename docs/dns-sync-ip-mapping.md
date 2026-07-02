@@ -99,17 +99,77 @@ the config loader rejects mismatches.
 CLI flags override the profile; `--map` entries merge into and override the
 profile's `ip_map`.
 
+## Ownership pruning (`prune_synced`)
+
+By default sync is additive: records that exist only on the destination are
+never removed. Two opt-in modes can remove destination records, and they are
+deliberately different:
+
+- **`delete_destination_only`** — a *blunt mirror*. Deletes any destination
+  record (name+type) with no source counterpart. Needs no state, but will
+  happily remove records the sync never created. Use only when the destination
+  is meant to be an exact mirror of the source.
+
+- **`prune_synced`** — *ownership pruning*. Removes only records this sync
+  previously created on the destination, once they disappear from the source.
+  Everything else on the destination is left alone. This is the safe answer to
+  "when a record is removed from the source, remove the copy I made on the
+  destination."
+
+### How it works
+
+Each sync run records, in the SQLite state DB, the set of records it is
+responsible for on the destination (the *ownership ledger*, keyed per job). On
+the next run:
+
+1. The desired owned set is recomputed from the source.
+2. Records in the ledger that are no longer desired are *prune candidates*.
+3. For each candidate, the live destination value is checked against what the
+   ledger recorded. If it still matches, the record is deleted. If it has
+   **drifted** (changed out-of-band), it is left untouched and ownership is
+   relinquished — a manual/emergency edit is never clobbered.
+4. The desired set is recorded as the new ownership snapshot.
+
+Pruning is a write, so it obeys the usual contract: previewed under dry-run,
+only committed with `--apply`.
+
+### Surfaces
+
+| Surface | How to enable |
+|---|---|
+| Daemon job | `prune_synced = true` on the `[[jobs]]` entry (ownership key = job id) |
+| CLI | `dns sync --from … --to … --prune-synced --state-db <path> --apply` |
+| MCP | `dns_sync` tool with `prune_synced: true` (uses the configured state DB) |
+
+### Teardown (full rollback)
+
+To remove *everything* a sync ever created on the destination and clear its
+ledger — for example when retiring a job — use teardown. It is dry-run by
+default and value-match gated like pruning:
+
+```bash
+dns sync --to home --teardown --state-db <path>          # preview
+dns sync --to home --teardown --state-db <path> --apply  # commit
+```
+
+The MCP `dns_sync` tool exposes the same via `teardown: true`.
+
 ## Known parity gaps (required work)
 
 Per `agents.md` ("The MCP surface is a full peer to the CLI… Treat any gap
 between CLI and MCP capability as a bug"), the following gaps are **bugs to be
 fixed**, not optional enhancements:
 
-- **MCP `sync` tool** — `dns sync` exists on the CLI but has no MCP equivalent.
-  The MCP server must expose a `sync` tool that mirrors the CLI surface
-  (profiles, `--from`/`--to`/`--zone`/`--map`, dry-run-by-default, `--apply`).
 - **MCP `diff` tool** — once `dns diff` lands as a CLI command, the matching
   MCP tool ships with it. A CLI-only `diff` would itself be a parity bug.
+
+The MCP `dns_sync` tool already mirrors the CLI sync surface
+(`from`/`to`/`zones`/`map`, dry-run-by-default, `apply`, `prune_synced`,
+`teardown`). It deliberately resolves its ownership ledger from the operator's
+configured state DB rather than accepting a per-call path: the CLI `--state-db`
+flag is a local-operator convenience, whereas letting a network-facing MCP
+caller point the ledger at an arbitrary filesystem path would widen the write
+surface the operator config is meant to control.
 
 These items are tracked as required work and must not be re-classified as
 "future" or "possible" features.
@@ -122,8 +182,6 @@ The audit also surfaced a backlog of related capabilities worth considering:
   `192.168.1.0/24`) instead of listing every host.
 - **Per-hostname overrides** — force a record's value by name, not by IP.
 - **`dns diff`** — drift report between two servers with no write path.
-- **`dns sync --prune`** — opt-in mirror mode that removes destination records
-  absent from the source.
 - **Continuous / scheduled sync** — a `--watch` mode or cron-friendly runs.
 - **Split-horizon via `ServerLocation`** — auto-select internal vs external
   addresses using the already-computed server location.

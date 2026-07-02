@@ -48,70 +48,7 @@ use crate::daemon::{
 /// assert_eq!(path, std::path::PathBuf::from("/tmp/my_state.db"));
 /// ```
 fn resolve_state_db(config: &AppConfig) -> std::path::PathBuf {
-    if let Some(ref daemon) = config.daemon
-        && let Some(ref p) = daemon.state_db
-    {
-        return p.clone();
-    }
-
-    if let Ok(p) = std::env::var("DNSYNC_STATE_DB") {
-        return std::path::PathBuf::from(p);
-    }
-
-    xdg_data_home().join("dnsync").join("state.db")
-}
-
-/// Resolve the base data directory following XDG conventions.
-
-///
-
-/// Chooses the path in this order:
-
-/// 1. the `XDG_DATA_HOME` environment variable if present;
-
-/// 2. `$HOME/.local/share` if `HOME` is present;
-
-/// 3. the current directory `"."` as a last resort.
-
-///
-
-/// # Returns
-
-///
-
-/// A `PathBuf` pointing to the chosen data directory.
-
-///
-
-/// # Examples
-
-///
-
-/// ```text
-
-/// use std::path::PathBuf;
-
-/// use std::env;
-
-///
-
-/// // Prefer XDG_DATA_HOME when set
-
-/// env::set_var("XDG_DATA_HOME", "/tmp/xdg-data-home-example");
-
-/// assert_eq!(xdg_data_home(), PathBuf::from("/tmp/xdg-data-home-example"));
-
-/// env::remove_var("XDG_DATA_HOME");
-
-/// ```
-fn xdg_data_home() -> std::path::PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-        return std::path::PathBuf::from(xdg);
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return std::path::PathBuf::from(home).join(".local").join("share");
-    }
-    std::path::PathBuf::from(".")
+    crate::daemon::state_path::resolve_state_db(config)
 }
 
 // ─── parse_shutdown_timeout ────────────────────────────────────────────────────
@@ -223,17 +160,22 @@ pub async fn run(config: AppConfig, cancel: CancellationToken) -> Result<(), Str
     info!(daemon_id = %daemon_id, "daemon started");
 
     // ── 4. Build executor closure ─────────────────────────────────────────────
+    // A dedicated store handle for ownership-ledger reads/writes during job
+    // runs, separate from the DB-writer task's connection.
+    let ledger_store = Arc::new(DaemonStateStore::new(db::open(&db_path)?));
     let config_arc = Arc::new(config.clone());
     let executors: Arc<
         dyn Fn(&str) -> Option<Arc<dyn crate::daemon::executor::JobExecutor>> + Send + Sync,
     > = {
         let cfg = Arc::clone(&config_arc);
+        let ledger_store = Arc::clone(&ledger_store);
         Arc::new(move |job_id: &str| {
             let job = cfg.jobs.iter().find(|j| j.id == job_id)?;
             let exec: Arc<dyn crate::daemon::executor::JobExecutor> = match job.kind {
                 JobKind::RecordSync => Arc::new(RecordSyncExecutor {
                     config: (*cfg).clone(),
                     job_id: job_id.to_string(),
+                    ledger: Some(Arc::clone(&ledger_store)),
                 }),
                 JobKind::ZoneSync => Arc::new(ZoneSyncExecutor {
                     config: (*cfg).clone(),
