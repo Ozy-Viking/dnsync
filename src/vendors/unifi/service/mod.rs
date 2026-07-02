@@ -86,17 +86,29 @@ impl ZoneRead for UnifiClient {
         zone: Option<&'a str>,
         _options: ListRecordsOptions,
     ) -> Result<ListRecordsResponse> {
-        let sites = self.list_all_sites().await?;
-        let site = zone
-            .and_then(|zone| match_site(&sites, zone))
-            .or_else(|| match_site(&sites, self.site()))
-            .ok_or_else(|| {
+        let requested_site = zone.unwrap_or_else(|| self.site());
+        let zone_info = if requested_site.eq_ignore_ascii_case(self.site())
+            && let Some(site_id) = self.cached_site_id()
+        {
+            ZoneInfo {
+                id: Some(site_id.to_string()),
+                name: self.site().to_string(),
+                zone_type: "UniFi/Site".to_string(),
+                disabled: false,
+                dnssec_status: None,
+            }
+        } else {
+            let sites = self.list_all_sites().await?;
+            let site = match_site(&sites, requested_site).ok_or_else(|| {
                 Error::api(format!(
-                    "UniFi site '{}' not found on this controller",
-                    zone.unwrap_or_else(|| self.site())
+                    "UniFi site '{requested_site}' not found on this controller"
                 ))
             })?;
-        let zone_info = ZoneInfo::from(site);
+            if requested_site.eq_ignore_ascii_case(self.site()) {
+                self.remember_site_id(&site.id);
+            }
+            ZoneInfo::from(site)
+        };
         let zone_label = zone_info.name.clone();
         let site_id = zone_info.id.as_deref().ok_or_else(|| {
             Error::parse(format!(

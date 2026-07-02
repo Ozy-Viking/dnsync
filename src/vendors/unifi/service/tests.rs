@@ -1,5 +1,17 @@
 use super::*;
 use crate::core::secret::ApiToken;
+use mockito::{Matcher, ServerGuard};
+use rstest::{fixture, rstest};
+
+#[fixture]
+async fn server() -> ServerGuard {
+    mockito::Server::new_async().await
+}
+
+fn make_server_client(server: &ServerGuard, site: &str) -> UnifiClient {
+    UnifiClient::new(server.url(), ApiToken::new("test-token"), site.to_string())
+        .expect("test client builds")
+}
 
 fn make_client() -> UnifiClient {
     UnifiClient::new(
@@ -8,6 +20,112 @@ fn make_client() -> UnifiClient {
         "11111111-1111-1111-1111-111111111111".to_string(),
     )
     .unwrap()
+}
+
+#[rstest]
+#[tokio::test]
+async fn list_zones_returns_vendor_neutral_payload(#[future] server: ServerGuard) {
+    let mut server = server.await;
+    let sites = server
+        .mock("GET", "/sites")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"offset":0,"limit":25,"count":1,"totalCount":1,
+                "data":[{"id":"site-uuid","name":"Default"}]}"#,
+        )
+        .create_async()
+        .await;
+    let client = make_server_client(&server, "Default");
+
+    let result = client.list_zones(1, 25).await.expect("zones list");
+
+    sites.assert_async().await;
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "response": {
+                "zones": [{
+                    "id": "site-uuid",
+                    "name": "Default",
+                    "type": "UniFi/Site",
+                    "disabled": false,
+                    "dnssecStatus": null
+                }]
+            }
+        })
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn list_records_rejects_unknown_explicit_zone_without_default_fallback(
+    #[future] server: ServerGuard,
+) {
+    let mut server = server.await;
+    let sites = server
+        .mock("GET", "/sites")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"offset":0,"limit":200,"count":1,"totalCount":1,
+                "data":[{"id":"site-uuid","name":"Default"}]}"#,
+        )
+        .create_async()
+        .await;
+    let client = make_server_client(&server, "Default");
+
+    let err = client
+        .list_records(
+            "example.com",
+            Some("Missing"),
+            ListRecordsOptions::default(),
+        )
+        .await
+        .expect_err("unknown explicit zone must fail");
+
+    sites.assert_async().await;
+    assert!(matches!(err, Error::Api { message } if message.contains("Missing")));
+}
+
+#[rstest]
+#[tokio::test]
+async fn list_records_reuses_cached_configured_site_id(#[future] server: ServerGuard) {
+    let mut server = server.await;
+    let sites = server
+        .mock("GET", "/sites")
+        .match_query(Matcher::Any)
+        .expect(1)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"offset":0,"limit":200,"count":1,"totalCount":1,
+                "data":[{"id":"site-uuid","name":"Default"}]}"#,
+        )
+        .create_async()
+        .await;
+    let policies = server
+        .mock("GET", "/sites/site-uuid/dns/policies")
+        .match_query(Matcher::Any)
+        .expect(2)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"offset":0,"limit":200,"count":0,"totalCount":0,"data":[]}"#)
+        .create_async()
+        .await;
+    let client = make_server_client(&server, "Default");
+
+    for _ in 0..2 {
+        client
+            .list_records("example.com", None, ListRecordsOptions::default())
+            .await
+            .expect("records list");
+    }
+
+    sites.assert_async().await;
+    policies.assert_async().await;
 }
 
 // ── kind / capabilities ──────────────────────────────────────────────────

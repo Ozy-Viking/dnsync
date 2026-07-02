@@ -58,6 +58,7 @@ impl UnifiClient {
         site: String,
         api_mode: UnifiApiMode,
     ) -> Result<Self> {
+        let base_url = normalize_base_url(base_url, api_mode)?;
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -84,6 +85,14 @@ impl UnifiClient {
 
     pub fn api_mode(&self) -> UnifiApiMode {
         self.api_mode
+    }
+
+    pub(crate) fn cached_site_id(&self) -> Option<&str> {
+        self.resolved_site_id.get().map(String::as_str)
+    }
+
+    pub(crate) fn remember_site_id(&self, site_id: &str) {
+        let _ = self.resolved_site_id.set(site_id.to_string());
     }
 
     /// Test-only helper for verifying credential plumbing without forcing the
@@ -374,6 +383,28 @@ impl UnifiClient {
         let path = self.policy_path(&site_id, policy_id);
         self.delete(&path).await?;
         Ok(())
+    }
+}
+
+const REMOTE_CONNECTOR_SEGMENT: &str = "/connector/consoles/";
+const REMOTE_NETWORK_PROXY_SUFFIX: &str = "/proxy/network/integration/v1";
+
+fn normalize_base_url(base_url: String, api_mode: UnifiApiMode) -> Result<String> {
+    let base_url = base_url.trim_end_matches('/');
+    if api_mode == UnifiApiMode::Local {
+        return Ok(base_url.to_string());
+    }
+
+    if !base_url.contains(REMOTE_CONNECTOR_SEGMENT) {
+        return Err(Error::config(
+            "UniFi remote mode requires base_url to include the console connector path, for example https://api.ui.com/v1/connector/consoles/{consoleId}",
+        ));
+    }
+
+    if base_url.ends_with(REMOTE_NETWORK_PROXY_SUFFIX) {
+        Ok(base_url.to_string())
+    } else {
+        Ok(format!("{base_url}{REMOTE_NETWORK_PROXY_SUFFIX}"))
     }
 }
 

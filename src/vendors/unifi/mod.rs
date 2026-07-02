@@ -80,6 +80,7 @@ pub fn client_from_server(
 mod tests {
     use super::*;
     use crate::control_plane::config as app_config;
+    use rstest::rstest;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -114,8 +115,35 @@ mod tests {
         assert_eq!(client.site(), "Default");
     }
 
-    #[test]
-    fn remote_api_mode_uses_cloud_default_base_url() {
+    #[rstest]
+    fn remote_api_mode_uses_console_connector_base_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_unifi_env();
+        let app_config: app_config::AppConfig = toml::from_str(
+            r#"
+                [[servers]]
+                id = "udm"
+                vendor = "unifi"
+                unifi_api_mode = "remote"
+                base_url = "https://api.ui.com/v1/connector/consoles/console-123"
+                token = "unifi-token"
+                org_id = "Default"
+            "#,
+        )
+        .unwrap();
+        let server = app_config.selected_server(Some("udm")).unwrap();
+
+        let client = client_from_server(server, ClientOverrides::default()).unwrap();
+
+        assert_eq!(
+            client.base_url(),
+            "https://api.ui.com/v1/connector/consoles/console-123/proxy/network/integration/v1"
+        );
+        assert_eq!(client.api_mode(), UnifiApiMode::Remote);
+    }
+
+    #[rstest]
+    fn remote_api_mode_rejects_base_url_without_console_id() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_unifi_env();
         let app_config: app_config::AppConfig = toml::from_str(
@@ -131,10 +159,9 @@ mod tests {
         .unwrap();
         let server = app_config.selected_server(Some("udm")).unwrap();
 
-        let client = client_from_server(server, ClientOverrides::default()).unwrap();
+        let err = client_from_server(server, ClientOverrides::default()).unwrap_err();
 
-        assert_eq!(client.base_url(), app_config::UNIFI_CLOUD_DEFAULT_BASE_URL);
-        assert_eq!(client.api_mode(), UnifiApiMode::Remote);
+        assert!(err.to_string().contains("connector/consoles/{consoleId}"));
     }
 
     #[test]

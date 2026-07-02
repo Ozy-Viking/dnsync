@@ -32,6 +32,27 @@ source_env_main() {
             continue
         fi
 
+        # Remove an inline comment only when its # is outside quotes and
+        # preceded by whitespace. Leading and attached hashes are literal,
+        # so values such as #ffffff and value#suffix remain unchanged.
+        local cleaned="" quote="" char previous=""
+        local i
+        for ((i = 0; i < ${#value}; i++)); do
+            char="${value:i:1}"
+            if [[ -z "$quote" && ("$char" == "\"" || "$char" == "'") ]]; then
+                quote="$char"
+            elif [[ "$char" == "$quote" ]]; then
+                quote=""
+            elif [[ -z "$quote" && "$char" == "#" && "$previous" =~ [[:space:]] ]]; then
+                break
+            fi
+            cleaned+="$char"
+            previous="$char"
+        done
+        value="$cleaned"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+
         # Remove surrounding single or double quotes
         if [[ "$value" =~ ^\".*\"$ || "$value" =~ ^\'.*\'$ ]]; then
             value="${value:1:${#value}-2}"
