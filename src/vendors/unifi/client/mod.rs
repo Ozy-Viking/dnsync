@@ -21,6 +21,7 @@ use crate::core::secret::ApiToken;
 use super::responses::{
     UnifiDnsPolicy, UnifiDnsPolicyPage, UnifiSite, match_site, parse_page, parse_site_page,
 };
+use crate::vendors::unifi::UnifiApiMode;
 
 /// Maximum page size accepted by the UniFi DNS policy list endpoint.
 pub const MAX_PAGE_LIMIT: u32 = 200;
@@ -40,6 +41,7 @@ pub struct UnifiClient {
     base_url: String,
     token: ApiToken,
     site: String,
+    api_mode: UnifiApiMode,
     resolved_site_id: std::sync::Arc<OnceCell<String>>,
 }
 
@@ -47,6 +49,16 @@ impl UnifiClient {
     /// Build a new client. Uses a 30-second timeout to match the rest of the
     /// vendor clients in this crate.
     pub fn new(base_url: String, token: ApiToken, site: String) -> Result<Self> {
+        Self::with_api_mode(base_url, token, site, UnifiApiMode::Local)
+    }
+
+    pub fn with_api_mode(
+        base_url: String,
+        token: ApiToken,
+        site: String,
+        api_mode: UnifiApiMode,
+    ) -> Result<Self> {
+        let base_url = normalize_base_url(base_url, api_mode)?;
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -56,6 +68,7 @@ impl UnifiClient {
             base_url,
             token,
             site,
+            api_mode,
             resolved_site_id: std::sync::Arc::new(OnceCell::new()),
         })
     }
@@ -68,6 +81,18 @@ impl UnifiClient {
     /// This is what the user typed and may be either a name or a UUID.
     pub fn site(&self) -> &str {
         &self.site
+    }
+
+    pub fn api_mode(&self) -> UnifiApiMode {
+        self.api_mode
+    }
+
+    pub(crate) fn cached_site_id(&self) -> Option<&str> {
+        self.resolved_site_id.get().map(String::as_str)
+    }
+
+    pub(crate) fn remember_site_id(&self, site_id: &str) {
+        let _ = self.resolved_site_id.set(site_id.to_string());
     }
 
     /// Test-only helper for verifying credential plumbing without forcing the
@@ -249,14 +274,25 @@ impl UnifiClient {
         limit: u32,
         filter: Option<&str>,
     ) -> Result<UnifiDnsPolicyPage> {
+        let site_id = self.resolve_site_id().await?.to_string();
+        self.list_dns_policies_page_for_site_id(&site_id, offset, limit, filter)
+            .await
+    }
+
+    pub async fn list_dns_policies_page_for_site_id(
+        &self,
+        site_id: &str,
+        offset: u32,
+        limit: u32,
+        filter: Option<&str>,
+    ) -> Result<UnifiDnsPolicyPage> {
         let limit = limit.min(MAX_PAGE_LIMIT);
         let mut params: Vec<(&str, String)> =
             vec![("offset", offset.to_string()), ("limit", limit.to_string())];
         if let Some(f) = filter {
             params.push(("filter", f.to_string()));
         }
-        let site_id = self.resolve_site_id().await?.to_string();
-        let path = self.policies_path(&site_id);
+        let path = self.policies_path(site_id);
         let value = self.get(&path, &params).await?;
         parse_page(value).map_err(|e| Error::parse(format!("decoding UniFi DNS policy page: {e}")))
     }
@@ -267,12 +303,22 @@ impl UnifiClient {
     /// (if present) has been reached. Hard cap of 1000 pages guards against
     /// pathological controller responses.
     pub async fn list_all_dns_policies(&self, filter: Option<&str>) -> Result<Vec<UnifiDnsPolicy>> {
+        let site_id = self.resolve_site_id().await?.to_string();
+        self.list_all_dns_policies_for_site_id(&site_id, filter)
+            .await
+    }
+
+    pub async fn list_all_dns_policies_for_site_id(
+        &self,
+        site_id: &str,
+        filter: Option<&str>,
+    ) -> Result<Vec<UnifiDnsPolicy>> {
         let mut out: Vec<UnifiDnsPolicy> = Vec::new();
         let mut offset = 0u32;
         let mut pages = 0u32;
         loop {
             let page = self
-                .list_dns_policies_page(offset, DEFAULT_PAGE_LIMIT, filter)
+                .list_dns_policies_page_for_site_id(site_id, offset, DEFAULT_PAGE_LIMIT, filter)
                 .await?;
             let returned = page.data.len() as u32;
             let total = page.total();
@@ -337,6 +383,28 @@ impl UnifiClient {
         let path = self.policy_path(&site_id, policy_id);
         self.delete(&path).await?;
         Ok(())
+    }
+}
+
+const REMOTE_CONNECTOR_SEGMENT: &str = "/connector/consoles/";
+const REMOTE_NETWORK_PROXY_SUFFIX: &str = "/proxy/network/integration/v1";
+
+fn normalize_base_url(base_url: String, api_mode: UnifiApiMode) -> Result<String> {
+    let base_url = base_url.trim_end_matches('/');
+    if api_mode == UnifiApiMode::Local {
+        return Ok(base_url.to_string());
+    }
+
+    if !base_url.contains(REMOTE_CONNECTOR_SEGMENT) {
+        return Err(Error::config(
+            "UniFi remote mode requires base_url to include the console connector path, for example https://api.ui.com/v1/connector/consoles/{consoleId}",
+        ));
+    }
+
+    if base_url.ends_with(REMOTE_NETWORK_PROXY_SUFFIX) {
+        Ok(base_url.to_string())
+    } else {
+        Ok(format!("{base_url}{REMOTE_NETWORK_PROXY_SUFFIX}"))
     }
 }
 

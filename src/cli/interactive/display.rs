@@ -114,6 +114,17 @@ impl std::fmt::Display for LocationChoice {
     }
 }
 
+pub(crate) struct UnifiApiModeChoice {
+    pub(crate) value: UnifiApiMode,
+    pub(crate) label: &'static str,
+}
+
+impl std::fmt::Display for UnifiApiModeChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label)
+    }
+}
+
 pub(crate) struct AccessChoice {
     pub(crate) rule: PolicyRule,
     pub(crate) label: &'static str,

@@ -28,6 +28,7 @@ impl AppConfig {
             servers: vec![DnsServerConfig {
                 id: "default".to_string(),
                 vendor: VendorKind::Technitium,
+                unifi_api_mode: None,
                 location: None,
                 base_url: Some(TECHNITIUM_DEFAULT_BASE_URL.to_string()),
                 base_url_env: None,

@@ -52,6 +52,7 @@ pub fn handle(config_path: Option<PathBuf>, cmd: ConfigCmd) -> Result<()> {
             token_env,
             token,
             org_id,
+            unifi_api_mode,
             access,
             allow_zone,
             validation_endpoints,
@@ -66,6 +67,7 @@ pub fn handle(config_path: Option<PathBuf>, cmd: ConfigCmd) -> Result<()> {
                 config::DnsServerConfig {
                     id: id.unwrap_or_default(),
                     vendor,
+                    unifi_api_mode,
                     location,
                     base_url,
                     base_url_env,

@@ -39,6 +39,8 @@ pub(crate) fn validate_validation_endpoints(server: &DnsServerConfig) -> Result<
 }
 
 pub(crate) fn validate_server_transports(server: &DnsServerConfig) -> Result<()> {
+    crate::vendors::runtime::validate_server_config(server)?;
+
     if let Some(dns) = &server.dns
         && dns.enabled
         && dns

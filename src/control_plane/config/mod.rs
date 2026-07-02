@@ -18,6 +18,8 @@ pub use persist::*;
 pub use resolve::*;
 pub use server::*;
 pub use types::*;
+// Compatibility re-export: the type is owned by the UniFi vendor module.
+pub use crate::vendors::unifi::UnifiApiMode;
 // Internal-only helpers shared between submodules (no public items to re-export).
 pub(crate) use render::*;
 pub(crate) use secure_io::*;
@@ -35,11 +37,10 @@ pub(crate) use std::env;
 pub(crate) use std::net::IpAddr;
 pub(crate) use std::path::{Path, PathBuf};
 
-pub const TECHNITIUM_DEFAULT_BASE_URL: &str = "http://localhost:5380";
-pub const PANGOLIN_DEFAULT_BASE_URL: &str = "https://api.pangolin.net/v1";
-pub const CLOUDFLARE_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
-pub const UNIFI_DEFAULT_BASE_URL: &str = "https://192.168.1.1/proxy/network/integration/v1";
-pub const PIHOLE_DEFAULT_BASE_URL: &str = "http://pi.hole";
+pub use crate::vendors::runtime::{
+    CLOUDFLARE_DEFAULT_BASE_URL, PANGOLIN_DEFAULT_BASE_URL, PIHOLE_DEFAULT_BASE_URL,
+    TECHNITIUM_DEFAULT_BASE_URL, UNIFI_CLOUD_DEFAULT_BASE_URL, UNIFI_DEFAULT_BASE_URL,
+};
 
 #[cfg(test)]
 mod tests;

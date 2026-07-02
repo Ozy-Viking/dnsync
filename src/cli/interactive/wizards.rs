@@ -100,6 +100,30 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
         _ => None,
     };
 
+    let unifi_api_mode = if vendor == VendorKind::Unifi {
+        let choices = vec![
+            UnifiApiModeChoice {
+                value: UnifiApiMode::Local,
+                label: "local controller",
+            },
+            UnifiApiModeChoice {
+                value: UnifiApiMode::Remote,
+                label: "remote cloud",
+            },
+        ];
+        Some(
+            Select::new("UniFi API mode:", choices)
+                .with_help_message(
+                    "local uses the controller integration API; remote uses https://api.ui.com/v1",
+                )
+                .prompt()
+                .map_err(wizard_err)?
+                .value,
+        )
+    } else {
+        None
+    };
+
     let location = {
         let choices = vec![
             LocationChoice {
@@ -210,6 +234,7 @@ pub fn run_add_wizard(existing_ids: &[String]) -> Result<DnsServerConfig> {
     Ok(DnsServerConfig {
         id,
         vendor,
+        unifi_api_mode,
         location,
         base_url,
         base_url_env: None,

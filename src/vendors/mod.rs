@@ -14,7 +14,6 @@ pub mod pangolin;
 #[cfg(feature = "cloudflare")]
 pub mod cloudflare;
 
-#[cfg(feature = "unifi")]
 pub mod unifi;
 
 #[cfg(feature = "pihole")]

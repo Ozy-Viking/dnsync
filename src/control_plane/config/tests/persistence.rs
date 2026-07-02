@@ -99,6 +99,7 @@ fn config_never_leaks_token_via_debug_or_serialize() {
         servers: vec![DnsServerConfig {
             id: "leaky".to_string(),
             vendor: VendorKind::Technitium,
+            unifi_api_mode: None,
             location: None,
             base_url: Some("http://192.168.1.10:5380".to_string()),
             base_url_env: None,
@@ -134,6 +135,7 @@ fn add_server_creates_config_with_single_server() {
     let server = DnsServerConfig {
         id: "myserver".to_string(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: Some("http://192.168.1.10:5380".to_string()),
         base_url_env: None,
@@ -168,6 +170,7 @@ fn add_server_appends_to_existing_config() {
     let server = DnsServerConfig {
         id: "lab".to_string(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: Some("http://192.168.1.20:5380".to_string()),
         base_url_env: None,
@@ -214,6 +217,7 @@ fn add_server_preserves_comments_in_existing_config() {
     let server = DnsServerConfig {
         id: "lab".to_string(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,
@@ -303,6 +307,7 @@ fn add_server_rejects_duplicate_id() {
     let server = DnsServerConfig {
         id: "default".to_string(), // already exists
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,

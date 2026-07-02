@@ -2,16 +2,6 @@
 
 use super::*;
 
-pub(crate) fn default_base_url(vendor: VendorKind) -> &'static str {
-    match vendor {
-        VendorKind::Technitium => TECHNITIUM_DEFAULT_BASE_URL,
-        VendorKind::Pangolin => PANGOLIN_DEFAULT_BASE_URL,
-        VendorKind::Cloudflare => CLOUDFLARE_DEFAULT_BASE_URL,
-        VendorKind::Unifi => UNIFI_DEFAULT_BASE_URL,
-        VendorKind::Pihole => PIHOLE_DEFAULT_BASE_URL,
-    }
-}
-
 pub(crate) fn vendor_name(vendor: VendorKind) -> &'static str {
     match vendor {
         VendorKind::Technitium => "technitium",
@@ -128,6 +118,12 @@ pub(crate) fn append_server_entry(doc: &mut toml_edit::DocumentMut, server: &Dns
         VendorKind::Unifi => "unifi",
         VendorKind::Pihole => "pihole",
     });
+    if let Some(mode) = server.unifi_api_mode {
+        tbl["unifi_api_mode"] = value(match mode {
+            UnifiApiMode::Local => "local",
+            UnifiApiMode::Remote => "remote",
+        });
+    }
     if let Some(loc) = server.location {
         tbl["location"] = value(match loc {
             ServerLocation::Local => "local",

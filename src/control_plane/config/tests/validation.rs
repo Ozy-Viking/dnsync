@@ -28,6 +28,21 @@ fn parse(toml_str: &str) -> AppConfig {
 // ── server identity ─────────────────────────────────────────────────────────
 
 #[test]
+fn rejects_unifi_api_mode_on_non_unifi_server() {
+    let cfg = parse(
+        r#"
+            [[servers]]
+            id = "home"
+            vendor = "technitium"
+            unifi_api_mode = "remote"
+            token = "tok"
+        "#,
+    );
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("unifi_api_mode"), "unexpected: {err}");
+}
+
+#[test]
 fn rejects_empty_server_id() {
     let cfg = parse(
         r#"

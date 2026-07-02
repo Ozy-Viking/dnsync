@@ -28,6 +28,7 @@ fn server_with_dns_and_doq() -> DnsServerConfig {
     DnsServerConfig {
         id: "dns1".to_string(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,

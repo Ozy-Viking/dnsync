@@ -191,6 +191,7 @@ fn technitium_base_url_defaults_to_localhost() {
     let server = DnsServerConfig {
         id: "home".to_string(),
         vendor: VendorKind::Technitium,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,
@@ -214,6 +215,7 @@ fn pangolin_base_url_defaults_to_cloud_api() {
     let server = DnsServerConfig {
         id: "cloud".to_string(),
         vendor: VendorKind::Pangolin,
+        unifi_api_mode: None,
         location: None,
         base_url: None,
         base_url_env: None,
@@ -230,6 +232,43 @@ fn pangolin_base_url_defaults_to_cloud_api() {
     };
 
     assert_eq!(server.resolved_base_url(None), PANGOLIN_DEFAULT_BASE_URL);
+}
+
+#[test]
+fn unifi_remote_api_mode_defaults_to_cloud_api() {
+    let config: AppConfig = toml::from_str(
+        r#"
+                [[servers]]
+                id = "udm"
+                vendor = "unifi"
+                unifi_api_mode = "remote"
+                token = "tok"
+                org_id = "Default"
+            "#,
+    )
+    .expect("config should parse");
+    let server = config.selected_server(Some("udm")).unwrap();
+
+    assert_eq!(server.unifi_api_mode, Some(UnifiApiMode::Remote));
+    assert_eq!(server.resolved_base_url(None), UNIFI_CLOUD_DEFAULT_BASE_URL);
+}
+
+#[test]
+fn unifi_omitted_api_mode_keeps_local_default() {
+    let config: AppConfig = toml::from_str(
+        r#"
+                [[servers]]
+                id = "udm"
+                vendor = "unifi"
+                token = "tok"
+                org_id = "Default"
+            "#,
+    )
+    .expect("config should parse");
+    let server = config.selected_server(Some("udm")).unwrap();
+
+    assert_eq!(server.unifi_api_mode, None);
+    assert_eq!(server.resolved_base_url(None), UNIFI_DEFAULT_BASE_URL);
 }
 
 #[test]

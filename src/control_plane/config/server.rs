@@ -27,6 +27,9 @@ pub struct DnsServerConfig {
     #[serde(default)]
     pub vendor: VendorKind,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unifi_api_mode: Option<UnifiApiMode>,
+
     /// Whether this server is on a local network or an external/cloud service.
     /// Inferred from the base URL when omitted.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,6 +74,8 @@ pub(crate) struct DnsServerConfigRaw {
     id: String,
     #[serde(default)]
     vendor: VendorKind,
+    #[serde(default)]
+    unifi_api_mode: Option<UnifiApiMode>,
     #[serde(default)]
     location: Option<ServerLocation>,
     #[serde(default)]
@@ -138,6 +143,7 @@ impl From<DnsServerConfigRaw> for DnsServerConfig {
         let mut server = DnsServerConfig {
             id: raw.id,
             vendor: raw.vendor,
+            unifi_api_mode: raw.unifi_api_mode,
             location: raw.location,
             base_url: raw.base_url,
             base_url_env: raw.base_url_env,
